@@ -23,6 +23,7 @@ import {
   submitReview
 } from './services/api';
 import { StoreApp, AppRelease, Platform, AdminUser } from './types';
+import { getApkBlob, deleteApkBlob } from './utils/fileStorage';
 import { CheckCircle2, ArrowRight } from 'lucide-react';
 
 export default function App() {
@@ -88,6 +89,28 @@ export default function App() {
 
   // Handle APK Download (PUBLIC - NO ACCOUNT REQUIRED)
   const handleDownload = async (appId: string, releaseId?: string) => {
+    // Check if the physical APK file is cached in local client storage (supports files up to 1GB)
+    const localBlob = await getApkBlob(appId);
+    if (localBlob) {
+      const targetApp = apps.find((a) => a.id === appId);
+      const targetRelease = releaseId
+        ? targetApp?.releases.find((r) => r.id === releaseId) || targetApp?.releases[0]
+        : targetApp?.releases[0];
+      const fileName = targetRelease?.fileName || `${targetApp?.slug || 'app'}-v${targetRelease?.version || '1.0.0'}.apk`;
+
+      const blobUrl = URL.createObjectURL(localBlob);
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+
+      showToast(`Downloading ${fileName}! No account required.`);
+      return;
+    }
+
     const downloadUrl = getDownloadUrl(appId, releaseId);
 
     // Trigger direct browser download
@@ -131,6 +154,7 @@ export default function App() {
 
   // Handle Admin Delete App
   const handleDeleteApp = async (appId: string) => {
+    await deleteApkBlob(appId);
     await adminDeleteApp(appId);
     await loadApps();
     if (selectedApp?.id === appId) {

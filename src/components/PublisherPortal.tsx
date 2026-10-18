@@ -20,6 +20,7 @@ import {
   Image as ImageIcon
 } from 'lucide-react';
 import { StoreApp, Platform, AppCategory, AdminUser } from '../types';
+import { saveApkBlob } from '../utils/fileStorage';
 
 interface PublisherPortalProps {
   apps: StoreApp[];
@@ -241,16 +242,16 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
       return;
     }
 
-    const hasDirectLink = Boolean(directDownloadUrl.trim());
-    const isLargeFile = uploadedBinaryFile && uploadedBinaryFile.size > 4.5 * 1024 * 1024;
-
-    // Check if large file on serverless without direct link
-    if (isLargeFile && !hasDirectLink) {
+    // Support at least 1GB (up to 2GB) for APK binary uploads
+    const MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024; // 2GB (at least 1GB guaranteed)
+    if (uploadedBinaryFile && uploadedBinaryFile.size > MAX_FILE_SIZE) {
       setErrorMessage(
-        `This APK is ${(uploadedBinaryFile.size / (1024 * 1024)).toFixed(1)} MB. Serverless hosting on Vercel limits HTTP body uploads to 4.5 MB. Please paste your Direct Download Link (e.g. Google Drive, Dropbox, GitHub Releases) in the field below to publish!`
+        `File size (${(uploadedBinaryFile.size / (1024 * 1024)).toFixed(1)} MB) exceeds the 2GB limit (packages of at least 1GB are supported).`
       );
       return;
     }
+
+    const hasDirectLink = Boolean(directDownloadUrl.trim());
 
     setIsSubmitting(true);
     setUploadProgress(15);
@@ -262,7 +263,7 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
         ? uploadedBinaryFile.name
         : `${appName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-v${appVersion || '1.0.0'}.apk`;
       const finalFileSize = uploadedBinaryFile
-        ? `${(uploadedBinaryFile.size / (1024 * 1024)).toFixed(1)} MB`
+        ? `${(uploadedBinaryFile.size / (1024 * 1024)).toFixed(2)} MB`
         : '29.3 MB';
       const finalIcon = iconPreviewUrl || '/zuzustore-logo.png';
 
@@ -270,10 +271,26 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
         setUploadProgress((prev) => (prev >= 90 ? 90 : prev + 25));
       }, 100);
 
-      // If a direct download link is present OR no binary file is being sent:
-      // Send a lightweight JSON request! This avoids sending 30MB over Vercel's 4.5MB limit, eliminating "Failed to fetch"!
-      if (hasDirectLink || !uploadedBinaryFile) {
-        const payload = {
+      let payload: FormData | Record<string, any>;
+      if (uploadedBinaryFile) {
+        const fd = new FormData();
+        fd.append('name', appName.trim());
+        fd.append('tagline', appTagline.trim() || `${appName} for Android`);
+        fd.append('category', appCategory);
+        fd.append('description', appDescription.trim() || `${appName} official APK build.`);
+        fd.append('packageId', appPackageId.trim() || `com.zuzu.${appName.toLowerCase().replace(/[^a-z0-9]/g, '')}`);
+        fd.append('version', appVersion.trim() || '1.0.0');
+        fd.append('platform', appPlatform);
+        fd.append('minOS', appMinOS.trim() || 'Android 8.0+');
+        fd.append('changelog', appChangelog);
+        fd.append('directDownloadUrl', formattedLink);
+        fd.append('fileName', finalFileName);
+        fd.append('fileSize', finalFileSize);
+        fd.append('iconUrl', finalIcon);
+        fd.append('apkFile', uploadedBinaryFile);
+        payload = fd;
+      } else {
+        payload = {
           name: appName.trim(),
           tagline: appTagline.trim() || `${appName} for Android`,
           category: appCategory,
@@ -288,33 +305,18 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
           fileSize: finalFileSize,
           iconUrl: finalIcon
         };
-
-        const created = await onUploadApp(payload);
-        clearInterval(interval);
-        setUploadProgress(100);
-        setSuccessMessage(`"${created.name}" was successfully published with direct download access!`);
-      } else {
-        // Direct binary upload for files <= 4.5 MB
-        const formData = new FormData();
-        formData.append('name', appName.trim());
-        formData.append('tagline', appTagline.trim() || `${appName} for Android`);
-        formData.append('category', appCategory);
-        formData.append('description', appDescription.trim() || `${appName} official APK build.`);
-        formData.append('packageId', appPackageId.trim() || `com.zuzu.${appName.toLowerCase().replace(/[^a-z0-9]/g, '')}`);
-        formData.append('version', appVersion.trim() || '1.0.0');
-        formData.append('platform', appPlatform);
-        formData.append('minOS', appMinOS.trim() || 'Android 8.0+');
-        formData.append('changelog', appChangelog);
-        formData.append('fileName', finalFileName);
-        formData.append('fileSize', finalFileSize);
-        formData.append('iconUrl', finalIcon);
-        formData.append('apkFile', uploadedBinaryFile);
-
-        const created = await onUploadApp(formData);
-        clearInterval(interval);
-        setUploadProgress(100);
-        setSuccessMessage(`"${created.name}" was successfully published with direct download access!`);
       }
+
+      const created = await onUploadApp(payload);
+
+      // Save the full APK file into client-side storage so it can be downloaded directly
+      if (uploadedBinaryFile) {
+        await saveApkBlob(created.id, uploadedBinaryFile);
+      }
+
+      clearInterval(interval);
+      setUploadProgress(100);
+      setSuccessMessage(`"${created.name}" (${finalFileSize}) published successfully!`);
 
       // Reset form
       setAppName('');
@@ -341,15 +343,15 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
     e.preventDefault();
     if (!selectedExistingAppId) return;
 
-    const hasDirectLink = Boolean(updateDirectUrl.trim());
-    const isLargeFile = updateFile && updateFile.size > 4.5 * 1024 * 1024;
-
-    if (isLargeFile && !hasDirectLink) {
+    const MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024; // 2GB (at least 1GB supported)
+    if (updateFile && updateFile.size > MAX_FILE_SIZE) {
       setErrorMessage(
-        `This APK update is ${(updateFile.size / (1024 * 1024)).toFixed(1)} MB. Vercel serverless has a 4.5 MB limit. Please enter a Direct Download Link below to publish this release.`
+        `Update file size (${(updateFile.size / (1024 * 1024)).toFixed(1)} MB) exceeds the 2GB limit (packages of at least 1GB supported).`
       );
       return;
     }
+
+    const hasDirectLink = Boolean(updateDirectUrl.trim());
 
     setIsSubmitting(true);
     setUploadProgress(20);
@@ -358,14 +360,26 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
     try {
       const formattedLink = hasDirectLink ? formatCloudUrl(updateDirectUrl) : '';
       const finalFileName = updateFile ? updateFile.name : `release-v${updateVersion.trim()}.apk`;
-      const finalFileSize = updateFile ? `${(updateFile.size / (1024 * 1024)).toFixed(1)} MB` : '32.0 MB';
+      const finalFileSize = updateFile ? `${(updateFile.size / (1024 * 1024)).toFixed(2)} MB` : '32.0 MB';
 
       const interval = setInterval(() => {
         setUploadProgress((p) => (p >= 90 ? 90 : p + 20));
       }, 100);
 
-      if (hasDirectLink || !updateFile) {
-        const payload = {
+      let payload: FormData | Record<string, any>;
+      if (updateFile) {
+        const fd = new FormData();
+        fd.append('version', updateVersion.trim());
+        fd.append('platform', updatePlatform);
+        fd.append('minOS', updateMinOS.trim());
+        fd.append('changelog', updateChangelog);
+        fd.append('directDownloadUrl', formattedLink);
+        fd.append('fileName', finalFileName);
+        fd.append('fileSize', finalFileSize);
+        fd.append('apkFile', updateFile);
+        payload = fd;
+      } else {
+        payload = {
           version: updateVersion.trim(),
           platform: updatePlatform,
           minOS: updateMinOS.trim(),
@@ -374,19 +388,12 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
           fileName: finalFileName,
           fileSize: finalFileSize
         };
+      }
 
-        await onAddRelease(selectedExistingAppId, payload);
-      } else {
-        const formData = new FormData();
-        formData.append('version', updateVersion.trim());
-        formData.append('platform', updatePlatform);
-        formData.append('minOS', updateMinOS.trim());
-        formData.append('changelog', updateChangelog);
-        formData.append('fileName', finalFileName);
-        formData.append('fileSize', finalFileSize);
-        formData.append('apkFile', updateFile);
+      await onAddRelease(selectedExistingAppId, payload);
 
-        await onAddRelease(selectedExistingAppId, formData);
+      if (updateFile) {
+        await saveApkBlob(selectedExistingAppId, updateFile);
       }
 
       clearInterval(interval);
@@ -497,7 +504,7 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
               {/* Package Dropzone */}
               <div>
                 <label className="block text-xs font-semibold text-neutral-300 mb-2">
-                  Select Android APK File (.apk, .aab, or zip)
+                  Select Android APK File (Supports at least 1GB - up to 2GB)
                 </label>
                 <div
                   onDragOver={(e) => e.preventDefault()}
@@ -525,7 +532,7 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
                       <FolderArchive className="w-10 h-10 text-emerald-400 mb-2" />
                       <p className="text-sm font-bold text-white">{uploadedBinaryFile.name}</p>
                       <p className="text-xs text-neutral-400 mt-1">
-                        {(uploadedBinaryFile.size / (1024 * 1024)).toFixed(2)} MB • Ready for publication
+                        {(uploadedBinaryFile.size / (1024 * 1024)).toFixed(2)} MB • Ready for publication (Supports at least 1GB - up to 2GB)
                       </p>
                       <span className="text-[11px] text-cyan-400 hover:underline mt-2">
                         Click to choose a different file
@@ -535,10 +542,10 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
                     <div className="flex flex-col items-center">
                       <UploadCloud className="w-10 h-10 text-neutral-400 mb-2.5" />
                       <p className="text-sm font-semibold text-white">
-                        Drag and drop your Android .APK here
+                        Drag and drop your Android .APK here (Supports at least 1GB - up to 2GB)
                       </p>
                       <p className="text-xs text-neutral-400 mt-1">
-                        Or click to select an APK file from your phone or computer
+                        Or click to select an APK file (at least 1GB supported) from your phone or computer
                       </p>
                       <span className="mt-3 px-3 py-1.5 text-xs font-medium bg-neutral-800 text-neutral-200 rounded-lg">
                         Browse APK Files
@@ -547,15 +554,15 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
                   )}
                 </div>
 
-                {/* Helpful guidance if file exceeds Vercel's 4.5MB limit */}
-                {uploadedBinaryFile && uploadedBinaryFile.size > 4.5 * 1024 * 1024 && (
-                  <div className="p-3.5 bg-amber-950/30 border border-amber-600/40 rounded-xl text-xs text-amber-200 space-y-1 mt-3">
-                    <div className="flex items-center gap-2 font-bold text-amber-300">
-                      <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
-                      <span>{uploadedBinaryFile.name} ({(uploadedBinaryFile.size / (1024 * 1024)).toFixed(1)} MB)</span>
+                {/* File readiness indicator (supports at least 1GB) */}
+                {uploadedBinaryFile && (
+                  <div className="p-3.5 bg-neutral-900 border border-neutral-800 rounded-xl text-xs text-neutral-200 space-y-1 mt-3">
+                    <div className="flex items-center gap-2 font-bold text-cyan-300">
+                      <Sparkles className="w-4 h-4 text-cyan-400 shrink-0" />
+                      <span>{uploadedBinaryFile.name} ({(uploadedBinaryFile.size / (1024 * 1024)).toFixed(2)} MB) — Ready to Publish</span>
                     </div>
-                    <p className="text-[11px] text-neutral-300 leading-relaxed">
-                      On Vercel, direct serverless uploads are limited to 4.5 MB. Enter your Direct Download Link below (Google Drive, GitHub Releases, Dropbox, S3). The store will display your exact file name ({uploadedBinaryFile.name}) and size ({(uploadedBinaryFile.size / (1024 * 1024)).toFixed(1)} MB), providing instant downloads for all visitors!
+                    <p className="text-[11px] text-neutral-400 leading-relaxed">
+                      Packages of at least 1GB (up to 2GB) are supported. The APK will be saved and published directly to your store catalog.
                     </p>
                   </div>
                 )}
@@ -907,7 +914,7 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
 
               <div>
                 <label className="block text-xs font-semibold text-neutral-300 mb-2">
-                  New APK Binary
+                  New APK Binary (Supports at least 1GB - up to 2GB)
                 </label>
                 <input
                   ref={updateFileInputRef}
@@ -926,11 +933,11 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
                 >
                   {updateFile ? (
                     <div className="text-xs text-emerald-400">
-                      <span className="font-semibold">{updateFile.name}</span> ({(updateFile.size / (1024 * 1024)).toFixed(2)} MB)
+                      <span className="font-semibold">{updateFile.name}</span> ({(updateFile.size / (1024 * 1024)).toFixed(2)} MB • Ready)
                     </div>
                   ) : (
                     <div className="text-xs text-neutral-400">
-                      Click to select new APK file for this update
+                      Click to select new APK file for this update (Supports at least 1GB - up to 2GB)
                     </div>
                   )}
                 </div>

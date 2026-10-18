@@ -230,14 +230,14 @@ const storage = multer.diskStorage({
 const upload = multer({
   storage,
   limits: {
-    fileSize: 300 * 1024 * 1024 // Up to 300MB for APK binaries
+    fileSize: 2 * 1024 * 1024 * 1024 // Supports up to 2GB (at least 1GB guaranteed)
   }
 });
 
 // Create Express App
 const app = express();
-app.use(express.json({ limit: '30mb' }));
-app.use(express.urlencoded({ extended: true, limit: '30mb' }));
+app.use(express.json({ limit: '2048mb' }));
+app.use(express.urlencoded({ extended: true, limit: '2048mb' }));
 
 // Static uploads serving for uploaded icons and screenshots
 app.use('/uploads', express.static(UPLOAD_DIR));
@@ -250,7 +250,15 @@ const conditionalUpload = (req: express.Request, res: express.Response, next: ex
       { name: 'apkFile', maxCount: 1 },
       { name: 'iconFile', maxCount: 1 },
       { name: 'screenshotFiles', maxCount: 6 }
-    ])(req, res, next);
+    ])(req, res, (err: any) => {
+      if (err) {
+        if (err.code === 'LIMIT_FILE_SIZE') {
+          return res.status(400).json({ error: 'File size exceeds maximum upload limit (packages up to 2GB, at least 1GB supported).' });
+        }
+        return res.status(400).json({ error: err.message || 'File upload error.' });
+      }
+      next();
+    });
   } else {
     next();
   }
@@ -258,7 +266,15 @@ const conditionalUpload = (req: express.Request, res: express.Response, next: ex
 
 const conditionalSingleUpload = (req: express.Request, res: express.Response, next: express.NextFunction) => {
   if (req.is('multipart/form-data')) {
-    upload.single('apkFile')(req, res, next);
+    upload.single('apkFile')(req, res, (err: any) => {
+      if (err) {
+        if (err.code === 'LIMIT_FILE_SIZE') {
+          return res.status(400).json({ error: 'File size exceeds maximum upload limit (packages up to 2GB, at least 1GB supported).' });
+        }
+        return res.status(400).json({ error: err.message || 'File upload error.' });
+      }
+      next();
+    });
   } else {
     next();
   }
@@ -851,6 +867,17 @@ app.delete('/api/admin/apps/:id', requireAdmin, (req, res) => {
 app.post('/api/admin/reset', requireAdmin, (req, res) => {
   saveApps(INITIAL_APPS);
   return res.json({ success: true, message: 'Store reset to default catalog.', apps: INITIAL_APPS });
+});
+
+// Global error handling middleware (handles payload too large and Multer errors)
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  console.error('API Error:', err);
+  if (err.type === 'entity.too.large' || err.status === 413 || err.code === 'LIMIT_FILE_SIZE') {
+    return res.status(413).json({
+      error: 'File size exceeds maximum upload limit. Packages up to 2GB (at least 1GB) are supported.'
+    });
+  }
+  return res.status(err.status || 500).json({ error: err.message || 'Internal server error' });
 });
 
 // ==========================================

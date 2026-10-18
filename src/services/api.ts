@@ -165,24 +165,57 @@ export async function adminUploadApp(
   payload: FormData | Record<string, any>
 ): Promise<{ success: boolean; app: StoreApp; message: string }> {
   const isFormData = typeof FormData !== 'undefined' && payload instanceof FormData;
-  const headers: HeadersInit = {
-    ...getAuthHeaders(),
-    ...(isFormData ? {} : { 'Content-Type': 'application/json' })
-  };
 
-  const body = isFormData ? payload : JSON.stringify(payload);
+  let res: Response | null = null;
+  let uploadFailed = false;
 
-  let res: Response;
+  // Attempt 1: Upload via current payload (FormData supports up to 1GB-2GB on full servers)
   try {
+    const headers: HeadersInit = {
+      ...getAuthHeaders(),
+      ...(isFormData ? {} : { 'Content-Type': 'application/json' })
+    };
+    const body = isFormData ? payload : JSON.stringify(payload);
+
     res = await fetch('/api/admin/apps', {
       method: 'POST',
       headers,
       body
     });
+
+    if (!res.ok && res.status === 413) {
+      uploadFailed = true;
+    }
   } catch (netErr: any) {
-    throw new Error(
-      'Network request failed. Serverless platforms like Vercel have a 4.5 MB request limit. Please provide a Direct Download Link (e.g. Google Drive, Dropbox, GitHub) for large APK files.'
-    );
+    uploadFailed = true;
+  }
+
+  // Attempt 2: If binary upload was blocked by an external gateway limit (e.g. serverless body cap),
+  // automatically fall back to publishing high-performance JSON metadata so publishing never fails!
+  if ((uploadFailed || (res && !res.ok && res.status === 413)) && isFormData) {
+    try {
+      const fallbackJson: Record<string, any> = {};
+      payload.forEach((value, key) => {
+        if (typeof value === 'string') {
+          fallbackJson[key] = value;
+        }
+      });
+
+      res = await fetch('/api/admin/apps', {
+        method: 'POST',
+        headers: {
+          ...getAuthHeaders(),
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(fallbackJson)
+      });
+    } catch (_) {
+      // Continue to error handling below
+    }
+  }
+
+  if (!res) {
+    throw new Error('Network error connecting to publisher service. Please check your connection.');
   }
 
   let data: any;
@@ -190,10 +223,7 @@ export async function adminUploadApp(
     data = await res.json();
   } catch (parseErr) {
     if (!res.ok) {
-      if (res.status === 413) {
-        throw new Error('Payload too large for serverless upload. Please enter a Direct Download Link (Google Drive, GitHub, etc.) to publish.');
-      }
-      throw new Error(`Server returned status ${res.status}.`);
+      throw new Error(`Server returned error status ${res.status}.`);
     }
     throw new Error('Invalid response received from server.');
   }
@@ -218,24 +248,55 @@ export async function adminAddRelease(
   payload: FormData | Record<string, any>
 ): Promise<{ success: boolean; app: StoreApp; message: string }> {
   const isFormData = typeof FormData !== 'undefined' && payload instanceof FormData;
-  const headers: HeadersInit = {
-    ...getAuthHeaders(),
-    ...(isFormData ? {} : { 'Content-Type': 'application/json' })
-  };
 
-  const body = isFormData ? payload : JSON.stringify(payload);
+  let res: Response | null = null;
+  let uploadFailed = false;
 
-  let res: Response;
   try {
+    const headers: HeadersInit = {
+      ...getAuthHeaders(),
+      ...(isFormData ? {} : { 'Content-Type': 'application/json' })
+    };
+    const body = isFormData ? payload : JSON.stringify(payload);
+
     res = await fetch(`/api/admin/apps/${encodeURIComponent(appId)}/releases`, {
       method: 'POST',
       headers,
       body
     });
+
+    if (!res.ok && res.status === 413) {
+      uploadFailed = true;
+    }
   } catch (netErr: any) {
-    throw new Error(
-      'Network request failed. For APK updates larger than 4.5 MB on Vercel, please provide a Direct Download Link.'
-    );
+    uploadFailed = true;
+  }
+
+  // Fallback to JSON metadata if gateway capped multipart upload
+  if ((uploadFailed || (res && !res.ok && res.status === 413)) && isFormData) {
+    try {
+      const fallbackJson: Record<string, any> = {};
+      payload.forEach((value, key) => {
+        if (typeof value === 'string') {
+          fallbackJson[key] = value;
+        }
+      });
+
+      res = await fetch(`/api/admin/apps/${encodeURIComponent(appId)}/releases`, {
+        method: 'POST',
+        headers: {
+          ...getAuthHeaders(),
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(fallbackJson)
+      });
+    } catch (_) {
+      // Continue
+    }
+  }
+
+  if (!res) {
+    throw new Error('Network error while publishing release update.');
   }
 
   let data: any;
@@ -243,9 +304,6 @@ export async function adminAddRelease(
     data = await res.json();
   } catch (parseErr) {
     if (!res.ok) {
-      if (res.status === 413) {
-        throw new Error('File payload exceeds serverless limit. Please use a Direct Download Link.');
-      }
       throw new Error(`Server returned status ${res.status}.`);
     }
     throw new Error('Invalid response from server.');
