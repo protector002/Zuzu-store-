@@ -172,10 +172,14 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
                   {/* Top line: Icon + Title + Version */}
                   <div className="flex items-start gap-4">
                     <img
-                      src={app.iconUrl}
+                      src={app.iconUrl || '/zuzustore-logo.png'}
                       alt={app.name}
-                      className="w-14 h-14 rounded-xl object-cover border border-neutral-800 group-hover:border-cyan-500/40 transition-colors shrink-0 shadow-md"
+                      className="w-14 h-14 rounded-xl object-contain border border-neutral-800 group-hover:border-cyan-500/40 transition-colors shrink-0 shadow-md bg-neutral-950 p-1"
                       referrerPolicy="no-referrer"
+                      onError={(e) => {
+                        e.currentTarget.onerror = null;
+                        e.currentTarget.src = '/zuzustore-logo.png';
+                      }}
                     />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">

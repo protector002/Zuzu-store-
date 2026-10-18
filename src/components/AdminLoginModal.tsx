@@ -61,11 +61,8 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
         <div className="flex items-center gap-3.5 mb-5">
           <img
             src="/zuzustore-logo.png"
-            alt="ZuzuStore"
-            className="w-11 h-11 rounded-xl object-contain shadow-md"
-            onError={(e) => {
-              (e.target as HTMLImageElement).style.display = 'none';
-            }}
+            alt="ZuzuStore Logo"
+            className="w-11 h-11 rounded-xl object-contain shadow-md bg-neutral-950 p-1 border border-cyan-400/40"
           />
           <div>
             <h2 className="text-lg font-black text-white tracking-tight">Publisher Login</h2>

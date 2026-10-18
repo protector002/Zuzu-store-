@@ -114,16 +114,16 @@ export default function App() {
   };
 
   // Handle Admin Upload New App
-  const handleUploadApp = async (formData: FormData): Promise<StoreApp> => {
-    const res = await adminUploadApp(formData);
+  const handleUploadApp = async (payload: FormData | Record<string, any>): Promise<StoreApp> => {
+    const res = await adminUploadApp(payload);
     await loadApps();
     showToast(res.message || 'App published successfully!');
     return res.app;
   };
 
   // Handle Admin Add Release
-  const handleAddRelease = async (appId: string, formData: FormData): Promise<StoreApp> => {
-    const res = await adminAddRelease(appId, formData);
+  const handleAddRelease = async (appId: string, payload: FormData | Record<string, any>): Promise<StoreApp> => {
+    const res = await adminAddRelease(appId, payload);
     await loadApps();
     showToast(res.message || 'Release deployed successfully!');
     return res.app;

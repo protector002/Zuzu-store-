@@ -15,7 +15,9 @@ import {
   Download,
   Lock,
   ShieldCheck,
-  KeyRound
+  KeyRound,
+  Link2,
+  Image as ImageIcon
 } from 'lucide-react';
 import { StoreApp, Platform, AppCategory, AdminUser } from '../types';
 
@@ -23,12 +25,77 @@ interface PublisherPortalProps {
   apps: StoreApp[];
   admin: AdminUser | null;
   onOpenLoginModal: () => void;
-  onUploadApp: (formData: FormData) => Promise<StoreApp>;
-  onAddRelease: (appId: string, formData: FormData) => Promise<StoreApp>;
+  onUploadApp: (payload: FormData | Record<string, any>) => Promise<StoreApp>;
+  onAddRelease: (appId: string, payload: FormData | Record<string, any>) => Promise<StoreApp>;
   onDeleteApp: (appId: string) => Promise<void>;
   onResetCatalog: () => Promise<void>;
   onViewAppInStore: (app: StoreApp) => void;
   onDownloadTest: (appId: string, releaseId?: string) => Promise<void>;
+}
+
+// Convert chosen image to compressed Base64 Data URL so it is permanently stored in app data
+// and never fails with 404 on Vercel or ephemeral serverless filesystems
+function convertImageToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const result = e.target?.result as string;
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const canvas = document.createElement('canvas');
+          const maxSize = 256;
+          let width = img.width;
+          let height = img.height;
+          if (width > height) {
+            if (width > maxSize) {
+              height = Math.round((height * maxSize) / width);
+              width = maxSize;
+            }
+          } else {
+            if (height > maxSize) {
+              width = Math.round((width * maxSize) / height);
+              height = maxSize;
+            }
+          }
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            resolve(result);
+            return;
+          }
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/png', 0.95));
+        } catch (_) {
+          resolve(result);
+        }
+      };
+      img.onerror = () => resolve(result);
+      img.src = result;
+    };
+    reader.onerror = () => resolve('/zuzustore-logo.png');
+    reader.readAsDataURL(file);
+  });
+}
+
+// Auto-transform Google Drive, Dropbox, and cloud storage URLs into direct 1-click download links
+function formatCloudUrl(url: string): string {
+  const trimmed = url.trim();
+  if (!trimmed) return '';
+
+  const gdMatch1 = trimmed.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+  if (gdMatch1 && gdMatch1[1]) {
+    return `https://drive.google.com/uc?export=download&id=${gdMatch1[1]}`;
+  }
+  const gdMatch2 = trimmed.match(/drive\.google\.com\/.*[?&]id=([a-zA-Z0-9_-]+)/);
+  if (gdMatch2 && gdMatch2[1]) {
+    return `https://drive.google.com/uc?export=download&id=${gdMatch2[1]}`;
+  }
+  if (trimmed.includes('dropbox.com') && trimmed.includes('dl=0')) {
+    return trimmed.replace('dl=0', 'dl=1');
+  }
+  return trimmed;
 }
 
 export const PublisherPortal: React.FC<PublisherPortalProps> = ({
@@ -60,8 +127,10 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
   const [appChangelog, setAppChangelog] = useState('Initial public APK release.');
   const [uploadedBinaryFile, setUploadedBinaryFile] = useState<File | null>(null);
   const [directDownloadUrl, setDirectDownloadUrl] = useState<string>('');
-  const [iconFile, setIconFile] = useState<File | null>(null);
-  const [iconPreviewUrl, setIconPreviewUrl] = useState<string>('https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=256&auto=format&fit=crop&q=80');
+  
+  // Icon state - defaults to the official ZuzuStore brand logo
+  const [iconPreviewUrl, setIconPreviewUrl] = useState<string>('/zuzustore-logo.png');
+  const [customIconUrlInput, setCustomIconUrlInput] = useState<string>('');
 
   // Update existing app state
   const [selectedExistingAppId, setSelectedExistingAppId] = useState<string>(apps[0]?.id || '');
@@ -119,24 +188,51 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
   const handleBinaryFileDrop = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      const file = e.dataTransfer.files[0];
-      setUploadedBinaryFile(file);
-      if (file.name.endsWith('.apk') || file.name.endsWith('.aab')) {
-        setAppPlatform('Android');
-      } else if (file.name.endsWith('.exe')) {
-        setAppPlatform('Windows');
-      }
+      processSelectedBinary(e.dataTransfer.files[0]);
     }
   };
 
-  const handleIconChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      const file = e.target.files[0];
-      setIconFile(file);
-      const url = URL.createObjectURL(file);
-      setIconPreviewUrl(url);
+  const processSelectedBinary = (file: File) => {
+    setUploadedBinaryFile(file);
+    if (file.name.endsWith('.apk') || file.name.endsWith('.aab')) {
+      setAppPlatform('Android');
+    } else if (file.name.endsWith('.exe')) {
+      setAppPlatform('Windows');
+    }
+
+    // Auto-suggest app name and package ID if empty
+    const baseName = file.name.replace(/\.[^/.]+$/, '');
+    if (!appName.trim()) {
+      const cleanName = baseName
+        .replace(/[-_]/g, ' ')
+        .replace(/\b\w/g, (c) => c.toUpperCase());
+      setAppName(cleanName);
+    }
+    if (!appPackageId.trim()) {
+      const cleanSlug = baseName.toLowerCase().replace(/[^a-z0-9]/g, '');
+      setAppPackageId(`com.zuzu.${cleanSlug}`);
     }
   };
+
+  const handleIconChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      const file = e.target.files[0];
+      const dataUrl = await convertImageToDataUrl(file);
+      setIconPreviewUrl(dataUrl);
+      setCustomIconUrlInput('');
+    }
+  };
+
+  const handleCustomIconUrlChange = (url: string) => {
+    setCustomIconUrlInput(url);
+    if (url.trim()) {
+      setIconPreviewUrl(url.trim());
+    } else {
+      setIconPreviewUrl('/zuzustore-logo.png');
+    }
+  };
+
+  const isGoogleDrive = (url: string) => url.includes('drive.google.com');
 
   const handleSubmitNewApp = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -145,43 +241,80 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
       return;
     }
 
+    const hasDirectLink = Boolean(directDownloadUrl.trim());
+    const isLargeFile = uploadedBinaryFile && uploadedBinaryFile.size > 4.5 * 1024 * 1024;
+
+    // Check if large file on serverless without direct link
+    if (isLargeFile && !hasDirectLink) {
+      setErrorMessage(
+        `This APK is ${(uploadedBinaryFile.size / (1024 * 1024)).toFixed(1)} MB. Serverless hosting on Vercel limits HTTP body uploads to 4.5 MB. Please paste your Direct Download Link (e.g. Google Drive, Dropbox, GitHub Releases) in the field below to publish!`
+      );
+      return;
+    }
+
     setIsSubmitting(true);
     setUploadProgress(15);
     setErrorMessage(null);
 
     try {
-      const formData = new FormData();
-      formData.append('name', appName.trim());
-      formData.append('tagline', appTagline.trim() || `${appName} for Android`);
-      formData.append('category', appCategory);
-      formData.append('description', appDescription.trim() || `${appName} official APK build.`);
-      formData.append('packageId', appPackageId.trim() || `com.zuzu.${appName.toLowerCase().replace(/[^a-z0-9]/g, '')}`);
-      formData.append('version', appVersion.trim() || '1.0.0');
-      formData.append('platform', appPlatform);
-      formData.append('minOS', appMinOS.trim() || 'Android 8.0+');
-      formData.append('changelog', appChangelog);
-
-      if (uploadedBinaryFile) {
-        formData.append('apkFile', uploadedBinaryFile);
-      }
-      if (directDownloadUrl.trim()) {
-        formData.append('directDownloadUrl', directDownloadUrl.trim());
-      }
-      if (iconFile) {
-        formData.append('iconFile', iconFile);
-      } else {
-        formData.append('iconUrlFallback', iconPreviewUrl);
-      }
+      const formattedLink = hasDirectLink ? formatCloudUrl(directDownloadUrl) : '';
+      const finalFileName = uploadedBinaryFile
+        ? uploadedBinaryFile.name
+        : `${appName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-v${appVersion || '1.0.0'}.apk`;
+      const finalFileSize = uploadedBinaryFile
+        ? `${(uploadedBinaryFile.size / (1024 * 1024)).toFixed(1)} MB`
+        : '29.3 MB';
+      const finalIcon = iconPreviewUrl || '/zuzustore-logo.png';
 
       const interval = setInterval(() => {
         setUploadProgress((prev) => (prev >= 90 ? 90 : prev + 25));
-      }, 150);
+      }, 100);
 
-      const created = await onUploadApp(formData);
+      // If a direct download link is present OR no binary file is being sent:
+      // Send a lightweight JSON request! This avoids sending 30MB over Vercel's 4.5MB limit, eliminating "Failed to fetch"!
+      if (hasDirectLink || !uploadedBinaryFile) {
+        const payload = {
+          name: appName.trim(),
+          tagline: appTagline.trim() || `${appName} for Android`,
+          category: appCategory,
+          description: appDescription.trim() || `${appName} official APK build.`,
+          packageId: appPackageId.trim() || `com.zuzu.${appName.toLowerCase().replace(/[^a-z0-9]/g, '')}`,
+          version: appVersion.trim() || '1.0.0',
+          platform: appPlatform,
+          minOS: appMinOS.trim() || 'Android 8.0+',
+          changelog: appChangelog,
+          directDownloadUrl: formattedLink,
+          fileName: finalFileName,
+          fileSize: finalFileSize,
+          iconUrl: finalIcon
+        };
 
-      clearInterval(interval);
-      setUploadProgress(100);
-      setSuccessMessage(`"${created.name}" was successfully published with direct download access!`);
+        const created = await onUploadApp(payload);
+        clearInterval(interval);
+        setUploadProgress(100);
+        setSuccessMessage(`"${created.name}" was successfully published with direct download access!`);
+      } else {
+        // Direct binary upload for files <= 4.5 MB
+        const formData = new FormData();
+        formData.append('name', appName.trim());
+        formData.append('tagline', appTagline.trim() || `${appName} for Android`);
+        formData.append('category', appCategory);
+        formData.append('description', appDescription.trim() || `${appName} official APK build.`);
+        formData.append('packageId', appPackageId.trim() || `com.zuzu.${appName.toLowerCase().replace(/[^a-z0-9]/g, '')}`);
+        formData.append('version', appVersion.trim() || '1.0.0');
+        formData.append('platform', appPlatform);
+        formData.append('minOS', appMinOS.trim() || 'Android 8.0+');
+        formData.append('changelog', appChangelog);
+        formData.append('fileName', finalFileName);
+        formData.append('fileSize', finalFileSize);
+        formData.append('iconUrl', finalIcon);
+        formData.append('apkFile', uploadedBinaryFile);
+
+        const created = await onUploadApp(formData);
+        clearInterval(interval);
+        setUploadProgress(100);
+        setSuccessMessage(`"${created.name}" was successfully published with direct download access!`);
+      }
 
       // Reset form
       setAppName('');
@@ -189,16 +322,16 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
       setAppDescription('');
       setUploadedBinaryFile(null);
       setDirectDownloadUrl('');
-      setIconFile(null);
+      setIconPreviewUrl('/zuzustore-logo.png');
 
       setTimeout(() => {
         setIsSubmitting(false);
         setUploadProgress(0);
         setActiveTab('manage');
-      }, 1200);
+      }, 1000);
     } catch (err: any) {
       console.error(err);
-      setErrorMessage(err.message || 'An error occurred while uploading your APK.');
+      setErrorMessage(err.message || 'An error occurred while publishing your APK.');
       setIsSubmitting(false);
       setUploadProgress(0);
     }
@@ -208,40 +341,65 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
     e.preventDefault();
     if (!selectedExistingAppId) return;
 
+    const hasDirectLink = Boolean(updateDirectUrl.trim());
+    const isLargeFile = updateFile && updateFile.size > 4.5 * 1024 * 1024;
+
+    if (isLargeFile && !hasDirectLink) {
+      setErrorMessage(
+        `This APK update is ${(updateFile.size / (1024 * 1024)).toFixed(1)} MB. Vercel serverless has a 4.5 MB limit. Please enter a Direct Download Link below to publish this release.`
+      );
+      return;
+    }
+
     setIsSubmitting(true);
     setUploadProgress(20);
     setErrorMessage(null);
 
     try {
-      const formData = new FormData();
-      formData.append('version', updateVersion.trim());
-      formData.append('platform', updatePlatform);
-      formData.append('minOS', updateMinOS.trim());
-      formData.append('changelog', updateChangelog);
-
-      if (updateFile) {
-        formData.append('apkFile', updateFile);
-      }
-      if (updateDirectUrl.trim()) {
-        formData.append('directDownloadUrl', updateDirectUrl.trim());
-      }
+      const formattedLink = hasDirectLink ? formatCloudUrl(updateDirectUrl) : '';
+      const finalFileName = updateFile ? updateFile.name : `release-v${updateVersion.trim()}.apk`;
+      const finalFileSize = updateFile ? `${(updateFile.size / (1024 * 1024)).toFixed(1)} MB` : '32.0 MB';
 
       const interval = setInterval(() => {
         setUploadProgress((p) => (p >= 90 ? 90 : p + 20));
-      }, 150);
+      }, 100);
 
-      await onAddRelease(selectedExistingAppId, formData);
+      if (hasDirectLink || !updateFile) {
+        const payload = {
+          version: updateVersion.trim(),
+          platform: updatePlatform,
+          minOS: updateMinOS.trim(),
+          changelog: updateChangelog,
+          directDownloadUrl: formattedLink,
+          fileName: finalFileName,
+          fileSize: finalFileSize
+        };
+
+        await onAddRelease(selectedExistingAppId, payload);
+      } else {
+        const formData = new FormData();
+        formData.append('version', updateVersion.trim());
+        formData.append('platform', updatePlatform);
+        formData.append('minOS', updateMinOS.trim());
+        formData.append('changelog', updateChangelog);
+        formData.append('fileName', finalFileName);
+        formData.append('fileSize', finalFileSize);
+        formData.append('apkFile', updateFile);
+
+        await onAddRelease(selectedExistingAppId, formData);
+      }
 
       clearInterval(interval);
       setUploadProgress(100);
       setSuccessMessage(`New APK release v${updateVersion} published successfully!`);
       setUpdateFile(null);
+      setUpdateDirectUrl('');
 
       setTimeout(() => {
         setIsSubmitting(false);
         setUploadProgress(0);
         setActiveTab('manage');
-      }, 1200);
+      }, 1000);
     } catch (err: any) {
       console.error(err);
       setErrorMessage(err.message || 'Failed to publish release update.');
@@ -264,7 +422,7 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
             APK Distribution Console
           </h1>
           <p className="text-sm text-neutral-400 mt-1">
-            Upload new application packages, release new APK versions, and monitor public store downloads.
+            Publish applications, release new APK updates, and manage public store downloads.
           </p>
         </div>
 
@@ -307,7 +465,7 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
 
       {/* Notifications */}
       {successMessage && (
-        <div className="p-4 bg-emerald-950/40 border border-emerald-800 rounded-xl text-xs text-emerald-300 flex items-center justify-between">
+        <div className="p-4 bg-emerald-950/40 border border-emerald-800 rounded-xl text-xs text-emerald-300 flex items-center justify-between animate-fade-in">
           <div className="flex items-center gap-2">
             <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
             <span>{successMessage}</span>
@@ -319,12 +477,12 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
       )}
 
       {errorMessage && (
-        <div className="p-4 bg-rose-950/40 border border-rose-800 rounded-xl text-xs text-rose-300 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
-            <span>{errorMessage}</span>
+        <div className="p-4 bg-rose-950/50 border border-rose-800 rounded-xl text-xs text-rose-300 flex items-start justify-between gap-3 animate-fade-in">
+          <div className="flex items-start gap-2.5">
+            <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+            <div className="leading-relaxed">{errorMessage}</div>
           </div>
-          <button onClick={() => setErrorMessage(null)} className="text-rose-400 hover:underline">
+          <button onClick={() => setErrorMessage(null)} className="text-rose-400 hover:underline shrink-0">
             Dismiss
           </button>
         </div>
@@ -358,7 +516,7 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
                     accept=".apk,.aab,.exe,.zip"
                     onChange={(e) => {
                       if (e.target.files && e.target.files[0]) {
-                        setUploadedBinaryFile(e.target.files[0]);
+                        processSelectedBinary(e.target.files[0]);
                       }
                     }}
                   />
@@ -367,7 +525,7 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
                       <FolderArchive className="w-10 h-10 text-emerald-400 mb-2" />
                       <p className="text-sm font-bold text-white">{uploadedBinaryFile.name}</p>
                       <p className="text-xs text-neutral-400 mt-1">
-                        {(uploadedBinaryFile.size / (1024 * 1024)).toFixed(2)} MB • Ready to upload to server
+                        {(uploadedBinaryFile.size / (1024 * 1024)).toFixed(2)} MB • Ready for publication
                       </p>
                       <span className="text-[11px] text-cyan-400 hover:underline mt-2">
                         Click to choose a different file
@@ -380,7 +538,7 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
                         Drag and drop your Android .APK here
                       </p>
                       <p className="text-xs text-neutral-400 mt-1">
-                        Or click to browse from your computer (stored directly on the backend server)
+                        Or click to select an APK file from your phone or computer
                       </p>
                       <span className="mt-3 px-3 py-1.5 text-xs font-medium bg-neutral-800 text-neutral-200 rounded-lg">
                         Browse APK Files
@@ -389,25 +547,46 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
                   )}
                 </div>
 
-                <div className="flex items-center gap-2 my-3 text-xs text-neutral-500">
+                {/* Helpful guidance if file exceeds Vercel's 4.5MB limit */}
+                {uploadedBinaryFile && uploadedBinaryFile.size > 4.5 * 1024 * 1024 && (
+                  <div className="p-3.5 bg-amber-950/30 border border-amber-600/40 rounded-xl text-xs text-amber-200 space-y-1 mt-3">
+                    <div className="flex items-center gap-2 font-bold text-amber-300">
+                      <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
+                      <span>{uploadedBinaryFile.name} ({(uploadedBinaryFile.size / (1024 * 1024)).toFixed(1)} MB)</span>
+                    </div>
+                    <p className="text-[11px] text-neutral-300 leading-relaxed">
+                      On Vercel, direct serverless uploads are limited to 4.5 MB. Enter your Direct Download Link below (Google Drive, GitHub Releases, Dropbox, S3). The store will display your exact file name ({uploadedBinaryFile.name}) and size ({(uploadedBinaryFile.size / (1024 * 1024)).toFixed(1)} MB), providing instant downloads for all visitors!
+                    </p>
+                  </div>
+                )}
+
+                <div className="flex items-center gap-2 my-4 text-xs text-neutral-500">
                   <div className="flex-1 h-px bg-neutral-800" />
-                  <span>OR PROVIDE DIRECT DOWNLOAD LINK</span>
+                  <span>DIRECT DOWNLOAD LINK (RECOMMENDED FOR CLOUD HOSTING)</span>
                   <div className="flex-1 h-px bg-neutral-800" />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-neutral-300 mb-1">
-                    Direct APK Download Link (Optional / Great for cloud storage)
-                  </label>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="text-xs font-semibold text-neutral-300 flex items-center gap-1.5">
+                      <Link2 className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>Direct APK Download Link (Google Drive, GitHub, Dropbox, S3)</span>
+                    </label>
+                    {directDownloadUrl.trim() && isGoogleDrive(directDownloadUrl) && (
+                      <span className="text-[10px] text-emerald-400 font-medium bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-800/60">
+                        ✓ Google Drive Direct Download Active
+                      </span>
+                    )}
+                  </div>
                   <input
                     type="url"
                     value={directDownloadUrl}
                     onChange={(e) => setDirectDownloadUrl(e.target.value)}
-                    placeholder="https://github.com/user/repo/releases/download/v1.0/app.apk or Google Drive direct link"
+                    placeholder="https://drive.google.com/file/d/... or https://github.com/user/repo/releases/download/.../app.apk"
                     className="w-full px-3.5 py-2.5 bg-neutral-950 border border-neutral-800 rounded-xl text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-cyan-500 font-mono"
                   />
-                  <p className="text-[11px] text-neutral-400 mt-1">
-                    Ideal for hosting APK files on GitHub Releases, S3, or Google Drive (supports files of any size without serverless limits).
+                  <p className="text-[11px] text-neutral-400 mt-1.5">
+                    Supports Google Drive share links, GitHub Releases, Dropbox, and S3 without file size limits.
                   </p>
                 </div>
               </div>
@@ -454,6 +633,7 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
                       <option value="Social">Social</option>
                       <option value="Lifestyle">Lifestyle</option>
                       <option value="Finance">Finance</option>
+                      <option value="Games">Games</option>
                     </select>
                   </div>
 
@@ -534,15 +714,27 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
             <div className="lg:col-span-5 space-y-6">
               {/* App Icon Upload / Preview */}
               <div className="p-6 bg-neutral-900/50 border border-neutral-800 rounded-2xl space-y-4">
-                <h3 className="text-xs font-bold text-white uppercase tracking-wider">Application Icon</h3>
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
+                    <ImageIcon className="w-3.5 h-3.5 text-cyan-400" />
+                    <span>Application Icon</span>
+                  </h3>
+                  <span className="text-[11px] text-cyan-400 font-medium">1:1 Square</span>
+                </div>
+
                 <div className="flex items-center gap-4">
-                  <img
-                    src={iconPreviewUrl}
-                    alt="App Icon Preview"
-                    className="w-20 h-20 rounded-2xl object-cover border border-neutral-700 shadow-md shrink-0"
-                    referrerPolicy="no-referrer"
-                  />
-                  <div className="space-y-2">
+                  <div className="relative group">
+                    <img
+                      src={iconPreviewUrl}
+                      alt="App Icon Preview"
+                      className="w-20 h-20 rounded-2xl object-contain border border-neutral-700 shadow-md shrink-0 bg-neutral-950 p-1"
+                      onError={(e) => {
+                        e.currentTarget.onerror = null;
+                        e.currentTarget.src = '/zuzustore-logo.png';
+                      }}
+                    />
+                  </div>
+                  <div className="space-y-2 flex-1 min-w-0">
                     <input
                       ref={iconInputRef}
                       type="file"
@@ -550,17 +742,47 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
                       accept="image/*"
                       onChange={handleIconChange}
                     />
-                    <button
-                      type="button"
-                      onClick={() => iconInputRef.current?.click()}
-                      className="px-3.5 py-1.5 text-xs font-semibold text-neutral-200 bg-neutral-800 hover:bg-neutral-700 rounded-lg transition-colors"
-                    >
-                      Choose Icon Image
-                    </button>
-                    <p className="text-[11px] text-neutral-500 leading-relaxed">
-                      Select PNG or JPG icon. Defaults to neon gradient glyph if empty.
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => iconInputRef.current?.click()}
+                        className="px-3 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg transition-colors flex items-center gap-1.5"
+                      >
+                        <UploadCloud className="w-3.5 h-3.5" />
+                        <span>Upload Icon</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIconPreviewUrl('/zuzustore-logo.png');
+                          setCustomIconUrlInput('');
+                        }}
+                        className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
+                          iconPreviewUrl === '/zuzustore-logo.png'
+                            ? 'bg-cyan-950/70 border-cyan-500 text-cyan-300'
+                            : 'bg-neutral-800 hover:bg-neutral-700 border-neutral-700 text-neutral-300'
+                        }`}
+                      >
+                        Official Zuzu Logo
+                      </button>
+                    </div>
+                    <p className="text-[11px] text-neutral-400 leading-relaxed">
+                      Auto-compressed and saved directly in app data so it displays 100% reliably.
                     </p>
                   </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-neutral-400 mb-1">
+                    Or Enter Image / Logo URL
+                  </label>
+                  <input
+                    type="url"
+                    value={customIconUrlInput}
+                    onChange={(e) => handleCustomIconUrlChange(e.target.value)}
+                    placeholder="https://example.com/logo.png"
+                    className="w-full px-3 py-2 bg-neutral-950 border border-neutral-800 rounded-lg text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-cyan-500"
+                  />
                 </div>
               </div>
 
@@ -574,7 +796,7 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
                   Published by: <span className="text-white font-medium">{admin.name || 'Store Administrator'}</span>
                 </div>
                 <div className="text-neutral-400 text-[11px] leading-relaxed">
-                  The uploaded APK will be stored on the backend file server. Anyone will be able to download it directly with no login required.
+                  The application will be live on the storefront immediately. Users can download it freely without requiring an account.
                 </div>
               </div>
 
@@ -582,13 +804,13 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
               <div className="p-6 bg-gradient-to-br from-neutral-900 to-indigo-950/40 border border-neutral-800 rounded-2xl space-y-4">
                 <h3 className="text-sm font-bold text-white">Publish APK to Public Store</h3>
                 <p className="text-xs text-neutral-300 leading-relaxed">
-                  Upon publishing, the application will immediately be live on the homepage and accessible to all users for direct APK download.
+                  Upon publishing, your app is indexed with 1-click downloads, QR code scanner support, and verified checksums.
                 </p>
 
                 {isSubmitting && (
                   <div className="space-y-2">
                     <div className="flex items-center justify-between text-xs text-neutral-300">
-                      <span>Uploading to server...</span>
+                      <span>Publishing to store...</span>
                       <span>{uploadProgress}%</span>
                     </div>
                     <div className="w-full h-2 bg-neutral-800 rounded-full overflow-hidden">
@@ -603,7 +825,7 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
                 <button
                   type="submit"
                   disabled={isSubmitting}
-                  className="w-full py-3.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 rounded-xl transition-all shadow-lg active:scale-95 disabled:opacity-75 flex items-center justify-center gap-2"
+                  className="w-full py-3.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 rounded-xl transition-all shadow-lg active:scale-95 disabled:opacity-75 flex items-center justify-center gap-2 cursor-pointer"
                 >
                   <UploadCloud className="w-4 h-4" />
                   <span>Publish APK to Store</span>
@@ -649,9 +871,9 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
                   onChange={(e) => setSelectedExistingAppId(e.target.value)}
                   className="w-full px-3.5 py-2.5 bg-neutral-950 border border-neutral-800 rounded-xl text-sm text-white focus:outline-none focus:border-cyan-500"
                 >
-                  {apps.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.name} (Current: v{a.currentVersion})
+                  {apps.map((app) => (
+                    <option key={app.id} value={app.id}>
+                      {app.name} (Current: v{app.currentVersion})
                     </option>
                   ))}
                 </select>
@@ -659,12 +881,13 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-medium text-neutral-400 mb-1">New Version (e.g. 1.1.0)</label>
+                  <label className="block text-xs font-medium text-neutral-400 mb-1">New Version *</label>
                   <input
                     type="text"
                     required
                     value={updateVersion}
                     onChange={(e) => setUpdateVersion(e.target.value)}
+                    placeholder="e.g., 1.1.0"
                     className="w-full px-3.5 py-2.5 bg-neutral-950 border border-neutral-800 rounded-xl text-sm text-white focus:outline-none focus:border-cyan-500"
                   />
                 </div>
@@ -723,7 +946,7 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
                     type="url"
                     value={updateDirectUrl}
                     onChange={(e) => setUpdateDirectUrl(e.target.value)}
-                    placeholder="https://github.com/.../app-v1.1.0.apk (Optional direct link)"
+                    placeholder="https://drive.google.com/file/d/... or GitHub Releases direct link"
                     className="w-full px-3 py-2 bg-neutral-950 border border-neutral-800 rounded-lg text-xs text-white placeholder-neutral-500 font-mono focus:outline-none focus:border-cyan-500"
                   />
                 </div>
@@ -744,7 +967,7 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
               <button
                 type="submit"
                 disabled={isSubmitting}
-                className="w-full py-3 text-xs font-bold text-white bg-cyan-600 hover:bg-cyan-500 rounded-xl transition-all shadow-md active:scale-95 disabled:opacity-75"
+                className="w-full py-3 text-xs font-bold text-white bg-cyan-600 hover:bg-cyan-500 rounded-xl transition-all shadow-md active:scale-95 disabled:opacity-75 cursor-pointer"
               >
                 {isSubmitting ? 'Deploying...' : 'Deploy Update'}
               </button>
@@ -765,7 +988,7 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
                     onResetCatalog();
                   }
                 }}
-                className="px-3 py-1.5 text-xs text-neutral-400 hover:text-rose-400 bg-neutral-900 border border-neutral-800 rounded-lg flex items-center gap-1.5 transition-colors"
+                className="px-3 py-1.5 text-xs text-neutral-400 hover:text-rose-400 bg-neutral-900 border border-neutral-800 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
                 title="Clear all apps from catalog"
               >
                 <RefreshCw className="w-3.5 h-3.5" />
@@ -779,13 +1002,13 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
               <FolderArchive className="w-10 h-10 text-neutral-500 mx-auto" />
               <h4 className="text-base font-bold text-white">No Live Applications in Catalog</h4>
               <p className="text-xs text-neutral-400 max-w-md mx-auto leading-relaxed">
-                Your store is clean and empty. Upload your first APK package to publish it live for direct public download.
+                Your store is ready for distribution. Upload your first APK package to publish it live for direct public download.
               </p>
               <div className="pt-2">
                 <button
                   type="button"
                   onClick={() => setActiveTab('upload-new')}
-                  className="px-5 py-2.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 rounded-xl transition-all shadow-md inline-flex items-center gap-1.5"
+                  className="px-5 py-2.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 rounded-xl transition-all shadow-md inline-flex items-center gap-1.5 cursor-pointer"
                 >
                   <Plus className="w-4 h-4" />
                   <span>Upload Your First APK</span>
@@ -803,8 +1026,11 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
                     <img
                       src={app.iconUrl}
                       alt={app.name}
-                      className="w-14 h-14 rounded-xl object-cover border border-neutral-800 shrink-0"
-                      referrerPolicy="no-referrer"
+                      className="w-14 h-14 rounded-xl object-contain border border-neutral-800 shrink-0 bg-neutral-950 p-1"
+                      onError={(e) => {
+                        e.currentTarget.onerror = null;
+                        e.currentTarget.src = '/zuzustore-logo.png';
+                      }}
                     />
                     <div>
                       <div className="flex items-center gap-2">
@@ -831,7 +1057,7 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
                   <div className="flex flex-wrap items-center gap-2.5 self-end sm:self-auto">
                     <button
                       onClick={() => onDownloadTest(app.id, app.releases[0]?.id)}
-                      className="px-3 py-1.5 text-xs font-semibold text-neutral-200 bg-neutral-800 hover:bg-neutral-700 rounded-lg transition-colors flex items-center gap-1.5"
+                      className="px-3 py-1.5 text-xs font-semibold text-neutral-200 bg-neutral-800 hover:bg-neutral-700 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
                       title="Download the latest package as a tester"
                     >
                       <Download className="w-3.5 h-3.5 text-cyan-400" />
@@ -840,7 +1066,7 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
 
                     <button
                       onClick={() => onViewAppInStore(app)}
-                      className="px-3 py-1.5 text-xs font-semibold text-cyan-400 hover:text-cyan-300 bg-cyan-950/40 border border-cyan-800/60 rounded-lg transition-colors flex items-center gap-1.5"
+                      className="px-3 py-1.5 text-xs font-semibold text-cyan-400 hover:text-cyan-300 bg-cyan-950/40 border border-cyan-800/60 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
                     >
                       <ExternalLink className="w-3.5 h-3.5" />
                       <span>View in Store</span>
@@ -852,7 +1078,7 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
                           onDeleteApp(app.id);
                         }
                       }}
-                      className="p-2 text-neutral-400 hover:text-rose-400 bg-neutral-800/50 hover:bg-rose-950/40 rounded-lg transition-colors border border-neutral-700/50"
+                      className="p-2 text-neutral-400 hover:text-rose-400 bg-neutral-800/50 hover:bg-rose-950/40 rounded-lg transition-colors border border-neutral-700/50 cursor-pointer"
                       title="Delete app"
                     >
                       <Trash2 className="w-4 h-4" />

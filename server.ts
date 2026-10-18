@@ -98,33 +98,86 @@ export interface StoreApp {
 // Initial seed apps - start empty so only authentic admin-published APKs appear
 const INITIAL_APPS: StoreApp[] = [];
 
-// Helper: Read apps
+// In-memory cache for fast serverless responses
+let memoryApps: StoreApp[] = [];
+
+// URL Normalizer for cloud storage direct downloads (Google Drive, Dropbox, OneDrive, etc.)
+export function normalizeDownloadUrl(url?: string): string | undefined {
+  if (!url) return undefined;
+  const trimmed = String(url).trim();
+  if (!trimmed) return undefined;
+
+  // Google Drive: https://drive.google.com/file/d/ID/view -> https://drive.google.com/uc?export=download&id=ID
+  const gdMatch1 = trimmed.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+  if (gdMatch1 && gdMatch1[1]) {
+    return `https://drive.google.com/uc?export=download&id=${gdMatch1[1]}`;
+  }
+  const gdMatch2 = trimmed.match(/drive\.google\.com\/.*[?&]id=([a-zA-Z0-9_-]+)/);
+  if (gdMatch2 && gdMatch2[1]) {
+    return `https://drive.google.com/uc?export=download&id=${gdMatch2[1]}`;
+  }
+
+  // Dropbox: convert ?dl=0 to ?dl=1 for direct download
+  if (trimmed.includes('dropbox.com') && trimmed.includes('dl=0')) {
+    return trimmed.replace('dl=0', 'dl=1');
+  }
+
+  return trimmed;
+}
+
+// Helper: Read apps with memory and multi-path fallback
 function getApps(): StoreApp[] {
   try {
-    if (!fs.existsSync(APPS_FILE)) {
-      fs.writeFileSync(APPS_FILE, '[]', 'utf-8');
-      return [];
+    if (fs.existsSync(APPS_FILE)) {
+      const data = fs.readFileSync(APPS_FILE, 'utf-8');
+      const parsed = JSON.parse(data);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        memoryApps = parsed;
+        return parsed;
+      }
     }
-    const data = fs.readFileSync(APPS_FILE, 'utf-8');
-    const parsed = JSON.parse(data);
-    if (!Array.isArray(parsed)) {
-      fs.writeFileSync(APPS_FILE, '[]', 'utf-8');
-      return [];
+
+    // Check project data directory (important on Vercel deployment)
+    const rootDataFile = path.resolve(process.cwd(), 'data', 'apps.json');
+    if (fs.existsSync(rootDataFile)) {
+      const data = fs.readFileSync(rootDataFile, 'utf-8');
+      const parsed = JSON.parse(data);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        memoryApps = parsed;
+        try {
+          fs.writeFileSync(APPS_FILE, JSON.stringify(parsed, null, 2), 'utf-8');
+        } catch (_) {}
+        return parsed;
+      }
     }
-    return parsed;
+
+    if (memoryApps.length > 0) {
+      return memoryApps;
+    }
+
+    return [];
   } catch (err) {
     console.error('Error reading apps file:', err);
-    return [];
+    return memoryApps || [];
   }
 }
 
 // Helper: Save apps
 function saveApps(apps: StoreApp[]) {
+  memoryApps = apps;
   try {
     fs.writeFileSync(APPS_FILE, JSON.stringify(apps, null, 2), 'utf-8');
   } catch (err) {
     console.error('Error saving apps file:', err);
   }
+
+  // Also try saving to root data directory if accessible
+  try {
+    const rootDataDir = path.resolve(process.cwd(), 'data');
+    if (fs.existsSync(rootDataDir)) {
+      fs.writeFileSync(path.join(rootDataDir, 'apps.json'), JSON.stringify(apps, null, 2), 'utf-8');
+    }
+  } catch (_) {}
 }
 
 // Helper: Sessions
@@ -183,11 +236,33 @@ const upload = multer({
 
 // Create Express App
 const app = express();
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(express.json({ limit: '30mb' }));
+app.use(express.urlencoded({ extended: true, limit: '30mb' }));
 
 // Static uploads serving for uploaded icons and screenshots
 app.use('/uploads', express.static(UPLOAD_DIR));
+
+// Conditional Multer middleware: only processes multipart/form-data requests
+// This allows clean JSON submissions (e.g. cloud direct links) to bypass multer completely
+const conditionalUpload = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (req.is('multipart/form-data')) {
+    upload.fields([
+      { name: 'apkFile', maxCount: 1 },
+      { name: 'iconFile', maxCount: 1 },
+      { name: 'screenshotFiles', maxCount: 6 }
+    ])(req, res, next);
+  } else {
+    next();
+  }
+};
+
+const conditionalSingleUpload = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (req.is('multipart/form-data')) {
+    upload.single('apkFile')(req, res, next);
+  } else {
+    next();
+  }
+};
 
 // Admin authentication middleware
 const requireAdmin = (req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -364,9 +439,10 @@ app.get('/api/apps/:id/download', (req, res) => {
 
   const fileName = targetRelease.fileName || `${targetApp.slug}-v${targetRelease.version}.apk`;
 
-  // If a direct external download URL was configured (e.g., hosted on GitHub Releases, Cloud Storage)
+  // If a direct external download URL was configured (e.g., hosted on Google Drive, GitHub Releases, Cloud Storage)
   if (targetRelease.directDownloadUrl) {
-    return res.redirect(targetRelease.directDownloadUrl);
+    const directUrl = normalizeDownloadUrl(targetRelease.directDownloadUrl) || targetRelease.directDownloadUrl;
+    return res.redirect(directUrl);
   }
 
   // If a real physical file was uploaded, stream it directly
@@ -474,11 +550,7 @@ app.get('/api/stats', (req, res) => {
 app.post(
   '/api/admin/apps',
   requireAdmin,
-  upload.fields([
-    { name: 'apkFile', maxCount: 1 },
-    { name: 'iconFile', maxCount: 1 },
-    { name: 'screenshotFiles', maxCount: 6 }
-  ]),
+  conditionalUpload,
   (req, res) => {
     try {
       const {
@@ -493,16 +565,19 @@ app.post(
         changelog,
         architecture,
         permissions,
+        iconUrl,
         iconUrlFallback,
         heroUrlFallback,
-        directDownloadUrl
+        directDownloadUrl,
+        fileName: customFileName,
+        fileSize: customFileSize
       } = req.body;
 
       if (!name) {
         return res.status(400).json({ error: 'Application name is required.' });
       }
 
-      const files = req.files as { [fieldname: string]: Express.Multer.File[] };
+      const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
       const apk = files?.apkFile?.[0];
       const icon = files?.iconFile?.[0];
       const screenshots = files?.screenshotFiles || [];
@@ -516,8 +591,8 @@ app.post(
       const appId = `app-${Date.now()}`;
       const releaseId = `rel-${Date.now()}`;
 
-      let fileSize = '32.4 MB';
-      let fileName = `${slug}-v${version || '1.0.0'}.apk`;
+      let fileSize = customFileSize || '29.3 MB';
+      let fileName = customFileName || `${slug}-v${version || '1.0.0'}.apk`;
       let sha256Checksum = crypto.randomBytes(32).toString('hex');
       let apkFilePath: string | undefined = undefined;
 
@@ -535,15 +610,20 @@ app.post(
         }
       }
 
-      const iconUrl = icon
-        ? `/uploads/images/${path.basename(icon.path)}`
-        : iconUrlFallback || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=256&auto=format&fit=crop&q=80';
+      // Format direct download URL (handles Google Drive, Dropbox, etc.)
+      const formattedDirectUrl = normalizeDownloadUrl(directDownloadUrl);
+
+      // Icon: Priority to direct string (Base64 data URI or image URL), then uploaded icon, then fallback/official logo
+      const finalIconUrl =
+        iconUrl ||
+        (icon ? `/uploads/images/${path.basename(icon.path)}` : null) ||
+        iconUrlFallback ||
+        '/zuzustore-logo.png';
 
       const screenshotUrls = screenshots.length
         ? screenshots.map((s) => `/uploads/images/${path.basename(s.path)}`)
         : [
-            'https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?w=600&auto=format&fit=crop&q=80',
-            'https://images.unsplash.com/photo-1551288049-bebda4e38f71?w=600&auto=format&fit=crop&q=80'
+            '/zuzustore-logo.png'
           ];
 
       const changelogList = (changelog || 'Initial release on Zuzu Store.')
@@ -567,7 +647,7 @@ app.post(
         sha256Checksum,
         isLatest: true,
         filePath: apkFilePath,
-        directDownloadUrl: directDownloadUrl ? String(directDownloadUrl).trim() : undefined
+        directDownloadUrl: formattedDirectUrl
       };
 
       const newApp: StoreApp = {
@@ -576,8 +656,8 @@ app.post(
         name: name.trim(),
         tagline: tagline || `${name} for ${targetPlatform}`,
         description: description || `${name} official mobile installation build.`,
-        iconUrl,
-        heroImageUrl: heroUrlFallback || screenshotUrls[0] || iconUrl,
+        iconUrl: finalIconUrl,
+        heroImageUrl: heroUrlFallback || finalIconUrl,
         screenshots: screenshotUrls,
         category: category || 'Productivity',
         developer: {
@@ -596,7 +676,7 @@ app.post(
           [targetPlatform]: minOS || 'Android 8.0+'
         },
         permissions: permissions
-          ? permissions.split('\n').filter(Boolean)
+          ? (Array.isArray(permissions) ? permissions : String(permissions).split('\n')).filter(Boolean)
           : ['android.permission.INTERNET', 'android.permission.ACCESS_NETWORK_STATE'],
         features: [
           {
@@ -635,11 +715,19 @@ app.post(
 app.post(
   '/api/admin/apps/:id/releases',
   requireAdmin,
-  upload.single('apkFile'),
+  conditionalSingleUpload,
   (req, res) => {
     try {
       const { id } = req.params;
-      const { version, platform, minOS, changelog, directDownloadUrl } = req.body;
+      const {
+        version,
+        platform,
+        minOS,
+        changelog,
+        directDownloadUrl,
+        fileName: customFileName,
+        fileSize: customFileSize
+      } = req.body;
       const file = req.file;
 
       if (!version) {
@@ -656,8 +744,8 @@ app.post(
       const targetApp = apps[appIndex];
       const targetPlatform = platform || 'Android';
 
-      let fileSize = '35.0 MB';
-      let fileName = `${targetApp.slug}-v${version}.apk`;
+      let fileSize = customFileSize || '32.0 MB';
+      let fileName = customFileName || `${targetApp.slug}-v${version}.apk`;
       let sha256Checksum = crypto.randomBytes(32).toString('hex');
       let apkFilePath: string | undefined = undefined;
 
@@ -673,6 +761,8 @@ app.post(
           // fallback
         }
       }
+
+      const formattedDirectUrl = normalizeDownloadUrl(directDownloadUrl);
 
       // Mark older releases of same platform as not latest
       targetApp.releases.forEach((r) => {
@@ -700,7 +790,7 @@ app.post(
         sha256Checksum,
         isLatest: true,
         filePath: apkFilePath,
-        directDownloadUrl: directDownloadUrl ? String(directDownloadUrl).trim() : undefined
+        directDownloadUrl: formattedDirectUrl
       };
 
       targetApp.releases.unshift(newRelease);
@@ -724,6 +814,22 @@ app.post(
     }
   }
 );
+
+// Admin: Sync client-side cached apps to server (essential for Vercel cold restarts)
+app.post('/api/admin/sync', requireAdmin, (req, res) => {
+  const { apps } = req.body;
+  if (!Array.isArray(apps)) {
+    return res.status(400).json({ error: 'Apps array required for sync.' });
+  }
+
+  const current = getApps();
+  if (current.length === 0 && apps.length > 0) {
+    saveApps(apps);
+    return res.json({ success: true, message: `Synced ${apps.length} apps from client cache.`, count: apps.length });
+  }
+
+  return res.json({ success: true, count: current.length });
+});
 
 // Admin: Delete an app
 app.delete('/api/admin/apps/:id', requireAdmin, (req, res) => {

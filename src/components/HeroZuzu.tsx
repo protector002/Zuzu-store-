@@ -64,10 +64,14 @@ export const HeroZuzu: React.FC<HeroZuzuProps> = ({
             {/* App Header Lockup */}
             <div className="flex items-start gap-4 sm:gap-5">
               <img
-                src={app.iconUrl}
+                src={app.iconUrl || '/zuzustore-logo.png'}
                 alt={`${app.name} Icon`}
-                className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl shadow-2xl border border-neutral-800 object-cover shrink-0"
+                className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl shadow-2xl border border-neutral-800 object-contain shrink-0 bg-neutral-950 p-1"
                 referrerPolicy="no-referrer"
+                onError={(e) => {
+                  e.currentTarget.onerror = null;
+                  e.currentTarget.src = '/zuzustore-logo.png';
+                }}
               />
               <div>
                 <h1 className="text-3xl sm:text-4xl lg:text-5xl font-black tracking-tight text-white">
@@ -199,10 +203,14 @@ export const HeroZuzu: React.FC<HeroZuzuProps> = ({
               onClick={() => onPreviewScreenshot(0)}
             >
               <img
-                src={app.heroImageUrl}
+                src={app.heroImageUrl || app.iconUrl || '/zuzustore-logo.png'}
                 alt={`${app.name} Interface`}
                 className="w-full h-auto object-cover transform transition-transform duration-500 group-hover:scale-[1.02]"
                 referrerPolicy="no-referrer"
+                onError={(e) => {
+                  e.currentTarget.onerror = null;
+                  e.currentTarget.src = '/zuzustore-logo.png';
+                }}
               />
               <div className="absolute inset-0 bg-gradient-to-t from-neutral-950/85 via-neutral-950/20 to-transparent flex items-end p-5">
                 <div className="w-full flex items-center justify-between text-xs">
@@ -229,6 +237,10 @@ export const HeroZuzu: React.FC<HeroZuzuProps> = ({
                       alt={`Screenshot ${idx + 1}`}
                       className="w-full h-full object-cover transition-transform group-hover:scale-105"
                       referrerPolicy="no-referrer"
+                      onError={(e) => {
+                        e.currentTarget.onerror = null;
+                        e.currentTarget.src = '/zuzustore-logo.png';
+                      }}
                     />
                     <div className="absolute inset-0 bg-black/25 group-hover:bg-transparent transition-colors" />
                     <span className="absolute bottom-2 left-2 text-[10px] bg-black/75 backdrop-blur-sm px-2 py-0.5 rounded text-white font-medium">

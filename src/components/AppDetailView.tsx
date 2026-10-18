@@ -111,10 +111,14 @@ export const AppDetailView: React.FC<AppDetailViewProps> = ({
       <div className="bg-neutral-900/60 border border-neutral-800 rounded-3xl p-6 sm:p-8">
         <div className="flex flex-col sm:flex-row items-start gap-6">
           <img
-            src={app.iconUrl}
+            src={app.iconUrl || '/zuzustore-logo.png'}
             alt={app.name}
-            className="w-24 h-24 sm:w-28 sm:h-28 rounded-2xl object-cover border border-neutral-800 shadow-xl shrink-0"
+            className="w-24 h-24 sm:w-28 sm:h-28 rounded-2xl object-contain border border-neutral-800 shadow-xl shrink-0 bg-neutral-950 p-1"
             referrerPolicy="no-referrer"
+            onError={(e) => {
+              e.currentTarget.onerror = null;
+              e.currentTarget.src = '/zuzustore-logo.png';
+            }}
           />
           <div className="flex-1 min-w-0">
             <div className="flex flex-wrap items-center gap-2 text-xs text-neutral-400 mb-1">
@@ -209,10 +213,14 @@ export const AppDetailView: React.FC<AppDetailViewProps> = ({
                 className="group relative rounded-2xl overflow-hidden border border-neutral-800 hover:border-neutral-700 bg-neutral-900 aspect-[16/10] transition-all"
               >
                 <img
-                  src={shot}
+                  src={shot || '/zuzustore-logo.png'}
                   alt={`Screenshot ${idx + 1}`}
                   className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                   referrerPolicy="no-referrer"
+                  onError={(e) => {
+                    e.currentTarget.onerror = null;
+                    e.currentTarget.src = '/zuzustore-logo.png';
+                  }}
                 />
                 <div className="absolute inset-0 bg-black/25 group-hover:bg-transparent transition-colors" />
                 <span className="absolute bottom-2 left-2 text-[10px] bg-black/75 backdrop-blur-sm text-neutral-200 px-2 py-0.5 rounded font-medium">
