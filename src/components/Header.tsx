@@ -24,20 +24,27 @@ export const Header: React.FC<HeaderProps> = ({
   onLogout,
 }) => {
   return (
-    <header className="sticky top-0 z-40 w-full border-b border-neutral-800/80 bg-neutral-950/85 backdrop-blur-md">
+    <header className="sticky top-0 z-40 w-full border-b border-neutral-800/80 bg-neutral-950/90 backdrop-blur-md">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-4 sm:gap-8">
-        {/* Brand */}
+        {/* Brand with Official Logo */}
         <button
           onClick={() => onNavigate('store')}
-          className="text-base sm:text-lg font-bold tracking-tight text-white hover:text-cyan-400 transition-colors whitespace-nowrap shrink-0 flex items-center gap-2.5 text-left"
+          className="text-base sm:text-lg font-bold tracking-tight text-white hover:text-cyan-400 transition-colors whitespace-nowrap shrink-0 flex items-center gap-2.5 text-left group"
         >
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-cyan-400 to-indigo-600 flex items-center justify-center text-white font-black text-sm shadow-md">
-            APK
+          <div className="relative">
+            <div className="absolute -inset-0.5 bg-gradient-to-r from-cyan-400 to-purple-600 rounded-xl blur-xs opacity-70 group-hover:opacity-100 transition duration-300" />
+            <img
+              src="/zuzustore-logo.png"
+              alt="ZuzuStore Logo"
+              className="relative w-9 h-9 rounded-xl object-contain shadow-md border border-cyan-400/40"
+            />
           </div>
           <div>
-            <span className="font-extrabold">APK Store</span>
-            <span className="hidden sm:inline-block text-[10px] ml-2 px-1.5 py-0.5 rounded bg-cyan-950/60 border border-cyan-800/50 text-cyan-400 font-mono font-normal">
-              Direct Hub
+            <span className="font-black text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 via-sky-300 to-blue-400 tracking-tight text-lg">
+              ZuzuStore
+            </span>
+            <span className="hidden sm:inline-block text-[10px] ml-2 px-1.5 py-0.5 rounded bg-cyan-950/70 border border-cyan-800/50 text-cyan-300 font-mono font-normal">
+              APK Hub
             </span>
           </div>
         </button>
@@ -111,7 +118,7 @@ export const Header: React.FC<HeaderProps> = ({
           {hasApps && onQuickDownload && (
             <button
               onClick={onQuickDownload}
-              className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-neutral-200 bg-neutral-900 hover:bg-neutral-800 border border-neutral-700/80 rounded-lg transition-colors whitespace-nowrap"
+              className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-neutral-200 bg-neutral-900 hover:bg-neutral-800 border border-neutral-700/80 rounded-lg transition-colors whitespace-nowrap shadow-sm"
               title="Download latest APK directly without signing in"
             >
               <Download className="w-3.5 h-3.5 text-cyan-400" />
@@ -122,10 +129,9 @@ export const Header: React.FC<HeaderProps> = ({
           {/* Admin Authentication Status */}
           {admin ? (
             <div className="flex items-center gap-2">
-              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-950/50 border border-emerald-800/60 text-emerald-300 text-[11px] font-medium">
+              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-950/50 border border-emerald-800/60 text-emerald-300 text-[11px] font-semibold">
                 <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                <span className="hidden md:inline truncate max-w-[150px]">John Sseruwagi</span>
-                <span className="md:hidden">Admin</span>
+                <span>Admin</span>
               </div>
               <button
                 onClick={onLogout}
@@ -139,7 +145,7 @@ export const Header: React.FC<HeaderProps> = ({
             <button
               onClick={onOpenLoginModal}
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-neutral-300 hover:text-white bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 rounded-lg transition-colors"
-              title="Admin account required only to publish APKs"
+              title="Admin sign-in to publish and manage APKs"
             >
               <LogIn className="w-3.5 h-3.5 text-cyan-400" />
               <span>Admin Login</span>
@@ -158,7 +164,7 @@ export const Header: React.FC<HeaderProps> = ({
           ) : (
             <button
               onClick={() => onNavigate('upload')}
-              className="px-3.5 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg transition-colors whitespace-nowrap flex items-center gap-1.5 shadow-sm"
+              className="px-3.5 py-1.5 text-xs font-bold text-white bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 rounded-lg transition-colors whitespace-nowrap flex items-center gap-1.5 shadow-md shadow-cyan-950/40"
             >
               <UploadCloud className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">Publish APK</span>

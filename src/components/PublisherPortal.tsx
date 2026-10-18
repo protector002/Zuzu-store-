@@ -92,14 +92,14 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
             </p>
           </div>
 
-          <div className="p-4 bg-neutral-950 border border-neutral-800 rounded-2xl text-xs text-neutral-300 text-left space-y-2">
+          <div className="p-4 bg-neutral-950 border border-neutral-800 rounded-2xl text-xs text-neutral-300 text-left space-y-1.5">
             <div className="flex items-center gap-2 text-cyan-400 font-semibold">
               <ShieldCheck className="w-4 h-4" />
-              <span>Configured Administrator Account</span>
+              <span>Protected Administrator Portal</span>
             </div>
-            <div className="font-mono text-neutral-200">
-              Email: <span className="text-white font-bold">sseruwagijohn452@gmail.com</span>
-            </div>
+            <p className="text-neutral-400 text-[11px] leading-relaxed">
+              Only the store administrator can publish and manage APK packages. Sign in using your private administrator credentials.
+            </p>
           </div>
 
           <div>
@@ -258,7 +258,7 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
           <div className="flex items-center gap-2 text-xs text-cyan-400 font-semibold uppercase tracking-wider mb-1">
             <span>Publisher Portal</span>
             <span>•</span>
-            <span className="text-emerald-400">Logged in as {admin.email}</span>
+            <span className="text-emerald-400">Authenticated Administrator</span>
           </div>
           <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
             APK Distribution Console
@@ -571,7 +571,7 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
                   <span>Authenticated Publisher</span>
                 </div>
                 <div className="text-neutral-300">
-                  Published by: <span className="text-white font-medium">John Sseruwagi ({admin.email})</span>
+                  Published by: <span className="text-white font-medium">{admin.name || 'Store Administrator'}</span>
                 </div>
                 <div className="text-neutral-400 text-[11px] leading-relaxed">
                   The uploaded APK will be stored on the backend file server. Anyone will be able to download it directly with no login required.

@@ -19,5 +19,12 @@
     "role": "admin",
     "createdAt": 1792329043314,
     "expiresAt": 1794921043314
+  },
+  "942454ea6c37fd5e987d3bd7ed4a333fe313c70fe1d6fbb5647d55c2f7b1b5d3": {
+    "token": "942454ea6c37fd5e987d3bd7ed4a333fe313c70fe1d6fbb5647d55c2f7b1b5d3",
+    "email": "sseruwagijohn452@gmail.com",
+    "role": "admin",
+    "createdAt": 1792335554870,
+    "expiresAt": 1794927554870
   }
 }

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Smartphone, Download, QrCode, ShieldCheck, Lock, UploadCloud, HelpCircle } from 'lucide-react';
+import { Smartphone, Download, QrCode, ShieldCheck, Lock, UploadCloud, HelpCircle, Sparkles } from 'lucide-react';
 import { AdminUser } from '../types';
 
 interface StoreWelcomeBannerProps {
@@ -16,15 +16,26 @@ export const StoreWelcomeBanner: React.FC<StoreWelcomeBannerProps> = ({
   onOpenGuide,
 }) => {
   return (
-    <section className="relative pt-10 sm:pt-16 pb-16 sm:pb-20 border-b border-neutral-800/60 overflow-hidden">
-      {/* Background glow effect */}
-      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[350px] bg-gradient-to-b from-indigo-900/20 via-cyan-900/10 to-transparent blur-3xl pointer-events-none -z-10" />
+    <section className="relative pt-8 sm:pt-14 pb-14 sm:pb-20 border-b border-neutral-800/60 overflow-hidden">
+      {/* Background glow effect matching brand colors */}
+      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[380px] bg-gradient-to-b from-cyan-600/15 via-indigo-900/15 to-transparent blur-3xl pointer-events-none -z-10" />
 
       <div className="max-w-5xl mx-auto px-4 sm:px-6 text-center space-y-6">
-        {/* Status Pill */}
-        <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-cyan-950/70 border border-cyan-800/60 text-cyan-300 text-xs font-semibold">
-          <ShieldCheck className="w-3.5 h-3.5 text-cyan-400" />
-          <span>Direct Android APK Distribution Hub</span>
+        {/* Brand Logo & Pill */}
+        <div className="flex flex-col items-center space-y-3">
+          <div className="relative group">
+            <div className="absolute -inset-1.5 bg-gradient-to-r from-cyan-400 via-blue-500 to-purple-600 rounded-3xl blur-md opacity-60 group-hover:opacity-90 transition duration-500" />
+            <img
+              src="/zuzustore-logo.png"
+              alt="ZuzuStore Brand Logo"
+              className="relative w-28 h-28 sm:w-36 sm:h-36 object-contain rounded-2xl shadow-2xl border border-cyan-400/40 transform hover:scale-105 transition-transform"
+            />
+          </div>
+
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-cyan-950/80 border border-cyan-800/60 text-cyan-300 text-xs font-semibold">
+            <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
+            <span>ZuzuStore • Direct APK Distribution Hub</span>
+          </div>
         </div>
 
         {/* Title */}
@@ -33,13 +44,13 @@ export const StoreWelcomeBanner: React.FC<StoreWelcomeBannerProps> = ({
             Download & Distribute Android APKs Directly
           </h1>
           <p className="text-sm sm:text-base text-neutral-300 max-w-2xl mx-auto leading-relaxed">
-            Anyone can download applications freely without creating an account or logging in. The store administrator can publish new APK packages using their verified account.
+            Welcome to <strong className="text-cyan-300 font-bold">ZuzuStore</strong>. Anyone can download applications freely with zero accounts, paywalls, or registrations. The administrator can sign in to publish APK packages.
           </p>
         </div>
 
         {/* Feature Highlights Grid */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-4 text-left">
-          <div className="p-4 rounded-2xl bg-neutral-900/70 border border-neutral-800 space-y-2">
+          <div className="p-4 rounded-2xl bg-neutral-900/70 border border-neutral-800 hover:border-cyan-500/40 transition-colors space-y-2">
             <div className="w-9 h-9 rounded-xl bg-cyan-950 border border-cyan-800/60 flex items-center justify-center text-cyan-400">
               <Download className="w-4 h-4" />
             </div>
@@ -49,7 +60,7 @@ export const StoreWelcomeBanner: React.FC<StoreWelcomeBannerProps> = ({
             </p>
           </div>
 
-          <div className="p-4 rounded-2xl bg-neutral-900/70 border border-neutral-800 space-y-2">
+          <div className="p-4 rounded-2xl bg-neutral-900/70 border border-neutral-800 hover:border-indigo-500/40 transition-colors space-y-2">
             <div className="w-9 h-9 rounded-xl bg-indigo-950 border border-indigo-800/60 flex items-center justify-center text-indigo-400">
               <QrCode className="w-4 h-4" />
             </div>
@@ -59,13 +70,13 @@ export const StoreWelcomeBanner: React.FC<StoreWelcomeBannerProps> = ({
             </p>
           </div>
 
-          <div className="p-4 rounded-2xl bg-neutral-900/70 border border-neutral-800 space-y-2">
-            <div className="w-9 h-9 rounded-xl bg-emerald-950 border border-emerald-800/60 flex items-center justify-center text-emerald-400">
+          <div className="p-4 rounded-2xl bg-neutral-900/70 border border-neutral-800 hover:border-purple-500/40 transition-colors space-y-2">
+            <div className="w-9 h-9 rounded-xl bg-purple-950 border border-purple-800/60 flex items-center justify-center text-purple-400">
               <Lock className="w-4 h-4" />
             </div>
             <h3 className="text-sm font-bold text-white">Publisher Admin Portal</h3>
             <p className="text-xs text-neutral-400 leading-relaxed">
-              Admin sseruwagijohn452@gmail.com can publish APKs and manage app versions.
+              Protected console allows the administrator to publish and update APK packages.
             </p>
           </div>
         </div>
@@ -75,7 +86,7 @@ export const StoreWelcomeBanner: React.FC<StoreWelcomeBannerProps> = ({
           {admin ? (
             <button
               onClick={onNavigateToUpload}
-              className="px-6 py-3.5 text-xs sm:text-sm font-bold text-white bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 rounded-xl transition-all shadow-lg active:scale-95 flex items-center gap-2"
+              className="px-6 py-3.5 text-xs sm:text-sm font-bold text-white bg-gradient-to-r from-cyan-600 via-sky-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 rounded-xl transition-all shadow-lg shadow-cyan-950/40 active:scale-95 flex items-center gap-2"
             >
               <UploadCloud className="w-4 h-4" />
               <span>Publish Your First APK Package</span>
@@ -83,7 +94,7 @@ export const StoreWelcomeBanner: React.FC<StoreWelcomeBannerProps> = ({
           ) : (
             <button
               onClick={onOpenLoginModal}
-              className="px-6 py-3.5 text-xs sm:text-sm font-bold text-white bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 rounded-xl transition-all shadow-lg active:scale-95 flex items-center gap-2"
+              className="px-6 py-3.5 text-xs sm:text-sm font-bold text-white bg-gradient-to-r from-cyan-600 via-sky-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 rounded-xl transition-all shadow-lg shadow-cyan-950/40 active:scale-95 flex items-center gap-2"
             >
               <Lock className="w-4 h-4" />
               <span>Admin Login to Publish APK</span>

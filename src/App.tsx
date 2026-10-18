@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Header } from './components/Header';
 import { HeroZuzu } from './components/HeroZuzu';
 import { StoreWelcomeBanner } from './components/StoreWelcomeBanner';
+import { OpeningSplash } from './components/OpeningSplash';
 import { AppCatalog } from './components/AppCatalog';
 import { AppDetailView } from './components/AppDetailView';
 import { PublisherPortal } from './components/PublisherPortal';
@@ -29,6 +30,9 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [currentView, setCurrentView] = useState<'store' | 'upload' | 'detail'>('store');
   const [selectedApp, setSelectedApp] = useState<StoreApp | null>(null);
+
+  // Opening Logo Splash Screen
+  const [showSplash, setShowSplash] = useState(true);
 
   // Admin state
   const [admin, setAdmin] = useState<AdminUser | null>(null);
@@ -175,7 +179,12 @@ export default function App() {
   const featuredApp = apps[0] || null;
 
   return (
-    <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col font-sans selection:bg-cyan-500/20 selection:text-cyan-200">
+    <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col font-sans selection:bg-cyan-500/25 selection:text-cyan-200">
+      {/* Opening Animated Logo Splash Screen */}
+      {showSplash && (
+        <OpeningSplash onComplete={() => setShowSplash(false)} />
+      )}
+
       {/* Top Bar Navigation */}
       <Header
         currentView={currentView}
@@ -202,7 +211,7 @@ export default function App() {
             <div className="flex items-center gap-2 text-cyan-400">
               <span className="font-bold">Publisher Mode:</span>
               <span className="text-neutral-400">
-                You are logged in as <strong className="text-white">{admin.email}</strong> to upload and manage APK packages.
+                You are logged in as <strong className="text-white font-medium">{admin.name || 'Administrator'}</strong> to upload and manage APK packages.
               </span>
             </div>
             <button
@@ -220,8 +229,8 @@ export default function App() {
       <main className="flex-1">
         {loading ? (
           <div className="py-24 text-center space-y-3">
-            <div className="w-8 h-8 border-3 border-cyan-500/20 border-t-cyan-400 rounded-full animate-spin mx-auto" />
-            <p className="text-xs text-neutral-400">Loading store packages...</p>
+            <div className="w-9 h-9 border-3 border-cyan-500/20 border-t-cyan-400 rounded-full animate-spin mx-auto" />
+            <p className="text-xs text-neutral-400">Loading ZuzuStore...</p>
           </div>
         ) : (
           <>
@@ -242,7 +251,7 @@ export default function App() {
                     onPreviewScreenshot={(idx) => openScreenshotPreview(featuredApp, idx)}
                   />
                 ) : (
-                  /* If no apps published yet, show clean welcome banner */
+                  /* If no apps published yet, show clean ZuzuStore welcome banner with logo */
                   <StoreWelcomeBanner
                     admin={admin}
                     onOpenLoginModal={() => setIsLoginModalOpen(true)}
@@ -322,7 +331,7 @@ export default function App() {
         appsCount={apps.length}
       />
 
-      {/* Admin Login Modal */}
+      {/* Admin Login Modal (Blank inputs, no prefilled or displayed email) */}
       <AdminLoginModal
         isOpen={isLoginModalOpen}
         onClose={() => setIsLoginModalOpen(false)}
@@ -364,7 +373,7 @@ export default function App() {
 
       {/* Toast Notification */}
       {toastMessage && (
-        <div className="fixed bottom-6 right-6 z-50 bg-neutral-900 border border-neutral-700/80 text-white text-xs font-semibold py-3 px-4 rounded-xl shadow-2xl flex items-center gap-2.5 animate-slide-up">
+        <div className="fixed bottom-6 right-6 z-50 bg-neutral-900 border border-cyan-500/30 text-white text-xs font-semibold py-3 px-4 rounded-xl shadow-2xl flex items-center gap-2.5 animate-slide-up">
           <CheckCircle2 className="w-4 h-4 text-cyan-400 shrink-0" />
           <span>{toastMessage}</span>
         </div>

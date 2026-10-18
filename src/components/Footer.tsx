@@ -1,5 +1,5 @@
 import React from 'react';
-import { ShieldCheck, Download, Smartphone } from 'lucide-react';
+import { ShieldCheck, Smartphone } from 'lucide-react';
 
 interface FooterProps {
   onNavigate: (view: 'store' | 'upload') => void;
@@ -16,13 +16,17 @@ export const Footer: React.FC<FooterProps> = ({
     <footer className="border-t border-neutral-900 bg-neutral-950 py-12 text-neutral-400 text-xs">
       <div className="max-w-7xl mx-auto px-4 sm:px-6">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-8 mb-8 pb-8 border-b border-neutral-900">
-          {/* Brand col */}
+          {/* Brand col with Logo */}
           <div className="space-y-3 md:col-span-1">
-            <div className="flex items-center gap-2 text-white font-bold text-sm">
-              <div className="w-6 h-6 rounded bg-gradient-to-br from-cyan-400 to-indigo-600 flex items-center justify-center text-white font-black text-xs">
-                APK
-              </div>
-              <span>APK Distribution Hub</span>
+            <div className="flex items-center gap-2.5">
+              <img
+                src="/zuzustore-logo.png"
+                alt="ZuzuStore"
+                className="w-7 h-7 rounded-lg object-contain shadow-sm border border-cyan-400/40"
+              />
+              <span className="font-black text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 via-sky-300 to-blue-400 text-sm tracking-tight">
+                ZuzuStore
+              </span>
             </div>
             <p className="text-neutral-400 leading-relaxed text-[11px]">
               Direct Android APK distribution portal. Any user can download all applications freely with zero account requirements. Secure publisher backend for authorized administration.
@@ -34,12 +38,12 @@ export const Footer: React.FC<FooterProps> = ({
             <h4 className="text-white font-semibold uppercase tracking-wider text-[11px]">Navigation</h4>
             <ul className="space-y-1.5 text-[11px]">
               <li>
-                <a href="#catalog" className="hover:text-white transition-colors">
+                <a href="#catalog" className="hover:text-cyan-400 transition-colors">
                   Browse Catalog ({appsCount} {appsCount === 1 ? 'app' : 'apps'})
                 </a>
               </li>
               <li>
-                <button onClick={onOpenGuide} className="hover:text-white transition-colors text-left flex items-center gap-1.5">
+                <button onClick={onOpenGuide} className="hover:text-cyan-400 transition-colors text-left flex items-center gap-1.5">
                   <Smartphone className="w-3 h-3 text-cyan-400" />
                   <span>Android Installation Guide</span>
                 </button>
@@ -62,7 +66,7 @@ export const Footer: React.FC<FooterProps> = ({
                 </button>
               </li>
               <li>
-                <span className="text-neutral-500">Admin: sseruwagijohn452@gmail.com</span>
+                <span className="text-neutral-500">Authorized Access Only</span>
               </li>
             </ul>
           </div>
@@ -84,7 +88,7 @@ export const Footer: React.FC<FooterProps> = ({
 
         {/* Bottom copyright */}
         <div className="flex flex-col sm:flex-row items-center justify-between gap-4 text-neutral-400 text-[11px]">
-          <p>© {new Date().getFullYear()} APK Store. Direct Android application distribution.</p>
+          <p>© {new Date().getFullYear()} ZuzuStore. Direct Android application distribution.</p>
           <div className="flex items-center gap-4 text-neutral-300">
             <span>Direct APK Access</span>
             <span className="text-neutral-700">•</span>

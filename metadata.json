@@ -1,6 +1,6 @@
 {
-  "name": "APK Store & Distribution Hub",
-  "description": "Public mobile app distribution store with direct APK downloads for all users and a secure publisher portal for authenticated administration.",
+  "name": "ZuzuStore - Official App & APK Hub",
+  "description": "ZuzuStore - Official mobile application and APK distribution portal with direct downloads and publisher management.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
