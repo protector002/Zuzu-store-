@@ -1,0 +1,374 @@
+import React, { useState, useEffect } from 'react';
+import { Header } from './components/Header';
+import { HeroZuzu } from './components/HeroZuzu';
+import { StoreWelcomeBanner } from './components/StoreWelcomeBanner';
+import { AppCatalog } from './components/AppCatalog';
+import { AppDetailView } from './components/AppDetailView';
+import { PublisherPortal } from './components/PublisherPortal';
+import { AdminLoginModal } from './components/AdminLoginModal';
+import { QRModal } from './components/QRModal';
+import { InstallGuideModal } from './components/InstallGuideModal';
+import { ScreenshotModal } from './components/ScreenshotModal';
+import { Footer } from './components/Footer';
+import {
+  fetchApps,
+  getDownloadUrl,
+  checkAdminSession,
+  adminLogout,
+  adminUploadApp,
+  adminAddRelease,
+  adminDeleteApp,
+  adminResetStore,
+  submitReview
+} from './services/api';
+import { StoreApp, AppRelease, Platform, AdminUser } from './types';
+import { CheckCircle2, ArrowRight } from 'lucide-react';
+
+export default function App() {
+  const [apps, setApps] = useState<StoreApp[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [currentView, setCurrentView] = useState<'store' | 'upload' | 'detail'>('store');
+  const [selectedApp, setSelectedApp] = useState<StoreApp | null>(null);
+
+  // Admin state
+  const [admin, setAdmin] = useState<AdminUser | null>(null);
+  const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
+
+  // Modals
+  const [isQrOpen, setIsQrOpen] = useState(false);
+  const [qrApp, setQrApp] = useState<StoreApp | null>(null);
+  const [qrRelease, setQrRelease] = useState<AppRelease | undefined>(undefined);
+
+  const [isGuideOpen, setIsGuideOpen] = useState(false);
+  const [guidePlatform, setGuidePlatform] = useState<Platform>('Android');
+
+  const [isScreenshotOpen, setIsScreenshotOpen] = useState(false);
+  const [activeScreenshotIndex, setActiveScreenshotIndex] = useState(0);
+  const [screenshotTargetApp, setScreenshotTargetApp] = useState<StoreApp | null>(null);
+
+  // Toast Notification
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(null), 3800);
+  };
+
+  // Load apps and check admin session on mount
+  const loadApps = async () => {
+    try {
+      const data = await fetchApps();
+      setApps(data);
+      if (data.length > 0) {
+        setSelectedApp((prev) => (prev ? data.find((a) => a.id === prev.id) || data[0] : data[0]));
+      } else {
+        setSelectedApp(null);
+      }
+    } catch (err) {
+      console.error('Failed to load apps:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadApps();
+
+    // Check if admin is logged in
+    checkAdminSession().then((res) => {
+      if (res.authenticated && res.admin) {
+        setAdmin(res.admin);
+      }
+    });
+  }, []);
+
+  // Handle APK Download (PUBLIC - NO ACCOUNT REQUIRED)
+  const handleDownload = async (appId: string, releaseId?: string) => {
+    const downloadUrl = getDownloadUrl(appId, releaseId);
+
+    // Trigger direct browser download
+    const link = document.createElement('a');
+    link.href = downloadUrl;
+    link.setAttribute('download', '');
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    showToast('Download started! No account required.');
+
+    // Refresh apps to reflect updated download counters
+    setTimeout(() => {
+      loadApps();
+    }, 1200);
+  };
+
+  // Handle Admin Logout
+  const handleLogout = async () => {
+    await adminLogout();
+    setAdmin(null);
+    showToast('Logged out of Publisher Account.');
+  };
+
+  // Handle Admin Upload New App
+  const handleUploadApp = async (formData: FormData): Promise<StoreApp> => {
+    const res = await adminUploadApp(formData);
+    await loadApps();
+    showToast(res.message || 'App published successfully!');
+    return res.app;
+  };
+
+  // Handle Admin Add Release
+  const handleAddRelease = async (appId: string, formData: FormData): Promise<StoreApp> => {
+    const res = await adminAddRelease(appId, formData);
+    await loadApps();
+    showToast(res.message || 'Release deployed successfully!');
+    return res.app;
+  };
+
+  // Handle Admin Delete App
+  const handleDeleteApp = async (appId: string) => {
+    await adminDeleteApp(appId);
+    await loadApps();
+    if (selectedApp?.id === appId) {
+      setSelectedApp(null);
+      setCurrentView('store');
+    }
+    showToast('Application removed from store.');
+  };
+
+  // Handle Admin Reset Catalog
+  const handleResetCatalog = async () => {
+    await adminResetStore();
+    await loadApps();
+    showToast('Store catalog reset to clean state.');
+  };
+
+  // Handle Community Review (Public)
+  const handleAddReview = async (
+    appId: string,
+    review: { author: string; rating: number; platform: string; title: string; comment: string }
+  ) => {
+    const res = await submitReview(appId, review);
+    await loadApps();
+    setSelectedApp(res.app);
+    showToast('Review posted successfully!');
+  };
+
+  // Modal triggers
+  const openQRModal = (app: StoreApp, release?: AppRelease) => {
+    setQrApp(app);
+    setQrRelease(release);
+    setIsQrOpen(true);
+  };
+
+  const openGuideModal = (platform: Platform = 'Android') => {
+    setGuidePlatform(platform);
+    setIsGuideOpen(true);
+  };
+
+  const openScreenshotPreview = (app: StoreApp, index: number) => {
+    setScreenshotTargetApp(app);
+    setActiveScreenshotIndex(index);
+    setIsScreenshotOpen(true);
+  };
+
+  const featuredApp = apps[0] || null;
+
+  return (
+    <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col font-sans selection:bg-cyan-500/20 selection:text-cyan-200">
+      {/* Top Bar Navigation */}
+      <Header
+        currentView={currentView}
+        onNavigate={(view) => {
+          setCurrentView(view);
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }}
+        onOpenInstallGuide={() => openGuideModal('Android')}
+        onQuickDownload={
+          featuredApp
+            ? () => handleDownload(featuredApp.id, featuredApp.releases[0]?.id)
+            : undefined
+        }
+        hasApps={apps.length > 0}
+        admin={admin}
+        onOpenLoginModal={() => setIsLoginModalOpen(true)}
+        onLogout={handleLogout}
+      />
+
+      {/* Floating Publisher Banner when in Admin Studio */}
+      {currentView === 'upload' && admin && (
+        <div className="bg-neutral-900 border-b border-neutral-800 py-2.5 px-4 sm:px-6">
+          <div className="max-w-7xl mx-auto flex items-center justify-between text-xs">
+            <div className="flex items-center gap-2 text-cyan-400">
+              <span className="font-bold">Publisher Mode:</span>
+              <span className="text-neutral-400">
+                You are logged in as <strong className="text-white">{admin.email}</strong> to upload and manage APK packages.
+              </span>
+            </div>
+            <button
+              onClick={() => setCurrentView('store')}
+              className="text-neutral-300 hover:text-white flex items-center gap-1 font-semibold hover:underline"
+            >
+              <span>Back to Public Storefront</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Main View Router */}
+      <main className="flex-1">
+        {loading ? (
+          <div className="py-24 text-center space-y-3">
+            <div className="w-8 h-8 border-3 border-cyan-500/20 border-t-cyan-400 rounded-full animate-spin mx-auto" />
+            <p className="text-xs text-neutral-400">Loading store packages...</p>
+          </div>
+        ) : (
+          <>
+            {currentView === 'store' && (
+              <>
+                {/* If real apps exist, show the featured app hero */}
+                {featuredApp ? (
+                  <HeroZuzu
+                    app={featuredApp}
+                    onDownload={handleDownload}
+                    onOpenQR={(app) => openQRModal(app)}
+                    onOpenGuide={(plat) => openGuideModal(plat)}
+                    onViewDetails={(app) => {
+                      setSelectedApp(app);
+                      setCurrentView('detail');
+                      window.scrollTo({ top: 0, behavior: 'smooth' });
+                    }}
+                    onPreviewScreenshot={(idx) => openScreenshotPreview(featuredApp, idx)}
+                  />
+                ) : (
+                  /* If no apps published yet, show clean welcome banner */
+                  <StoreWelcomeBanner
+                    admin={admin}
+                    onOpenLoginModal={() => setIsLoginModalOpen(true)}
+                    onNavigateToUpload={() => setCurrentView('upload')}
+                    onOpenGuide={() => openGuideModal('Android')}
+                  />
+                )}
+
+                {/* App Catalog & Browse Grid */}
+                <AppCatalog
+                  apps={apps}
+                  onSelectApp={(app) => {
+                    setSelectedApp(app);
+                    setCurrentView('detail');
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                  }}
+                  onQuickDownload={(app) => {
+                    const rel = app.releases[0];
+                    handleDownload(app.id, rel?.id);
+                  }}
+                  onOpenQR={(app) => openQRModal(app)}
+                  onOpenUpload={() => {
+                    if (!admin) {
+                      setIsLoginModalOpen(true);
+                    } else {
+                      setCurrentView('upload');
+                      window.scrollTo({ top: 0, behavior: 'smooth' });
+                    }
+                  }}
+                />
+              </>
+            )}
+
+            {currentView === 'detail' && selectedApp && (
+              <AppDetailView
+                app={selectedApp}
+                onBack={() => {
+                  setCurrentView('store');
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
+                onDownloadRelease={handleDownload}
+                onOpenQR={(app, rel) => openQRModal(app, rel)}
+                onOpenGuide={(plat) => openGuideModal(plat)}
+                onAddReview={handleAddReview}
+                onPreviewScreenshot={(idx) => openScreenshotPreview(selectedApp, idx)}
+              />
+            )}
+
+            {currentView === 'upload' && (
+              <PublisherPortal
+                apps={apps}
+                admin={admin}
+                onOpenLoginModal={() => setIsLoginModalOpen(true)}
+                onUploadApp={handleUploadApp}
+                onAddRelease={handleAddRelease}
+                onDeleteApp={handleDeleteApp}
+                onResetCatalog={handleResetCatalog}
+                onViewAppInStore={(app) => {
+                  setSelectedApp(app);
+                  setCurrentView('detail');
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
+                onDownloadTest={(appId, relId) => handleDownload(appId, relId)}
+              />
+            )}
+          </>
+        )}
+      </main>
+
+      {/* Footer */}
+      <Footer
+        onNavigate={(view) => {
+          setCurrentView(view);
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }}
+        onOpenGuide={() => openGuideModal('Android')}
+        appsCount={apps.length}
+      />
+
+      {/* Admin Login Modal */}
+      <AdminLoginModal
+        isOpen={isLoginModalOpen}
+        onClose={() => setIsLoginModalOpen(false)}
+        onLoginSuccess={(newAdmin) => {
+          setAdmin(newAdmin);
+          setCurrentView('upload');
+          showToast(`Welcome back, ${newAdmin.name}!`);
+        }}
+      />
+
+      {/* QR Code Modal for Phone Download */}
+      {qrApp && (
+        <QRModal
+          isOpen={isQrOpen}
+          onClose={() => setIsQrOpen(false)}
+          app={qrApp}
+          release={qrRelease}
+        />
+      )}
+
+      {/* Android Installation Help Modal */}
+      <InstallGuideModal
+        isOpen={isGuideOpen}
+        onClose={() => setIsGuideOpen(false)}
+        defaultPlatform={guidePlatform}
+      />
+
+      {/* Screenshot Lightbox Modal */}
+      {screenshotTargetApp && (
+        <ScreenshotModal
+          isOpen={isScreenshotOpen}
+          onClose={() => setIsScreenshotOpen(false)}
+          screenshots={screenshotTargetApp.screenshots}
+          activeIndex={activeScreenshotIndex}
+          onSelectIndex={(idx) => setActiveScreenshotIndex(idx)}
+          appName={screenshotTargetApp.name}
+        />
+      )}
+
+      {/* Toast Notification */}
+      {toastMessage && (
+        <div className="fixed bottom-6 right-6 z-50 bg-neutral-900 border border-neutral-700/80 text-white text-xs font-semibold py-3 px-4 rounded-xl shadow-2xl flex items-center gap-2.5 animate-slide-up">
+          <CheckCircle2 className="w-4 h-4 text-cyan-400 shrink-0" />
+          <span>{toastMessage}</span>
+        </div>
+      )}
+    </div>
+  );
+}

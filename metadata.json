@@ -1,0 +1,6 @@
+{
+  "name": "APK Store & Distribution Hub",
+  "description": "Public mobile app distribution store with direct APK downloads for all users and a secure publisher portal for authenticated administration.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
