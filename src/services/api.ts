@@ -1,4 +1,10 @@
 import { StoreApp, AdminUser } from '../types';
+import {
+  getAppsFromFirestore,
+  saveAppToFirestore,
+  deleteAppFromFirestore,
+  syncLocalCatalogToFirestore
+} from './firebase';
 
 const TOKEN_KEY = 'zuzu_admin_token';
 
@@ -24,6 +30,38 @@ function getAuthHeaders(): HeadersInit {
 // =====================================
 
 export async function fetchApps(params?: { category?: string; search?: string; platform?: string }): Promise<StoreApp[]> {
+  // Step 1: Auto-sync any existing local app from publisher's device to Firestore cloud database
+  try {
+    const cloudApps = await syncLocalCatalogToFirestore();
+    if (Array.isArray(cloudApps) && cloudApps.length > 0) {
+      try {
+        localStorage.setItem('zuzu_local_catalog', JSON.stringify(cloudApps));
+      } catch (_) {}
+
+      // Apply in-memory client filters if provided
+      let filtered = cloudApps;
+      if (params?.category && params.category !== 'All') {
+        filtered = filtered.filter((a) => a.category?.toLowerCase() === params.category?.toLowerCase());
+      }
+      if (params?.platform && params.platform !== 'All') {
+        filtered = filtered.filter((a) => a.supportedPlatforms?.includes(params.platform as any));
+      }
+      if (params?.search) {
+        const q = params.search.toLowerCase();
+        filtered = filtered.filter(
+          (a) =>
+            a.name.toLowerCase().includes(q) ||
+            a.tagline.toLowerCase().includes(q) ||
+            a.description?.toLowerCase().includes(q)
+        );
+      }
+      return filtered;
+    }
+  } catch (firestoreErr) {
+    console.warn('Firestore sync attempt:', firestoreErr);
+  }
+
+  // Step 2: Fallback to Backend API
   const query = new URLSearchParams();
   if (params?.category && params.category !== 'All') query.append('category', params.category);
   if (params?.platform && params.platform !== 'All') query.append('platform', params.platform);
@@ -36,6 +74,10 @@ export async function fetchApps(params?: { category?: string; search?: string; p
       if (Array.isArray(data) && data.length > 0) {
         try {
           localStorage.setItem('zuzu_local_catalog', JSON.stringify(data));
+          // Save to Firestore so it's backed up in cloud
+          for (const item of data) {
+            saveAppToFirestore(item).catch(() => {});
+          }
         } catch (_) {}
         return data;
       }
@@ -44,7 +86,7 @@ export async function fetchApps(params?: { category?: string; search?: string; p
     console.warn('Network issue fetching apps, falling back to local storage cache:', err);
   }
 
-  // Fallback to local catalog if serverless container has fresh /tmp
+  // Step 3: Fallback to local catalog if offline
   try {
     const cached = localStorage.getItem('zuzu_local_catalog');
     if (cached) {
@@ -232,6 +274,11 @@ export async function adminUploadApp(
     throw new Error(data?.error || 'Failed to publish app package.');
   }
 
+  // Persist directly to Firestore cloud database
+  if (data.app) {
+    saveAppToFirestore(data.app).catch((e) => console.warn('Firestore cloud save notice:', e));
+  }
+
   // Update local storage backup
   try {
     const cached = localStorage.getItem('zuzu_local_catalog');
@@ -313,10 +360,26 @@ export async function adminAddRelease(
     throw new Error(data?.error || 'Failed to add release.');
   }
 
+  // Persist directly to Firestore cloud database
+  if (data.app) {
+    saveAppToFirestore(data.app).catch((e) => console.warn('Firestore cloud update notice:', e));
+  }
+
+  // Update local storage backup
+  try {
+    const cached = localStorage.getItem('zuzu_local_catalog');
+    const existing: StoreApp[] = cached ? JSON.parse(cached) : [];
+    const updated = [data.app, ...existing.filter((a) => a.id !== data.app.id)];
+    localStorage.setItem('zuzu_local_catalog', JSON.stringify(updated));
+  } catch (_) {}
+
   return data;
 }
 
 export async function adminDeleteApp(appId: string): Promise<{ success: boolean; message: string }> {
+  // Delete from Firestore cloud database
+  deleteAppFromFirestore(appId).catch((e) => console.warn('Firestore cloud delete notice:', e));
+
   const res = await fetch(`/api/admin/apps/${encodeURIComponent(appId)}`, {
     method: 'DELETE',
     headers: {

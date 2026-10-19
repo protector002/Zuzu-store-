@@ -1,0 +1,84 @@
+{
+  "entities": {
+    "StoreApp": {
+      "title": "StoreApp",
+      "description": "An Android application available on the store for direct download",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the application"
+        },
+        "slug": {
+          "type": "string",
+          "description": "URL-friendly slug for the application"
+        },
+        "name": {
+          "type": "string",
+          "description": "Display title of the application"
+        },
+        "tagline": {
+          "type": "string",
+          "description": "Short summary or subtitle"
+        },
+        "description": {
+          "type": "string",
+          "description": "Full description of the application features"
+        },
+        "iconUrl": {
+          "type": "string",
+          "description": "URL or data URI for the app icon"
+        },
+        "heroImageUrl": {
+          "type": "string",
+          "description": "Cover hero banner image URL"
+        },
+        "category": {
+          "type": "string",
+          "description": "Store category"
+        },
+        "rating": {
+          "type": "number",
+          "description": "Average user rating"
+        },
+        "ratingCount": {
+          "type": "number",
+          "description": "Count of submitted reviews"
+        },
+        "downloadsTotal": {
+          "type": "number",
+          "description": "Total public download count"
+        },
+        "currentVersion": {
+          "type": "string",
+          "description": "Current live version string"
+        },
+        "packageId": {
+          "type": "string",
+          "description": "Android package identifier"
+        },
+        "isOfficial": {
+          "type": "boolean",
+          "description": "Whether package is marked official"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "ISO timestamp of creation"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "ISO timestamp of last update"
+        }
+      },
+      "required": ["id", "name", "slug"]
+    }
+  },
+  "firestore": {
+    "/apps/{appId}": {
+      "schema": {
+        "$ref": "#/entities/StoreApp"
+      },
+      "description": "Public store apps catalog accessible to all users for browsing and downloading"
+    }
+  }
+}

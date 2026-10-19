@@ -1,0 +1,24 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Apps catalog: Everyone can read so all shared users see apps instantly without an account
+    match /apps/{appId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    match /reviews/{reviewId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    match /stats/{statId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    match /test/{docId} {
+      allow read, write: if true;
+    }
+  }
+}
