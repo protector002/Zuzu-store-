@@ -17,10 +17,13 @@ import {
   ShieldCheck,
   KeyRound,
   Link2,
-  Image as ImageIcon
+  Image as ImageIcon,
+  Globe,
+  AlertTriangle
 } from 'lucide-react';
 import { StoreApp, Platform, AppCategory, AdminUser } from '../types';
 import { saveApkBlob } from '../utils/fileStorage';
+import { verifyDirectUrl } from '../services/api';
 
 interface PublisherPortalProps {
   apps: StoreApp[];
@@ -81,17 +84,18 @@ function convertImageToDataUrl(file: File): Promise<string> {
 }
 
 // Auto-transform Google Drive, Dropbox, and cloud storage URLs into direct 1-click download links
+// Uses the modern direct usercontent endpoint with confirm=t to prevent Google 403 access errors
 function formatCloudUrl(url: string): string {
   const trimmed = url.trim();
   if (!trimmed) return '';
 
   const gdMatch1 = trimmed.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
   if (gdMatch1 && gdMatch1[1]) {
-    return `https://drive.google.com/uc?export=download&id=${gdMatch1[1]}`;
+    return `https://drive.usercontent.google.com/download?id=${gdMatch1[1]}&export=download&confirm=t`;
   }
   const gdMatch2 = trimmed.match(/drive\.google\.com\/.*[?&]id=([a-zA-Z0-9_-]+)/);
   if (gdMatch2 && gdMatch2[1]) {
-    return `https://drive.google.com/uc?export=download&id=${gdMatch2[1]}`;
+    return `https://drive.usercontent.google.com/download?id=${gdMatch2[1]}&export=download&confirm=t`;
   }
   if (trimmed.includes('dropbox.com') && trimmed.includes('dl=0')) {
     return trimmed.replace('dl=0', 'dl=1');
@@ -141,6 +145,23 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
   const [updateChangelog, setUpdateChangelog] = useState('Critical stability fixes, updated APK signature, and performance improvements.');
   const [updateFile, setUpdateFile] = useState<File | null>(null);
   const [updateDirectUrl, setUpdateDirectUrl] = useState<string>('');
+
+  // Link verification states (prevents Google Drive 403 Access Denied errors)
+  const [isVerifyingLink, setIsVerifyingLink] = useState(false);
+  const [linkVerifyResult, setLinkVerifyResult] = useState<{
+    accessible: boolean;
+    message: string;
+    isGoogleDrive: boolean;
+    viewUrl?: string;
+  } | null>(null);
+
+  const [isVerifyingUpdateLink, setIsVerifyingUpdateLink] = useState(false);
+  const [updateLinkVerifyResult, setUpdateLinkVerifyResult] = useState<{
+    accessible: boolean;
+    message: string;
+    isGoogleDrive: boolean;
+    viewUrl?: string;
+  } | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const updateFileInputRef = useRef<HTMLInputElement>(null);
@@ -234,6 +255,43 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
   };
 
   const isGoogleDrive = (url: string) => url.includes('drive.google.com');
+
+  const handleTestLinkAccess = async (url: string, isUpdate = false) => {
+    if (!url.trim()) return;
+    if (isUpdate) {
+      setIsVerifyingUpdateLink(true);
+      setUpdateLinkVerifyResult(null);
+    } else {
+      setIsVerifyingLink(true);
+      setLinkVerifyResult(null);
+    }
+
+    try {
+      const res = await verifyDirectUrl(url.trim());
+      if (isUpdate) {
+        setUpdateLinkVerifyResult(res);
+      } else {
+        setLinkVerifyResult(res);
+      }
+    } catch (err: any) {
+      const fallback = {
+        accessible: false,
+        message: err.message || 'Could not verify link. Please ensure URL is valid and publicly shared.',
+        isGoogleDrive: url.includes('drive.google.com')
+      };
+      if (isUpdate) {
+        setUpdateLinkVerifyResult(fallback);
+      } else {
+        setLinkVerifyResult(fallback);
+      }
+    } finally {
+      if (isUpdate) {
+        setIsVerifyingUpdateLink(false);
+      } else {
+        setIsVerifyingLink(false);
+      }
+    }
+  };
 
   const handleSubmitNewApp = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -581,19 +639,83 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
                     </label>
                     {directDownloadUrl.trim() && isGoogleDrive(directDownloadUrl) && (
                       <span className="text-[10px] text-emerald-400 font-medium bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-800/60">
-                        ✓ Google Drive Direct Download Active
+                        Google Drive Link Detected
                       </span>
                     )}
                   </div>
-                  <input
-                    type="url"
-                    value={directDownloadUrl}
-                    onChange={(e) => setDirectDownloadUrl(e.target.value)}
-                    placeholder="https://drive.google.com/file/d/... or https://github.com/user/repo/releases/download/.../app.apk"
-                    className="w-full px-3.5 py-2.5 bg-neutral-950 border border-neutral-800 rounded-xl text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-cyan-500 font-mono"
-                  />
+                  <div className="flex gap-2">
+                    <input
+                      type="url"
+                      value={directDownloadUrl}
+                      onChange={(e) => {
+                        setDirectDownloadUrl(e.target.value);
+                        setLinkVerifyResult(null);
+                      }}
+                      placeholder="https://drive.google.com/file/d/... or https://github.com/user/repo/releases/download/.../app.apk"
+                      className="flex-1 px-3.5 py-2.5 bg-neutral-950 border border-neutral-800 rounded-xl text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-cyan-500 font-mono"
+                    />
+                    {directDownloadUrl.trim() && (
+                      <button
+                        type="button"
+                        onClick={() => handleTestLinkAccess(directDownloadUrl, false)}
+                        disabled={isVerifyingLink}
+                        className="px-3.5 py-2.5 bg-neutral-800 hover:bg-neutral-700 text-cyan-400 hover:text-cyan-300 rounded-xl text-xs font-semibold shrink-0 transition-colors flex items-center gap-1.5 border border-neutral-700"
+                        title="Verify this link allows public downloads without 403 errors"
+                      >
+                        {isVerifyingLink ? (
+                          <>
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                            <span>Testing...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Globe className="w-3.5 h-3.5" />
+                            <span>Test Public Access</span>
+                          </>
+                        )}
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Google Drive Public Access Requirement Banner */}
+                  {directDownloadUrl.trim() && isGoogleDrive(directDownloadUrl) && (
+                    <div className="mt-2.5 p-3.5 bg-amber-950/30 border border-amber-900/60 rounded-xl space-y-2 text-xs">
+                      <div className="flex items-center gap-1.5 text-amber-300 font-bold">
+                        <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+                        <span>Crucial: Give Access to Everyone (Avoid Google 403 Error)</span>
+                      </div>
+                      <p className="text-[11px] text-amber-200/90 leading-relaxed">
+                        To let all visitors download without a <strong className="text-white">"403 That's an error - You do not have access"</strong> page:
+                      </p>
+                      <ol className="list-decimal list-inside space-y-1 text-[11px] text-neutral-300 font-mono">
+                        <li>In Google Drive, right-click the APK ➔ <strong className="text-white">Share</strong></li>
+                        <li>Under <strong className="text-white">General access</strong>, change from <em>Restricted</em> to <strong className="text-cyan-300">"Anyone with the link"</strong></li>
+                        <li>Ensure role is <strong className="text-white">Viewer</strong>, then click Done</li>
+                      </ol>
+
+                      {linkVerifyResult && (
+                        <div
+                          className={`p-2.5 rounded-lg text-[11px] flex items-start gap-2 mt-2 ${
+                            linkVerifyResult.accessible
+                              ? 'bg-emerald-950/80 border border-emerald-700 text-emerald-300'
+                              : 'bg-rose-950/80 border border-rose-700 text-rose-300'
+                          }`}
+                        >
+                          {linkVerifyResult.accessible ? (
+                            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                          ) : (
+                            <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                          )}
+                          <div>
+                            <p className="font-semibold">{linkVerifyResult.message}</p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   <p className="text-[11px] text-neutral-400 mt-1.5">
-                    Supports Google Drive share links, GitHub Releases, Dropbox, and S3 without file size limits.
+                    Supports Google Drive, GitHub Releases, Dropbox, and cloud hosts. When you upload a file above, direct platform hosting is active.
                   </p>
                 </div>
               </div>
@@ -949,13 +1071,68 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
                 </div>
 
                 <div>
-                  <input
-                    type="url"
-                    value={updateDirectUrl}
-                    onChange={(e) => setUpdateDirectUrl(e.target.value)}
-                    placeholder="https://drive.google.com/file/d/... or GitHub Releases direct link"
-                    className="w-full px-3 py-2 bg-neutral-950 border border-neutral-800 rounded-lg text-xs text-white placeholder-neutral-500 font-mono focus:outline-none focus:border-cyan-500"
-                  />
+                  <div className="flex gap-2">
+                    <input
+                      type="url"
+                      value={updateDirectUrl}
+                      onChange={(e) => {
+                        setUpdateDirectUrl(e.target.value);
+                        setUpdateLinkVerifyResult(null);
+                      }}
+                      placeholder="https://drive.google.com/file/d/... or GitHub Releases direct link"
+                      className="flex-1 px-3 py-2 bg-neutral-950 border border-neutral-800 rounded-lg text-xs text-white placeholder-neutral-500 font-mono focus:outline-none focus:border-cyan-500"
+                    />
+                    {updateDirectUrl.trim() && (
+                      <button
+                        type="button"
+                        onClick={() => handleTestLinkAccess(updateDirectUrl, true)}
+                        disabled={isVerifyingUpdateLink}
+                        className="px-3 py-2 bg-neutral-800 hover:bg-neutral-700 text-cyan-400 hover:text-cyan-300 rounded-lg text-xs font-semibold shrink-0 transition-colors flex items-center gap-1 border border-neutral-700"
+                        title="Verify this link allows public downloads without 403 errors"
+                      >
+                        {isVerifyingUpdateLink ? (
+                          <>
+                            <RefreshCw className="w-3 h-3 animate-spin" />
+                            <span>Testing...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Globe className="w-3 h-3" />
+                            <span>Test Access</span>
+                          </>
+                        )}
+                      </button>
+                    )}
+                  </div>
+
+                  {updateDirectUrl.trim() && isGoogleDrive(updateDirectUrl) && (
+                    <div className="mt-2.5 p-3 bg-amber-950/30 border border-amber-900/60 rounded-xl space-y-1.5 text-xs">
+                      <div className="flex items-center gap-1.5 text-amber-300 font-bold">
+                        <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+                        <span>Avoid 403 Error: Ensure Google Drive File is Public</span>
+                      </div>
+                      <p className="text-[11px] text-amber-200/90 leading-relaxed">
+                        In Google Drive, ensure General Access is set to <strong className="text-white">"Anyone with the link"</strong> (Viewer). If left Restricted, users will receive a 403 permission error.
+                      </p>
+
+                      {updateLinkVerifyResult && (
+                        <div
+                          className={`p-2 rounded-lg text-[11px] flex items-start gap-2 mt-1.5 ${
+                            updateLinkVerifyResult.accessible
+                              ? 'bg-emerald-950/80 border border-emerald-700 text-emerald-300'
+                              : 'bg-rose-950/80 border border-rose-700 text-rose-300'
+                          }`}
+                        >
+                          {updateLinkVerifyResult.accessible ? (
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
+                          ) : (
+                            <AlertCircle className="w-3.5 h-3.5 text-rose-400 shrink-0 mt-0.5" />
+                          )}
+                          <p className="font-semibold">{updateLinkVerifyResult.message}</p>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
 

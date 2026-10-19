@@ -87,6 +87,58 @@ export default function App() {
     });
   }, []);
 
+  // Secret trigger to open administrator login modal
+  const handleOpenSecretAdmin = () => {
+    if (admin) {
+      setCurrentView('upload');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      showToast(`Welcome back, ${admin.name}! Publisher Portal is active.`);
+    } else {
+      setIsLoginModalOpen(true);
+    }
+  };
+
+  // Keyboard shortcut (Ctrl+Shift+A or Cmd+Shift+A or Alt+A) to access Admin Publisher Console
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const isCmdOrCtrl = e.ctrlKey || e.metaKey;
+      const isAlt = e.altKey;
+
+      if (
+        (isCmdOrCtrl && e.shiftKey && (e.key === 'a' || e.key === 'A')) ||
+        (isAlt && (e.key === 'a' || e.key === 'A'))
+      ) {
+        e.preventDefault();
+        handleOpenSecretAdmin();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [admin]);
+
+  // URL hash (#admin, #login, #publisher) and query param (?admin) listener for secret access on any device
+  useEffect(() => {
+    const handleHashOrSearch = () => {
+      const hash = window.location.hash.toLowerCase();
+      const params = new URLSearchParams(window.location.search);
+      if (
+        hash === '#admin' ||
+        hash === '#login' ||
+        hash === '#publisher' ||
+        hash === '#portal' ||
+        params.has('admin') ||
+        params.has('publisher')
+      ) {
+        handleOpenSecretAdmin();
+      }
+    };
+
+    handleHashOrSearch();
+    window.addEventListener('hashchange', handleHashOrSearch);
+    return () => window.removeEventListener('hashchange', handleHashOrSearch);
+  }, [admin]);
+
   // Handle APK Download (PUBLIC - NO ACCOUNT REQUIRED)
   const handleDownload = async (appId: string, releaseId?: string) => {
     // Check if the physical APK file is cached in local client storage (supports files up to 1GB)
@@ -213,6 +265,10 @@ export default function App() {
       <Header
         currentView={currentView}
         onNavigate={(view) => {
+          if (view === 'upload' && !admin) {
+            handleOpenSecretAdmin();
+            return;
+          }
           setCurrentView(view);
           window.scrollTo({ top: 0, behavior: 'smooth' });
         }}
@@ -226,6 +282,7 @@ export default function App() {
         admin={admin}
         onOpenLoginModal={() => setIsLoginModalOpen(true)}
         onLogout={handleLogout}
+        onSecretAdminTrigger={handleOpenSecretAdmin}
       />
 
       {/* Floating Publisher Banner when in Admin Studio */}
@@ -287,6 +344,7 @@ export default function App() {
                 {/* App Catalog & Browse Grid */}
                 <AppCatalog
                   apps={apps}
+                  admin={admin}
                   onSelectApp={(app) => {
                     setSelectedApp(app);
                     setCurrentView('detail');
@@ -299,7 +357,7 @@ export default function App() {
                   onOpenQR={(app) => openQRModal(app)}
                   onOpenUpload={() => {
                     if (!admin) {
-                      setIsLoginModalOpen(true);
+                      handleOpenSecretAdmin();
                     } else {
                       setCurrentView('upload');
                       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -324,7 +382,7 @@ export default function App() {
               />
             )}
 
-            {currentView === 'upload' && (
+            {currentView === 'upload' && admin && (
               <PublisherPortal
                 apps={apps}
                 admin={admin}
@@ -348,11 +406,17 @@ export default function App() {
       {/* Footer */}
       <Footer
         onNavigate={(view) => {
+          if (view === 'upload' && !admin) {
+            handleOpenSecretAdmin();
+            return;
+          }
           setCurrentView(view);
           window.scrollTo({ top: 0, behavior: 'smooth' });
         }}
         onOpenGuide={() => openGuideModal('Android')}
         appsCount={apps.length}
+        admin={admin}
+        onSecretAdminTrigger={handleOpenSecretAdmin}
       />
 
       {/* Admin Login Modal (Blank inputs, no prefilled or displayed email) */}

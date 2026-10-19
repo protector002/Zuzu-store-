@@ -13,7 +13,8 @@ import {
   Copy,
   Terminal,
   Layers,
-  Sparkles
+  Sparkles,
+  ExternalLink
 } from 'lucide-react';
 import { StoreApp, AppRelease, Platform } from '../types';
 
@@ -50,6 +51,8 @@ export const AppDetailView: React.FC<AppDetailViewProps> = ({
   const [reviewSubmitted, setReviewSubmitted] = useState(false);
 
   const primaryRelease = app.releases[0];
+  const gdMatch = primaryRelease?.directDownloadUrl?.match(/\/file\/d\/([a-zA-Z0-9_-]+)/) || primaryRelease?.directDownloadUrl?.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  const gdWebUrl = gdMatch ? `https://drive.google.com/file/d/${gdMatch[1]}/view?usp=sharing` : null;
 
   const handleDownload = async (rel?: AppRelease) => {
     const id = rel?.id || primaryRelease?.id;
@@ -188,6 +191,19 @@ export const AppDetailView: React.FC<AppDetailViewProps> = ({
                 <QrCode className="w-4 h-4 text-cyan-400" />
                 <span>Scan for Phone</span>
               </button>
+
+              {gdWebUrl && (
+                <a
+                  href={gdWebUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-4 py-3.5 text-xs sm:text-sm font-semibold text-neutral-300 hover:text-white bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 rounded-xl transition-colors flex items-center gap-2"
+                  title="Open file directly in Google Drive"
+                >
+                  <ExternalLink className="w-4 h-4 text-cyan-400" />
+                  <span>Drive Mirror</span>
+                </a>
+              )}
 
               <button
                 onClick={() => onOpenGuide('Android')}

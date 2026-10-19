@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Search, Download, Star, QrCode, Smartphone, Laptop, Check } from 'lucide-react';
-import { StoreApp, AppCategory, Platform } from '../types';
+import { StoreApp, AppCategory, Platform, AdminUser } from '../types';
 
 interface AppCatalogProps {
   apps: StoreApp[];
@@ -8,6 +8,7 @@ interface AppCatalogProps {
   onQuickDownload: (app: StoreApp) => void;
   onOpenQR: (app: StoreApp) => void;
   onOpenUpload: () => void;
+  admin?: AdminUser | null;
 }
 
 const CATEGORIES: ('All' | AppCategory | string)[] = [
@@ -26,6 +27,7 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
   onQuickDownload,
   onOpenQR,
   onOpenUpload,
+  admin,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
@@ -131,7 +133,9 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
           </p>
           <p className="text-xs text-neutral-400 mt-1 max-w-sm mx-auto leading-relaxed">
             {apps.length === 0
-              ? 'The store is ready for app distribution. Sign in with the administrator account to upload and publish your APK.'
+              ? admin
+                ? 'The store catalog is ready. Upload and publish your first APK package.'
+                : 'Direct Android application packages will appear here. Check back soon for fresh releases!'
               : 'Try clearing your search query or choosing a different category filter.'}
           </p>
           <div className="mt-5 flex items-center justify-center gap-3">
@@ -147,12 +151,14 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
                 Clear Filters
               </button>
             )}
-            <button
-              onClick={onOpenUpload}
-              className="px-4 py-2 text-xs text-white font-semibold bg-indigo-600 hover:bg-indigo-500 rounded-lg transition-colors"
-            >
-              Publish APK
-            </button>
+            {admin && (
+              <button
+                onClick={onOpenUpload}
+                className="px-4 py-2 text-xs text-white font-semibold bg-indigo-600 hover:bg-indigo-500 rounded-lg transition-colors flex items-center gap-1.5"
+              >
+                <span>Publish APK</span>
+              </button>
+            )}
           </div>
         </div>
       ) : (

@@ -143,6 +143,10 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
               )}
             </button>
           </div>
+
+          <div className="pt-2 text-center text-[10px] text-neutral-400">
+            Quick Access: Press <kbd className="px-1.5 py-0.5 rounded bg-neutral-800 border border-neutral-700 text-neutral-300 font-mono">Ctrl+Shift+A</kbd> or add <span className="font-mono text-cyan-400">#admin</span> to the URL
+          </div>
         </form>
       </div>
     </div>

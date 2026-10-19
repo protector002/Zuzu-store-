@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Download, UploadCloud, Smartphone, ShieldCheck, LogIn, LogOut } from 'lucide-react';
 import { AdminUser } from '../types';
 
@@ -11,6 +11,7 @@ interface HeaderProps {
   admin: AdminUser | null;
   onOpenLoginModal: () => void;
   onLogout: () => void;
+  onSecretAdminTrigger?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -22,14 +23,39 @@ export const Header: React.FC<HeaderProps> = ({
   admin,
   onOpenLoginModal,
   onLogout,
+  onSecretAdminTrigger,
 }) => {
+  // Discreet secret logo multi-tap (3 taps within 2 seconds unlocks admin login modal)
+  const [logoTapCount, setLogoTapCount] = useState(0);
+
+  useEffect(() => {
+    if (logoTapCount > 0) {
+      const timer = setTimeout(() => setLogoTapCount(0), 2000);
+      return () => clearTimeout(timer);
+    }
+  }, [logoTapCount]);
+
+  const handleLogoTap = () => {
+    const next = logoTapCount + 1;
+    if (next >= 3) {
+      setLogoTapCount(0);
+      onSecretAdminTrigger?.();
+    } else {
+      setLogoTapCount(next);
+    }
+  };
+
   return (
     <header className="sticky top-0 z-40 w-full border-b border-neutral-800/80 bg-neutral-950/90 backdrop-blur-md">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-4 sm:gap-8">
-        {/* Brand with Official Logo */}
+        {/* Brand with Official Logo - Tapping 3 times secretly unlocks Admin Login */}
         <button
-          onClick={() => onNavigate('store')}
-          className="text-base sm:text-lg font-bold tracking-tight text-white hover:text-cyan-400 transition-colors whitespace-nowrap shrink-0 flex items-center gap-2.5 text-left group"
+          onClick={() => {
+            onNavigate('store');
+            handleLogoTap();
+          }}
+          className="text-base sm:text-lg font-bold tracking-tight text-white hover:text-cyan-400 transition-colors whitespace-nowrap shrink-0 flex items-center gap-2.5 text-left group cursor-pointer"
+          title="ZuzuStore"
         >
           <div className="relative">
             <div className="absolute -inset-0.5 bg-gradient-to-r from-cyan-400 to-purple-600 rounded-xl blur-xs opacity-70 group-hover:opacity-100 transition duration-300" />
@@ -101,24 +127,27 @@ export const Header: React.FC<HeaderProps> = ({
             How to Install
           </button>
 
-          <button
-            onClick={() => onNavigate('upload')}
-            className={`transition-colors whitespace-nowrap flex items-center gap-1.5 ${
-              currentView === 'upload' ? 'text-cyan-400 font-semibold' : 'text-neutral-400 hover:text-white'
-            }`}
-          >
-            <UploadCloud className="w-3.5 h-3.5 text-cyan-400" />
-            <span>Publisher Portal</span>
-          </button>
+          {/* Publisher Portal Tab: ONLY visible to logged-in administrator */}
+          {admin && (
+            <button
+              onClick={() => onNavigate('upload')}
+              className={`transition-colors whitespace-nowrap flex items-center gap-1.5 cursor-pointer ${
+                currentView === 'upload' ? 'text-cyan-400 font-semibold' : 'text-neutral-400 hover:text-white'
+              }`}
+            >
+              <UploadCloud className="w-3.5 h-3.5 text-cyan-400" />
+              <span>Publisher Portal</span>
+            </button>
+          )}
         </nav>
 
         {/* Right Action Zone */}
         <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-          {/* Quick Direct Download Button if apps exist - anyone can click! */}
+          {/* Quick Direct Download Button if apps exist - public for all visitors */}
           {hasApps && onQuickDownload && (
             <button
               onClick={onQuickDownload}
-              className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-neutral-200 bg-neutral-900 hover:bg-neutral-800 border border-neutral-700/80 rounded-lg transition-colors whitespace-nowrap shadow-sm"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-neutral-200 bg-neutral-900 hover:bg-neutral-800 border border-neutral-700/80 rounded-lg transition-colors whitespace-nowrap shadow-sm cursor-pointer"
               title="Download latest APK directly without signing in"
             >
               <Download className="w-3.5 h-3.5 text-cyan-400" />
@@ -126,50 +155,44 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           )}
 
-          {/* Admin Authentication Status */}
-          {admin ? (
-            <div className="flex items-center gap-2">
-              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-950/50 border border-emerald-800/60 text-emerald-300 text-[11px] font-semibold">
-                <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                <span>Admin</span>
+          {/* Admin Controls: ONLY visible when admin is authenticated! Hidden from public */}
+          {admin && (
+            <>
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-950/60 border border-emerald-800 text-emerald-300 text-[11px] font-semibold">
+                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                  <span className="hidden sm:inline">Admin: {admin.name || 'Publisher'}</span>
+                  <span className="sm:hidden">Admin</span>
+                </div>
+                <button
+                  onClick={onLogout}
+                  className="p-1.5 text-neutral-400 hover:text-white bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 rounded-lg transition-colors cursor-pointer"
+                  title="Log out of Admin Publisher Account"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                </button>
               </div>
-              <button
-                onClick={onLogout}
-                className="p-1.5 text-neutral-400 hover:text-white bg-neutral-900 border border-neutral-800 rounded-lg transition-colors"
-                title="Log out of Admin Publisher Account"
-              >
-                <LogOut className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          ) : (
-            <button
-              onClick={onOpenLoginModal}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-neutral-300 hover:text-white bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 rounded-lg transition-colors"
-              title="Admin sign-in to publish and manage APKs"
-            >
-              <LogIn className="w-3.5 h-3.5 text-cyan-400" />
-              <span>Admin Login</span>
-            </button>
-          )}
 
-          {/* Mode Switcher */}
-          {currentView === 'upload' ? (
-            <button
-              onClick={() => onNavigate('store')}
-              className="px-3.5 py-1.5 text-xs font-semibold text-neutral-900 bg-white hover:bg-neutral-200 rounded-lg transition-colors whitespace-nowrap flex items-center gap-1.5 shadow-sm"
-            >
-              <Smartphone className="w-3.5 h-3.5" />
-              <span>Storefront</span>
-            </button>
-          ) : (
-            <button
-              onClick={() => onNavigate('upload')}
-              className="px-3.5 py-1.5 text-xs font-bold text-white bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 rounded-lg transition-colors whitespace-nowrap flex items-center gap-1.5 shadow-md shadow-cyan-950/40"
-            >
-              <UploadCloud className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Publish APK</span>
-              <span className="sm:hidden">Publish</span>
-            </button>
+              {/* Mode Switcher */}
+              {currentView === 'upload' ? (
+                <button
+                  onClick={() => onNavigate('store')}
+                  className="px-3.5 py-1.5 text-xs font-semibold text-neutral-900 bg-white hover:bg-neutral-200 rounded-lg transition-colors whitespace-nowrap flex items-center gap-1.5 shadow-sm cursor-pointer"
+                >
+                  <Smartphone className="w-3.5 h-3.5" />
+                  <span>Storefront</span>
+                </button>
+              ) : (
+                <button
+                  onClick={() => onNavigate('upload')}
+                  className="px-3.5 py-1.5 text-xs font-bold text-white bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 rounded-lg transition-colors whitespace-nowrap flex items-center gap-1.5 shadow-md shadow-cyan-950/40 cursor-pointer"
+                >
+                  <UploadCloud className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Publish APK</span>
+                  <span className="sm:hidden">Publish</span>
+                </button>
+              )}
+            </>
           )}
         </div>
       </div>

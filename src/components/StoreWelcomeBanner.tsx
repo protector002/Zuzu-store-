@@ -44,7 +44,7 @@ export const StoreWelcomeBanner: React.FC<StoreWelcomeBannerProps> = ({
             Download & Distribute Android APKs Directly
           </h1>
           <p className="text-sm sm:text-base text-neutral-300 max-w-2xl mx-auto leading-relaxed">
-            Welcome to <strong className="text-cyan-300 font-bold">ZuzuStore</strong>. Anyone can download applications freely with zero accounts, paywalls, or registrations. The administrator can sign in to publish APK packages.
+            Welcome to <strong className="text-cyan-300 font-bold">ZuzuStore</strong>. Anyone can download applications freely with zero accounts, paywalls, or registrations. Direct, verified APK packages ready for immediate installation.
           </p>
         </div>
 
@@ -70,20 +70,20 @@ export const StoreWelcomeBanner: React.FC<StoreWelcomeBannerProps> = ({
             </p>
           </div>
 
-          <div className="p-4 rounded-2xl bg-neutral-900/70 border border-neutral-800 hover:border-purple-500/40 transition-colors space-y-2">
-            <div className="w-9 h-9 rounded-xl bg-purple-950 border border-purple-800/60 flex items-center justify-center text-purple-400">
-              <Lock className="w-4 h-4" />
+          <div className="p-4 rounded-2xl bg-neutral-900/70 border border-neutral-800 hover:border-emerald-500/40 transition-colors space-y-2">
+            <div className="w-9 h-9 rounded-xl bg-emerald-950 border border-emerald-800/60 flex items-center justify-center text-emerald-400">
+              <ShieldCheck className="w-4 h-4" />
             </div>
-            <h3 className="text-sm font-bold text-white">Publisher Admin Portal</h3>
+            <h3 className="text-sm font-bold text-white">Verified & Safe Packages</h3>
             <p className="text-xs text-neutral-400 leading-relaxed">
-              Protected console allows the administrator to publish and update APK packages.
+              Cryptographically verified APK packages with SHA-256 validation and instant direct streaming.
             </p>
           </div>
         </div>
 
         {/* Action Button */}
         <div className="pt-4 flex flex-wrap items-center justify-center gap-3">
-          {admin ? (
+          {admin && (
             <button
               onClick={onNavigateToUpload}
               className="px-6 py-3.5 text-xs sm:text-sm font-bold text-white bg-gradient-to-r from-cyan-600 via-sky-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 rounded-xl transition-all shadow-lg shadow-cyan-950/40 active:scale-95 flex items-center gap-2"
@@ -91,19 +91,11 @@ export const StoreWelcomeBanner: React.FC<StoreWelcomeBannerProps> = ({
               <UploadCloud className="w-4 h-4" />
               <span>Publish Your First APK Package</span>
             </button>
-          ) : (
-            <button
-              onClick={onOpenLoginModal}
-              className="px-6 py-3.5 text-xs sm:text-sm font-bold text-white bg-gradient-to-r from-cyan-600 via-sky-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 rounded-xl transition-all shadow-lg shadow-cyan-950/40 active:scale-95 flex items-center gap-2"
-            >
-              <Lock className="w-4 h-4" />
-              <span>Admin Login to Publish APK</span>
-            </button>
           )}
 
           <button
             onClick={onOpenGuide}
-            className="px-4 py-3.5 text-xs sm:text-sm font-semibold text-neutral-300 hover:text-white bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 rounded-xl transition-colors flex items-center gap-2"
+            className="px-5 py-3.5 text-xs sm:text-sm font-semibold text-neutral-300 hover:text-white bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 rounded-xl transition-colors flex items-center gap-2"
           >
             <HelpCircle className="w-4 h-4 text-cyan-400" />
             <span>How to Install APKs</span>

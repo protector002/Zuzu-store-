@@ -1,16 +1,21 @@
 import React from 'react';
-import { ShieldCheck, Smartphone } from 'lucide-react';
+import { ShieldCheck, Smartphone, Lock, UploadCloud, Layers } from 'lucide-react';
+import { AdminUser } from '../types';
 
 interface FooterProps {
   onNavigate: (view: 'store' | 'upload') => void;
   onOpenGuide: () => void;
   appsCount: number;
+  admin?: AdminUser | null;
+  onSecretAdminTrigger?: () => void;
 }
 
 export const Footer: React.FC<FooterProps> = ({
   onNavigate,
   onOpenGuide,
   appsCount,
+  admin,
+  onSecretAdminTrigger,
 }) => {
   return (
     <footer className="border-t border-neutral-900 bg-neutral-950 py-12 text-neutral-400 text-xs">
@@ -29,7 +34,7 @@ export const Footer: React.FC<FooterProps> = ({
               </span>
             </div>
             <p className="text-neutral-400 leading-relaxed text-[11px]">
-              Direct Android APK distribution portal. Any user can download all applications freely with zero account requirements. Secure publisher backend for authorized administration.
+              Direct Android APK distribution portal. Fast, clean, direct package downloads with zero accounts or registrations required.
             </p>
           </div>
 
@@ -51,24 +56,44 @@ export const Footer: React.FC<FooterProps> = ({
             </ul>
           </div>
 
-          {/* Admin & Publisher */}
+          {/* Conditional Admin & Publisher OR Public Specs */}
           <div className="space-y-2">
-            <h4 className="text-white font-semibold uppercase tracking-wider text-[11px]">Publisher Console</h4>
-            <ul className="space-y-1.5 text-[11px]">
-              <li>
-                <button onClick={() => onNavigate('upload')} className="hover:text-white transition-colors text-left">
-                  Publisher Studio
-                </button>
-              </li>
-              <li>
-                <button onClick={() => onNavigate('upload')} className="hover:text-white transition-colors text-left">
-                  Upload APK Package
-                </button>
-              </li>
-              <li>
-                <span className="text-neutral-500">Authorized Access Only</span>
-              </li>
-            </ul>
+            {admin ? (
+              <>
+                <h4 className="text-white font-semibold uppercase tracking-wider text-[11px] flex items-center gap-1.5 text-cyan-400">
+                  <UploadCloud className="w-3.5 h-3.5" />
+                  <span>Publisher Console</span>
+                </h4>
+                <ul className="space-y-1.5 text-[11px]">
+                  <li>
+                    <button onClick={() => onNavigate('upload')} className="hover:text-white transition-colors text-left font-medium text-neutral-200">
+                      Publisher Studio
+                    </button>
+                  </li>
+                  <li>
+                    <button onClick={() => onNavigate('upload')} className="hover:text-white transition-colors text-left">
+                      Upload New APK Package
+                    </button>
+                  </li>
+                  <li>
+                    <span className="text-emerald-400 text-[10px]">Logged in as {admin.name || 'Admin'}</span>
+                  </li>
+                </ul>
+              </>
+            ) : (
+              <>
+                <h4 className="text-white font-semibold uppercase tracking-wider text-[11px] flex items-center gap-1.5">
+                  <Layers className="w-3.5 h-3.5 text-neutral-400" />
+                  <span>Platform Specs</span>
+                </h4>
+                <ul className="space-y-1.5 text-[11px] text-neutral-400">
+                  <li>Android 8.0+ to Android 15.0+</li>
+                  <li>Pure .APK package archives</li>
+                  <li>Direct high-speed streaming</li>
+                  <li>Instant QR code installs</li>
+                </ul>
+              </>
+            )}
           </div>
 
           {/* Security & Verification */}
@@ -88,7 +113,18 @@ export const Footer: React.FC<FooterProps> = ({
 
         {/* Bottom copyright */}
         <div className="flex flex-col sm:flex-row items-center justify-between gap-4 text-neutral-400 text-[11px]">
-          <p>© {new Date().getFullYear()} ZuzuStore. Direct Android application distribution.</p>
+          <div className="flex items-center gap-2">
+            <p>© {new Date().getFullYear()} ZuzuStore. Direct Android application distribution.</p>
+            {/* Discreet secret administrator trigger */}
+            <button
+              onClick={onSecretAdminTrigger}
+              className="text-neutral-700 hover:text-neutral-400 transition-colors cursor-pointer p-0.5 rounded opacity-40 hover:opacity-100"
+              title="Authorized Publisher Access"
+              aria-label="Authorized Access"
+            >
+              <Lock className="w-2.5 h-2.5" />
+            </button>
+          </div>
           <div className="flex items-center gap-4 text-neutral-300">
             <span>Direct APK Access</span>
             <span className="text-neutral-700">•</span>

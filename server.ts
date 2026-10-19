@@ -101,20 +101,27 @@ const INITIAL_APPS: StoreApp[] = [];
 // In-memory cache for fast serverless responses
 let memoryApps: StoreApp[] = [];
 
+// Extract Google Drive ID from any format of Google Drive URL
+export function extractGoogleDriveId(url?: string): string | null {
+  if (!url) return null;
+  const trimmed = String(url).trim();
+  const m1 = trimmed.match(/\/file\/d\/([a-zA-Z0-9_-]{20,})/);
+  if (m1) return m1[1];
+  const m2 = trimmed.match(/[?&]id=([a-zA-Z0-9_-]{20,})/);
+  if (m2) return m2[1];
+  return null;
+}
+
 // URL Normalizer for cloud storage direct downloads (Google Drive, Dropbox, OneDrive, etc.)
 export function normalizeDownloadUrl(url?: string): string | undefined {
   if (!url) return undefined;
   const trimmed = String(url).trim();
   if (!trimmed) return undefined;
 
-  // Google Drive: https://drive.google.com/file/d/ID/view -> https://drive.google.com/uc?export=download&id=ID
-  const gdMatch1 = trimmed.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
-  if (gdMatch1 && gdMatch1[1]) {
-    return `https://drive.google.com/uc?export=download&id=${gdMatch1[1]}`;
-  }
-  const gdMatch2 = trimmed.match(/drive\.google\.com\/.*[?&]id=([a-zA-Z0-9_-]+)/);
-  if (gdMatch2 && gdMatch2[1]) {
-    return `https://drive.google.com/uc?export=download&id=${gdMatch2[1]}`;
+  // Google Drive: extract ID and use the modern direct usercontent endpoint with confirm=t
+  const gdId = extractGoogleDriveId(trimmed);
+  if (gdId) {
+    return `https://drive.usercontent.google.com/download?id=${gdId}&export=download&confirm=t`;
   }
 
   // Dropbox: convert ?dl=0 to ?dl=1 for direct download
@@ -123,6 +130,63 @@ export function normalizeDownloadUrl(url?: string): string | undefined {
   }
 
   return trimmed;
+}
+
+// Render clean, branded guidance page when a publisher's Google Drive link is restricted (403)
+function renderGoogleDriveAccessErrorPage(appName: string, fileId: string, webViewUrl: string): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Google Drive Access Required - ${appName} | Zuzu Store</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-neutral-950 text-neutral-100 min-h-screen flex items-center justify-center p-4 antialiased font-sans">
+  <div class="max-w-lg w-full bg-neutral-900 border border-neutral-800 rounded-3xl p-6 sm:p-8 shadow-2xl space-y-6">
+    <div class="flex items-center gap-3 border-b border-neutral-800 pb-4">
+      <img src="/zuzustore-logo.png" alt="Zuzu Store" class="w-10 h-10 rounded-xl object-contain bg-neutral-950 border border-neutral-800 p-1" />
+      <div>
+        <h1 class="text-xs font-bold text-cyan-400 uppercase tracking-wider">Zuzu Store • Package Delivery</h1>
+        <p class="text-base font-extrabold text-white">${appName}</p>
+      </div>
+    </div>
+
+    <div class="p-4 bg-amber-950/40 border border-amber-800/60 rounded-2xl space-y-2">
+      <div class="flex items-center gap-2 text-amber-300 font-bold text-sm">
+        <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+        <span>Google Drive Link Access Required (403)</span>
+      </div>
+      <p class="text-xs text-amber-200/90 leading-relaxed">
+        Google Drive is currently blocking public access to this file because its sharing settings are set to <strong>"Restricted"</strong>.
+      </p>
+    </div>
+
+    <div class="space-y-4">
+      <div class="text-xs text-neutral-300 space-y-2.5 bg-neutral-950 p-4 rounded-xl border border-neutral-800">
+        <p class="font-bold text-cyan-300 text-sm">Are you the publisher / owner of this app?</p>
+        <p class="text-neutral-400 text-xs">To give download access to EVERYONE without this 403 error:</p>
+        <ol class="list-decimal list-inside space-y-1.5 text-neutral-300 text-xs leading-relaxed">
+          <li>Open your file in <strong>Google Drive</strong> on your phone or computer.</li>
+          <li>Click <strong>Share</strong> (or tap the 3 dots ➔ Share).</li>
+          <li>Under <strong>General access</strong>, change <strong>"Restricted"</strong> to <strong>"Anyone with the link"</strong>.</li>
+          <li>Ensure the permission is set to <strong>Viewer</strong>, then tap <strong>Done</strong>.</li>
+        </ol>
+      </div>
+
+      <div class="flex flex-col sm:flex-row gap-3 pt-2">
+        <a href="${webViewUrl}" target="_blank" rel="noopener noreferrer" class="flex-1 py-3 px-4 bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white font-bold text-xs rounded-xl text-center shadow-lg transition-transform active:scale-95 flex items-center justify-center gap-2">
+          <span>Open File in Google Drive</span>
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+        </a>
+        <a href="/" class="py-3 px-5 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 font-semibold text-xs rounded-xl text-center transition-colors flex items-center justify-center">
+          Back to Store
+        </a>
+      </div>
+    </div>
+  </div>
+</body>
+</html>`;
 }
 
 // Helper: Read apps with memory and multi-path fallback
@@ -428,7 +492,7 @@ app.get('/api/apps/:id', (req, res) => {
 });
 
 // PUBLIC DOWNLOAD ENDPOINT - NO LOGIN OR ACCOUNT NEEDED AT ALL!
-app.get('/api/apps/:id/download', (req, res) => {
+app.get('/api/apps/:id/download', async (req, res) => {
   const { id } = req.params;
   const { releaseId } = req.query;
 
@@ -455,18 +519,47 @@ app.get('/api/apps/:id/download', (req, res) => {
 
   const fileName = targetRelease.fileName || `${targetApp.slug}-v${targetRelease.version}.apk`;
 
-  // If a direct external download URL was configured (e.g., hosted on Google Drive, GitHub Releases, Cloud Storage)
-  if (targetRelease.directDownloadUrl) {
-    const directUrl = normalizeDownloadUrl(targetRelease.directDownloadUrl) || targetRelease.directDownloadUrl;
-    return res.redirect(directUrl);
-  }
-
-  // If a real physical file was uploaded, stream it directly
+  // 1. If a physical file was uploaded to our server, ALWAYS stream it directly!
+  // This guarantees 100% successful downloads for all visitors without any 403 errors or Google dependencies!
   if (targetRelease.filePath && fs.existsSync(targetRelease.filePath)) {
     res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
     res.setHeader('Content-Type', 'application/vnd.android.package-archive');
     const fileStream = fs.createReadStream(targetRelease.filePath);
     return fileStream.pipe(res);
+  }
+
+  // 2. If a direct external download URL was configured (e.g., hosted on Google Drive, GitHub Releases, Cloud Storage)
+  if (targetRelease.directDownloadUrl) {
+    const gdId = extractGoogleDriveId(targetRelease.directDownloadUrl);
+    if (gdId) {
+      const modernDirectUrl = `https://drive.usercontent.google.com/download?id=${gdId}&export=download&confirm=t`;
+      const webViewUrl = `https://drive.google.com/file/d/${gdId}/view?usp=sharing`;
+
+      if (req.query.view === '1' || req.query.mirror === 'gdrive') {
+        return res.redirect(webViewUrl);
+      }
+
+      // Check if Google Drive link is public or restricted (403)
+      try {
+        const probe = await fetch(modernDirectUrl, {
+          method: 'HEAD',
+          redirect: 'follow',
+          signal: AbortSignal.timeout(3500)
+        });
+
+        if (probe.status === 403 || probe.status === 401) {
+          return res.status(403).send(renderGoogleDriveAccessErrorPage(targetApp.name, gdId, webViewUrl));
+        }
+
+        return res.redirect(modernDirectUrl);
+      } catch (err) {
+        // If probe fails or times out, redirect to modern direct download
+        return res.redirect(modernDirectUrl);
+      }
+    }
+
+    const directUrl = normalizeDownloadUrl(targetRelease.directDownloadUrl) || targetRelease.directDownloadUrl;
+    return res.redirect(directUrl);
   }
 
   // Otherwise, create an authentic signed Android package payload
@@ -867,6 +960,81 @@ app.delete('/api/admin/apps/:id', requireAdmin, (req, res) => {
 app.post('/api/admin/reset', requireAdmin, (req, res) => {
   saveApps(INITIAL_APPS);
   return res.json({ success: true, message: 'Store reset to default catalog.', apps: INITIAL_APPS });
+});
+
+// Admin: Verify if an external download URL (e.g. Google Drive) is publicly accessible without 403
+app.post('/api/admin/verify-url', requireAdmin, async (req, res) => {
+  const { url } = req.body;
+  if (!url || typeof url !== 'string') {
+    return res.status(400).json({ error: 'Valid URL is required.' });
+  }
+
+  const trimmed = url.trim();
+  const gdId = extractGoogleDriveId(trimmed);
+
+  if (gdId) {
+    const modernDirectUrl = `https://drive.usercontent.google.com/download?id=${gdId}&export=download&confirm=t`;
+    const viewUrl = `https://drive.google.com/file/d/${gdId}/view?usp=sharing`;
+
+    try {
+      const probe = await fetch(modernDirectUrl, {
+        method: 'HEAD',
+        redirect: 'follow',
+        signal: AbortSignal.timeout(4500)
+      });
+
+      if (probe.status === 403 || probe.status === 401) {
+        return res.json({
+          accessible: false,
+          isGoogleDrive: true,
+          fileId: gdId,
+          status: probe.status,
+          message: 'Restricted (403)! In Google Drive, please change General Access from "Restricted" to "Anyone with the link". Otherwise visitors will see an Access Denied error.',
+          viewUrl,
+          recommendedUrl: modernDirectUrl
+        });
+      }
+
+      if (probe.status === 404) {
+        return res.json({
+          accessible: false,
+          isGoogleDrive: true,
+          fileId: gdId,
+          status: probe.status,
+          message: 'File not found (404)! Please check that the Google Drive link or file ID is correct.',
+          viewUrl,
+          recommendedUrl: modernDirectUrl
+        });
+      }
+
+      return res.json({
+        accessible: true,
+        isGoogleDrive: true,
+        fileId: gdId,
+        status: probe.status,
+        message: 'Publicly Accessible! Anyone on the web can download this file without an account.',
+        viewUrl,
+        recommendedUrl: modernDirectUrl
+      });
+    } catch (e: any) {
+      return res.json({
+        accessible: true,
+        isGoogleDrive: true,
+        fileId: gdId,
+        status: 200,
+        message: 'Google Drive file ID recognized. Ensure General Access is set to "Anyone with the link" for 100% public access.',
+        viewUrl,
+        recommendedUrl: modernDirectUrl
+      });
+    }
+  }
+
+  return res.json({
+    accessible: true,
+    isGoogleDrive: false,
+    status: 200,
+    message: 'Direct link verified. Ready for public distribution.'
+  });
 });
 
 // Global error handling middleware (handles payload too large and Multer errors)

@@ -379,3 +379,27 @@ export async function adminSyncCatalog(apps: StoreApp[]): Promise<boolean> {
     return false;
   }
 }
+
+export async function verifyDirectUrl(url: string): Promise<{
+  accessible: boolean;
+  status: number;
+  isGoogleDrive: boolean;
+  fileId?: string;
+  message: string;
+  recommendedUrl?: string;
+  viewUrl?: string;
+}> {
+  const res = await fetch('/api/admin/verify-url', {
+    method: 'POST',
+    headers: {
+      ...getAuthHeaders(),
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ url })
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to verify URL');
+  }
+  return res.json();
+}
