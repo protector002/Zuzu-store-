@@ -117,26 +117,39 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [admin]);
 
-  // URL hash (#admin, #login, #publisher) and query param (?admin) listener for secret access on any device
+  // URL pathname (/admin, /login, /publisher), hash (#admin), and query param (?admin) listener
   useEffect(() => {
-    const handleHashOrSearch = () => {
+    const handleUrlTrigger = () => {
+      const pathname = window.location.pathname.toLowerCase().replace(/\/+$/, '');
       const hash = window.location.hash.toLowerCase();
       const params = new URLSearchParams(window.location.search);
-      if (
+
+      const isPathAdmin =
+        pathname === '/admin' ||
+        pathname === '/login' ||
+        pathname === '/publisher' ||
+        pathname === '/portal';
+
+      const isHashOrQueryAdmin =
         hash === '#admin' ||
         hash === '#login' ||
         hash === '#publisher' ||
         hash === '#portal' ||
         params.has('admin') ||
-        params.has('publisher')
-      ) {
+        params.has('publisher');
+
+      if (isPathAdmin || isHashOrQueryAdmin) {
         handleOpenSecretAdmin();
       }
     };
 
-    handleHashOrSearch();
-    window.addEventListener('hashchange', handleHashOrSearch);
-    return () => window.removeEventListener('hashchange', handleHashOrSearch);
+    handleUrlTrigger();
+    window.addEventListener('hashchange', handleUrlTrigger);
+    window.addEventListener('popstate', handleUrlTrigger);
+    return () => {
+      window.removeEventListener('hashchange', handleUrlTrigger);
+      window.removeEventListener('popstate', handleUrlTrigger);
+    };
   }, [admin]);
 
   // Handle APK Download (PUBLIC - NO ACCOUNT REQUIRED)

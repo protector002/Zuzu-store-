@@ -1037,6 +1037,16 @@ app.post('/api/admin/verify-url', requireAdmin, async (req, res) => {
   });
 });
 
+// Frontend Admin direct route handler (supports visiting /admin, /login, /publisher directly)
+app.get(['/admin', '/admin/*', '/login', '/publisher'], (req, res, next) => {
+  const distPath = path.resolve(process.cwd(), 'dist');
+  const indexHtml = path.resolve(distPath, 'index.html');
+  if (fs.existsSync(indexHtml)) {
+    return res.sendFile(indexHtml);
+  }
+  return res.redirect('/#admin');
+});
+
 // Global error handling middleware (handles payload too large and Multer errors)
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
   console.error('API Error:', err);
