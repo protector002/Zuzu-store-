@@ -344,6 +344,36 @@ const conditionalSingleUpload = (req: express.Request, res: express.Response, ne
   }
 };
 
+// Stateless HMAC Token Secret for Vercel Serverless containers
+const TOKEN_SECRET = crypto.createHash('sha256').update(ADMIN_EMAIL + ADMIN_PASSWORD + 'zuzu_auth_salt_2026').digest('hex');
+
+function createAdminToken(): string {
+  const expiresAt = Date.now() + 30 * 24 * 60 * 60 * 1000; // 30 days
+  const payload = `${ADMIN_EMAIL}:${expiresAt}`;
+  const signature = crypto.createHmac('sha256', TOKEN_SECRET).update(payload).digest('hex');
+  return Buffer.from(`${payload}:${signature}`).toString('base64url');
+}
+
+function verifyAdminToken(token: string): boolean {
+  try {
+    const decoded = Buffer.from(token, 'base64url').toString('utf-8');
+    const parts = decoded.split(':');
+    if (parts.length === 3) {
+      const [email, expiresAtStr, signature] = parts;
+      const expiresAt = parseInt(expiresAtStr, 10);
+      if (isNaN(expiresAt) || expiresAt < Date.now()) return false;
+      if (email.toLowerCase() !== ADMIN_EMAIL.toLowerCase()) return false;
+      const expectedSig = crypto.createHmac('sha256', TOKEN_SECRET).update(`${email}:${expiresAt}`).digest('hex');
+      return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSig));
+    }
+  } catch (_) {}
+
+  // Fallback to file/memory session check for legacy tokens
+  const sessions = getSessions();
+  const session = sessions[token];
+  return Boolean(session && session.expiresAt > Date.now());
+}
+
 // Admin authentication middleware
 const requireAdmin = (req: express.Request, res: express.Response, next: express.NextFunction) => {
   const authHeader = req.headers.authorization;
@@ -352,14 +382,15 @@ const requireAdmin = (req: express.Request, res: express.Response, next: express
   }
 
   const token = authHeader.split(' ')[1];
-  const sessions = getSessions();
-  const session = sessions[token];
-
-  if (!session || session.expiresAt < Date.now()) {
+  if (!verifyAdminToken(token)) {
     return res.status(401).json({ error: 'Session expired or invalid. Please log in as admin.' });
   }
 
-  (req as any).admin = session;
+  (req as any).admin = {
+    email: ADMIN_EMAIL,
+    name: 'John Sseruwagi',
+    role: 'admin'
+  };
   next();
 };
 
@@ -379,15 +410,16 @@ app.post('/api/auth/login', (req, res) => {
   const targetEmail = ADMIN_EMAIL.toLowerCase();
 
   if (normalizedEmail === targetEmail && password === ADMIN_PASSWORD) {
-    const token = crypto.randomBytes(32).toString('hex');
+    const token = createAdminToken();
+
+    // Also store session locally for backward compatibility
     const session: Session = {
       token,
       email: ADMIN_EMAIL,
       role: 'admin',
       createdAt: Date.now(),
-      expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000 // 30 days
+      expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000
     };
-
     const sessions = getSessions();
     sessions[token] = session;
     saveSessions(sessions);
@@ -416,17 +448,14 @@ app.get('/api/auth/session', (req, res) => {
   }
 
   const token = authHeader.split(' ')[1];
-  const sessions = getSessions();
-  const session = sessions[token];
-
-  if (!session || session.expiresAt < Date.now()) {
+  if (!verifyAdminToken(token)) {
     return res.json({ authenticated: false });
   }
 
   return res.json({
     authenticated: true,
     admin: {
-      email: session.email,
+      email: ADMIN_EMAIL,
       name: 'John Sseruwagi',
       role: 'Admin Publisher'
     }
