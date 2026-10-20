@@ -220,13 +220,21 @@ export const AppDetailView: React.FC<AppDetailViewProps> = ({
       {/* Screenshots Section */}
       {app.screenshots.length > 0 && (
         <div className="space-y-4">
-          <h2 className="text-lg font-bold text-white">App Previews & Screenshots</h2>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <h2 className="text-lg font-bold text-white">App Previews & Screenshots</h2>
+              <span className="text-xs text-neutral-400 bg-neutral-900 border border-neutral-800 px-2.5 py-0.5 rounded-full font-medium">
+                {app.screenshots.length} {app.screenshots.length === 1 ? 'screenshot' : 'screenshots'}
+              </span>
+            </div>
+            <span className="text-xs text-neutral-400 hidden sm:inline">Click any screenshot to view full screen</span>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3.5">
             {app.screenshots.map((shot, idx) => (
               <button
                 key={idx}
                 onClick={() => onPreviewScreenshot(idx)}
-                className="group relative rounded-2xl overflow-hidden border border-neutral-800 hover:border-neutral-700 bg-neutral-900 aspect-[16/10] transition-all"
+                className="group relative rounded-2xl overflow-hidden border border-neutral-800 hover:border-cyan-500/60 bg-neutral-900 aspect-[16/10] transition-all shadow-md cursor-pointer text-left"
               >
                 <img
                   src={shot || '/zuzustore-logo.png'}
@@ -238,9 +246,12 @@ export const AppDetailView: React.FC<AppDetailViewProps> = ({
                     e.currentTarget.src = '/zuzustore-logo.png';
                   }}
                 />
-                <div className="absolute inset-0 bg-black/25 group-hover:bg-transparent transition-colors" />
-                <span className="absolute bottom-2 left-2 text-[10px] bg-black/75 backdrop-blur-sm text-neutral-200 px-2 py-0.5 rounded font-medium">
-                  Preview {idx + 1}
+                <div className="absolute inset-0 bg-black/20 group-hover:bg-transparent transition-colors" />
+                <span className="absolute bottom-2 left-2 text-[10px] bg-black/80 backdrop-blur-sm text-neutral-200 px-2 py-0.5 rounded font-medium border border-neutral-700/60">
+                  {idx === 0 ? 'Cover' : `Screen ${idx + 1}`}
+                </span>
+                <span className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity bg-black/80 backdrop-blur-sm text-cyan-300 text-[10px] font-semibold px-1.5 py-0.5 rounded">
+                  Enlarge
                 </span>
               </button>
             ))}

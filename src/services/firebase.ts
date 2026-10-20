@@ -87,6 +87,19 @@ export async function deleteAppFromFirestore(appId: string): Promise<void> {
   try {
     const docRef = doc(db, APPS_COLLECTION, appId);
     await deleteDoc(docRef);
+
+    // Also check and delete if stored under slug or alternate document id
+    try {
+      const snap = await getDocs(collection(db, APPS_COLLECTION));
+      const deletePromises: Promise<any>[] = [];
+      snap.forEach((d) => {
+        const data = d.data();
+        if (d.id === appId || data.id === appId || data.slug === appId) {
+          deletePromises.push(deleteDoc(d.ref));
+        }
+      });
+      await Promise.all(deletePromises);
+    } catch (_) {}
   } catch (err) {
     console.error('Failed to delete app from Firestore:', err);
     throw err;

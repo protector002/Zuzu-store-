@@ -376,22 +376,61 @@ export async function adminAddRelease(
   return data;
 }
 
-export async function adminDeleteApp(appId: string): Promise<{ success: boolean; message: string }> {
-  // Delete from Firestore cloud database
-  deleteAppFromFirestore(appId).catch((e) => console.warn('Firestore cloud delete notice:', e));
-
-  const res = await fetch(`/api/admin/apps/${encodeURIComponent(appId)}`, {
-    method: 'DELETE',
-    headers: {
-      ...getAuthHeaders()
+export async function adminUpdateApp(
+  appId: string,
+  updates: Partial<StoreApp>
+): Promise<{ success: boolean; app: StoreApp; message: string }> {
+  let updatedApp: StoreApp | null = null;
+  try {
+    const cached = localStorage.getItem('zuzu_local_catalog');
+    const existing: StoreApp[] = cached ? JSON.parse(cached) : [];
+    const index = existing.findIndex((a) => a.id === appId || a.slug === appId);
+    if (index !== -1) {
+      updatedApp = { ...existing[index], ...updates, updatedAt: new Date().toISOString() };
+      existing[index] = updatedApp;
+      localStorage.setItem('zuzu_local_catalog', JSON.stringify(existing));
     }
-  });
+  } catch (_) {}
 
-  const data = await res.json();
-  if (!res.ok) {
-    throw new Error(data.error || 'Failed to delete app.');
+  // Save directly to Firestore cloud database
+  if (updatedApp) {
+    saveAppToFirestore(updatedApp).catch((e) => console.warn('Firestore cloud update warning:', e));
   }
 
+  // Also call backend API
+  try {
+    const res = await fetch(`/api/admin/apps/${encodeURIComponent(appId)}`, {
+      method: 'PATCH',
+      headers: {
+        ...getAuthHeaders(),
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(updates)
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.app) {
+        saveAppToFirestore(data.app).catch(() => {});
+        return data;
+      }
+    }
+  } catch (_) {}
+
+  if (updatedApp) {
+    return { success: true, app: updatedApp, message: 'Application updated successfully!' };
+  }
+  throw new Error('Application could not be found to update.');
+}
+
+export async function adminDeleteApp(appId: string): Promise<{ success: boolean; message: string }> {
+  // 1. Delete from Firestore cloud database
+  try {
+    await deleteAppFromFirestore(appId);
+  } catch (e) {
+    console.warn('Firestore cloud delete notice:', e);
+  }
+
+  // 2. Remove from local browser cache immediately
   try {
     const cached = localStorage.getItem('zuzu_local_catalog');
     if (cached) {
@@ -401,7 +440,21 @@ export async function adminDeleteApp(appId: string): Promise<{ success: boolean;
     }
   } catch (_) {}
 
-  return data;
+  // 3. Notify backend (if available) without throwing if serverless returned 404
+  try {
+    const res = await fetch(`/api/admin/apps/${encodeURIComponent(appId)}`, {
+      method: 'DELETE',
+      headers: {
+        ...getAuthHeaders()
+      }
+    });
+    if (res.ok) {
+      const data = await res.json().catch(() => ({}));
+      return { success: true, message: data.message || 'Application permanently removed from store.' };
+    }
+  } catch (_) {}
+
+  return { success: true, message: 'Application permanently removed from store.' };
 }
 
 export async function adminResetStore(): Promise<{ success: boolean; apps: StoreApp[] }> {

@@ -225,12 +225,12 @@ export const HeroZuzu: React.FC<HeroZuzuProps> = ({
 
             {/* Screenshots strip */}
             {app.screenshots.length > 0 && (
-              <div className="grid grid-cols-2 gap-3 mt-3">
-                {app.screenshots.slice(0, 2).map((shot, idx) => (
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 mt-3">
+                {app.screenshots.slice(0, 3).map((shot, idx) => (
                   <button
                     key={idx}
                     onClick={() => onPreviewScreenshot(idx)}
-                    className="relative rounded-xl overflow-hidden border border-neutral-800 hover:border-neutral-700 bg-neutral-900 aspect-[16/10] group transition-all"
+                    className="relative rounded-xl overflow-hidden border border-neutral-800 hover:border-cyan-500/60 bg-neutral-900 aspect-[16/10] group transition-all text-left cursor-pointer"
                   >
                     <img
                       src={shot}
@@ -243,9 +243,14 @@ export const HeroZuzu: React.FC<HeroZuzuProps> = ({
                       }}
                     />
                     <div className="absolute inset-0 bg-black/25 group-hover:bg-transparent transition-colors" />
-                    <span className="absolute bottom-2 left-2 text-[10px] bg-black/75 backdrop-blur-sm px-2 py-0.5 rounded text-white font-medium">
-                      Screen {idx + 1}
+                    <span className="absolute bottom-1.5 left-1.5 text-[9px] bg-black/80 backdrop-blur-sm px-1.5 py-0.5 rounded text-white font-medium">
+                      {idx === 0 ? 'Cover' : `Screen ${idx + 1}`}
                     </span>
+                    {idx === 2 && app.screenshots.length > 3 && (
+                      <span className="absolute inset-0 bg-black/60 backdrop-blur-[2px] flex items-center justify-center text-xs font-bold text-cyan-300">
+                        +{app.screenshots.length - 2} more
+                      </span>
+                    )}
                   </button>
                 ))}
               </div>

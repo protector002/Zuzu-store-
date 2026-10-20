@@ -19,7 +19,11 @@ import {
   Link2,
   Image as ImageIcon,
   Globe,
-  AlertTriangle
+  AlertTriangle,
+  ArrowLeft,
+  ArrowRight,
+  Eye,
+  X
 } from 'lucide-react';
 import { StoreApp, Platform, AppCategory, AdminUser } from '../types';
 import { saveApkBlob } from '../utils/fileStorage';
@@ -30,11 +34,65 @@ interface PublisherPortalProps {
   admin: AdminUser | null;
   onOpenLoginModal: () => void;
   onUploadApp: (payload: FormData | Record<string, any>) => Promise<StoreApp>;
+  onUpdateApp?: (appId: string, updates: Partial<StoreApp>) => Promise<StoreApp>;
   onAddRelease: (appId: string, payload: FormData | Record<string, any>) => Promise<StoreApp>;
   onDeleteApp: (appId: string) => Promise<void>;
   onResetCatalog: () => Promise<void>;
   onViewAppInStore: (app: StoreApp) => void;
   onDownloadTest: (appId: string, releaseId?: string) => Promise<void>;
+}
+
+// Sample mobile screenshots for testing/previewing
+const SAMPLE_SCREENSHOTS = [
+  'https://images.unsplash.com/photo-1551650975-87deedd944c3?w=800&auto=format&fit=crop&q=80',
+  'https://images.unsplash.com/photo-1512941937669-90a1b58e7e9c?w=800&auto=format&fit=crop&q=80',
+  'https://images.unsplash.com/photo-1526470608268-f674ce90ebd4?w=800&auto=format&fit=crop&q=80',
+  'https://images.unsplash.com/photo-1555774698-0b77e0d5fac6?w=800&auto=format&fit=crop&q=80'
+];
+
+// Convert screenshot to optimized Data URL so it is permanently preserved in Firestore and loads fast
+function convertScreenshotToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const result = e.target?.result as string;
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const canvas = document.createElement('canvas');
+          const maxDim = 1280;
+          let width = img.width;
+          let height = img.height;
+          if (width > height) {
+            if (width > maxDim) {
+              height = Math.round((height * maxDim) / width);
+              width = maxDim;
+            }
+          } else {
+            if (height > maxDim) {
+              width = Math.round((width * maxDim) / height);
+              height = maxDim;
+            }
+          }
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            resolve(result);
+            return;
+          }
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/jpeg', 0.82));
+        } catch (_) {
+          resolve(result);
+        }
+      };
+      img.onerror = () => resolve(result);
+      img.src = result;
+    };
+    reader.onerror = () => resolve('');
+    reader.readAsDataURL(file);
+  });
 }
 
 // Convert chosen image to compressed Base64 Data URL so it is permanently stored in app data
@@ -108,6 +166,7 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
   admin,
   onOpenLoginModal,
   onUploadApp,
+  onUpdateApp,
   onAddRelease,
   onDeleteApp,
   onResetCatalog,
@@ -137,12 +196,47 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
   const [iconPreviewUrl, setIconPreviewUrl] = useState<string>('/zuzustore-logo.png');
   const [customIconUrlInput, setCustomIconUrlInput] = useState<string>('');
 
+  // Screenshots state for New App (Supports adding more than three screenshots)
+  const [screenshots, setScreenshots] = useState<string[]>([]);
+  const [screenshotFiles, setScreenshotFiles] = useState<File[]>([]);
+  const [customScreenshotUrl, setCustomScreenshotUrl] = useState<string>('');
+  const [isProcessingScreenshots, setIsProcessingScreenshots] = useState(false);
+  const screenshotInputRef = useRef<HTMLInputElement>(null);
+
+  // Modal for editing screenshots of existing apps in Live Catalog
+  const [editingScreenshotsApp, setEditingScreenshotsApp] = useState<StoreApp | null>(null);
+  const [editingScreenshotsList, setEditingScreenshotsList] = useState<string[]>([]);
+  const [isSavingScreenshots, setIsSavingScreenshots] = useState(false);
+  const [customEditScreenshotUrl, setCustomEditScreenshotUrl] = useState<string>('');
+  const editScreenshotInputRef = useRef<HTMLInputElement>(null);
+
+  // In-portal screenshot preview lightbox
+  const [publisherLightboxUrl, setPublisherLightboxUrl] = useState<string | null>(null);
+
   // Update existing app state
   const [selectedExistingAppId, setSelectedExistingAppId] = useState<string>(apps[0]?.id || '');
   const [updateVersion, setUpdateVersion] = useState('1.1.0');
   const [updatePlatform, setUpdatePlatform] = useState<Platform>('Android');
   const [updateMinOS, setUpdateMinOS] = useState('Android 9.0+');
   const [updateChangelog, setUpdateChangelog] = useState('Critical stability fixes, updated APK signature, and performance improvements.');
+
+  // In-app Delete Confirmation Modal state (replaces unreliable window.confirm on mobile)
+  const [appToDelete, setAppToDelete] = useState<StoreApp | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  const handleConfirmDelete = async () => {
+    if (!appToDelete) return;
+    setIsDeleting(true);
+    try {
+      await onDeleteApp(appToDelete.id);
+      setSuccessMessage(`"${appToDelete.name}" was permanently removed from the store and cloud database.`);
+      setAppToDelete(null);
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Failed to delete application.');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
   const [updateFile, setUpdateFile] = useState<File | null>(null);
   const [updateDirectUrl, setUpdateDirectUrl] = useState<string>('');
 
@@ -293,6 +387,129 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
     }
   };
 
+  // Screenshot handlers for New App (Supports adding more than 3 screenshots)
+  const handleSelectScreenshotFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files || e.target.files.length === 0) return;
+    setIsProcessingScreenshots(true);
+    try {
+      const files = Array.from(e.target.files);
+      const convertedUrls: string[] = [];
+      for (const file of files) {
+        const url = await convertScreenshotToDataUrl(file);
+        if (url) convertedUrls.push(url);
+      }
+      setScreenshots((prev) => [...prev, ...convertedUrls]);
+      setScreenshotFiles((prev) => [...prev, ...files]);
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Error processing selected screenshot files.');
+    } finally {
+      setIsProcessingScreenshots(false);
+      if (screenshotInputRef.current) {
+        screenshotInputRef.current.value = '';
+      }
+    }
+  };
+
+  const handleScreenshotDrop = async (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    if (!e.dataTransfer.files || e.dataTransfer.files.length === 0) return;
+    setIsProcessingScreenshots(true);
+    try {
+      const files = Array.from(e.dataTransfer.files).filter((f) => f.type.startsWith('image/'));
+      const convertedUrls: string[] = [];
+      for (const file of files) {
+        const url = await convertScreenshotToDataUrl(file);
+        if (url) convertedUrls.push(url);
+      }
+      setScreenshots((prev) => [...prev, ...convertedUrls]);
+      setScreenshotFiles((prev) => [...prev, ...files]);
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Error processing dropped screenshot files.');
+    } finally {
+      setIsProcessingScreenshots(false);
+    }
+  };
+
+  const handleAddCustomScreenshotUrl = () => {
+    const trimmed = customScreenshotUrl.trim();
+    if (!trimmed) return;
+    setScreenshots((prev) => [...prev, trimmed]);
+    setCustomScreenshotUrl('');
+  };
+
+  const handleRemoveScreenshot = (index: number) => {
+    setScreenshots((prev) => prev.filter((_, i) => i !== index));
+    setScreenshotFiles((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const handleMoveScreenshot = (fromIndex: number, toIndex: number) => {
+    if (toIndex < 0 || toIndex >= screenshots.length) return;
+    setScreenshots((prev) => {
+      const copy = [...prev];
+      const [item] = copy.splice(fromIndex, 1);
+      copy.splice(toIndex, 0, item);
+      return copy;
+    });
+    setScreenshotFiles((prev) => {
+      if (prev.length === 0) return prev;
+      const copy = [...prev];
+      const [item] = copy.splice(fromIndex, 1);
+      copy.splice(toIndex, 0, item);
+      return copy;
+    });
+  };
+
+  const handleLoadSampleScreenshots = () => {
+    setScreenshots(SAMPLE_SCREENSHOTS);
+    setSuccessMessage('Added 4 sample showcase screenshots! You can reorder, delete, or upload more.');
+  };
+
+  // Handlers for updating screenshots on existing apps
+  const handleSelectEditScreenshotFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files || e.target.files.length === 0) return;
+    setIsSavingScreenshots(true);
+    try {
+      const files = Array.from(e.target.files);
+      const converted: string[] = [];
+      for (const file of files) {
+        const url = await convertScreenshotToDataUrl(file);
+        if (url) converted.push(url);
+      }
+      setEditingScreenshotsList((prev) => [...prev, ...converted]);
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Error processing screenshot files.');
+    } finally {
+      setIsSavingScreenshots(false);
+      if (editScreenshotInputRef.current) {
+        editScreenshotInputRef.current.value = '';
+      }
+    }
+  };
+
+  const handleSaveAppScreenshots = async () => {
+    if (!editingScreenshotsApp || !onUpdateApp) return;
+    setIsSavingScreenshots(true);
+    try {
+      const updatedScreenshots =
+        editingScreenshotsList.length > 0
+          ? editingScreenshotsList
+          : [editingScreenshotsApp.iconUrl || '/zuzustore-logo.png'];
+
+      await onUpdateApp(editingScreenshotsApp.id, {
+        screenshots: updatedScreenshots
+      });
+
+      setSuccessMessage(
+        `Screenshots for "${editingScreenshotsApp.name}" (${updatedScreenshots.length} images) updated and saved live to Firestore!`
+      );
+      setEditingScreenshotsApp(null);
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Failed to update screenshots.');
+    } finally {
+      setIsSavingScreenshots(false);
+    }
+  };
+
   const handleSubmitNewApp = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!appName.trim()) {
@@ -324,6 +541,7 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
         ? `${(uploadedBinaryFile.size / (1024 * 1024)).toFixed(2)} MB`
         : '29.3 MB';
       const finalIcon = iconPreviewUrl || '/zuzustore-logo.png';
+      const finalScreenshots = screenshots.length > 0 ? screenshots : [finalIcon];
 
       const interval = setInterval(() => {
         setUploadProgress((prev) => (prev >= 90 ? 90 : prev + 25));
@@ -346,6 +564,11 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
         fd.append('fileSize', finalFileSize);
         fd.append('iconUrl', finalIcon);
         fd.append('apkFile', uploadedBinaryFile);
+        // Include screenshots in FormData
+        fd.append('screenshots', JSON.stringify(finalScreenshots));
+        screenshotFiles.forEach((f) => {
+          fd.append('screenshotFiles', f);
+        });
         payload = fd;
       } else {
         payload = {
@@ -361,7 +584,8 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
           directDownloadUrl: formattedLink,
           fileName: finalFileName,
           fileSize: finalFileSize,
-          iconUrl: finalIcon
+          iconUrl: finalIcon,
+          screenshots: finalScreenshots
         };
       }
 
@@ -374,7 +598,7 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
 
       clearInterval(interval);
       setUploadProgress(100);
-      setSuccessMessage(`"${created.name}" (${finalFileSize}) published successfully!`);
+      setSuccessMessage(`"${created.name}" (${finalFileSize}) published successfully with ${finalScreenshots.length} screenshots!`);
 
       // Reset form
       setAppName('');
@@ -383,6 +607,9 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
       setUploadedBinaryFile(null);
       setDirectDownloadUrl('');
       setIconPreviewUrl('/zuzustore-logo.png');
+      setScreenshots([]);
+      setScreenshotFiles([]);
+      setCustomScreenshotUrl('');
 
       setTimeout(() => {
         setIsSubmitting(false);
@@ -936,6 +1163,32 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
                   Upon publishing, your app is indexed with 1-click downloads, QR code scanner support, and verified checksums.
                 </p>
 
+                {/* Live Publishing Checklist */}
+                <div className="p-3 bg-neutral-950/80 border border-neutral-800/80 rounded-xl space-y-2 text-xs">
+                  <div className="flex items-center justify-between text-neutral-300">
+                    <span>Package:</span>
+                    <span className="font-semibold text-white truncate max-w-[170px]">
+                      {uploadedBinaryFile ? uploadedBinaryFile.name : (directDownloadUrl.trim() ? 'Direct Cloud Link' : 'Standard Build')}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between text-neutral-300">
+                    <span>Screenshots:</span>
+                    {screenshots.length >= 3 ? (
+                      <span className="font-bold text-emerald-400 flex items-center gap-1">
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        <span>{screenshots.length} Added (3+ Ready!)</span>
+                      </span>
+                    ) : screenshots.length > 0 ? (
+                      <span className="font-semibold text-amber-400 flex items-center gap-1">
+                        <AlertTriangle className="w-3.5 h-3.5" />
+                        <span>{screenshots.length} Added (Add 3+ recommended)</span>
+                      </span>
+                    ) : (
+                      <span className="text-neutral-400">0 Added (Add 3+ recommended)</span>
+                    )}
+                  </div>
+                </div>
+
                 {isSubmitting && (
                   <div className="space-y-2">
                     <div className="flex items-center justify-between text-xs text-neutral-300">
@@ -959,6 +1212,261 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
                   <UploadCloud className="w-4 h-4" />
                   <span>Publish APK to Store</span>
                 </button>
+              </div>
+            </div>
+
+            {/* FULL-WIDTH SECTION: APPLICATION SCREENSHOTS & SHOWCASE GALLERY */}
+            <div className="lg:col-span-12 space-y-4">
+              <div className="p-6 sm:p-7 bg-neutral-900/60 border border-neutral-800 rounded-3xl space-y-6">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-neutral-800/80 pb-5">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <div className="p-2 rounded-xl bg-cyan-950/60 border border-cyan-800/60 text-cyan-400">
+                        <ImageIcon className="w-4 h-4" />
+                      </div>
+                      <h3 className="text-base sm:text-lg font-bold text-white">
+                        Application Screenshots & Showcase Gallery
+                      </h3>
+                    </div>
+                    <p className="text-xs text-neutral-400 leading-relaxed max-w-2xl">
+                      Showcase your app interface. You can add more than 3 screenshots (4, 5, 6, 8+) of the application before you publish so visitors can explore all screens.
+                    </p>
+                  </div>
+
+                  {/* Screenshots count & requirement indicator badge */}
+                  <div className="self-start sm:self-auto shrink-0">
+                    {screenshots.length >= 3 ? (
+                      <div className="px-3.5 py-1.5 rounded-full bg-emerald-950/80 border border-emerald-700/80 text-emerald-300 text-xs font-bold flex items-center gap-1.5 shadow-sm">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                        <span>{screenshots.length} Screenshots Ready (Meets 3+ Showcase Target!)</span>
+                      </div>
+                    ) : screenshots.length > 0 ? (
+                      <div className="px-3.5 py-1.5 rounded-full bg-amber-950/80 border border-amber-700/80 text-amber-300 text-xs font-semibold flex items-center gap-1.5">
+                        <AlertTriangle className="w-4 h-4 text-amber-400" />
+                        <span>{screenshots.length} Added • Add {3 - screenshots.length} more (recommended: 3+ screenshots)</span>
+                      </div>
+                    ) : (
+                      <div className="px-3.5 py-1.5 rounded-full bg-neutral-800 border border-neutral-700 text-neutral-300 text-xs font-medium flex items-center gap-1.5">
+                        <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+                        <span>0 Screenshots • Add 3+ screenshots recommended</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Upload action controls toolbar */}
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <input
+                    ref={screenshotInputRef}
+                    type="file"
+                    multiple
+                    accept="image/*"
+                    className="hidden"
+                    onChange={handleSelectScreenshotFiles}
+                  />
+
+                  <div className="flex flex-wrap items-center gap-2.5">
+                    <button
+                      type="button"
+                      onClick={() => screenshotInputRef.current?.click()}
+                      disabled={isProcessingScreenshots}
+                      className="px-4 py-2.5 text-xs font-bold text-white bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 rounded-xl transition-all shadow-md active:scale-95 disabled:opacity-50 flex items-center gap-2 cursor-pointer"
+                    >
+                      {isProcessingScreenshots ? (
+                        <>
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                          <span>Processing Images...</span>
+                        </>
+                      ) : (
+                        <>
+                          <UploadCloud className="w-4 h-4" />
+                          <span>Upload Screenshots (Select Multiple)</span>
+                        </>
+                      )}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleLoadSampleScreenshots}
+                      className="px-3.5 py-2.5 text-xs font-semibold text-neutral-300 hover:text-white bg-neutral-800 hover:bg-neutral-700 rounded-xl transition-colors border border-neutral-700 flex items-center gap-1.5 cursor-pointer"
+                      title="Load 4 sample mobile screenshots instantly"
+                    >
+                      <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                      <span>Load 4 Sample Screenshots</span>
+                    </button>
+                  </div>
+
+                  {screenshots.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setScreenshots([]);
+                        setScreenshotFiles([]);
+                      }}
+                      className="px-3 py-1.5 text-xs text-rose-400 hover:text-rose-300 hover:bg-rose-950/40 rounded-lg transition-colors border border-transparent hover:border-rose-900/40 cursor-pointer"
+                    >
+                      Clear All ({screenshots.length})
+                    </button>
+                  )}
+                </div>
+
+                {/* Direct Screenshot Image URL input */}
+                <div className="space-y-1.5">
+                  <label className="block text-[11px] font-medium text-neutral-400">
+                    Or Add Screenshot by Image URL (CDN, Imgur, Cloudinary, Web link)
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="url"
+                      value={customScreenshotUrl}
+                      onChange={(e) => setCustomScreenshotUrl(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleAddCustomScreenshotUrl();
+                        }
+                      }}
+                      placeholder="https://example.com/app-screenshot-preview.png"
+                      className="flex-1 px-3.5 py-2.5 bg-neutral-950 border border-neutral-800 rounded-xl text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-cyan-500 font-mono"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleAddCustomScreenshotUrl}
+                      disabled={!customScreenshotUrl.trim()}
+                      className="px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-cyan-400 hover:text-cyan-300 disabled:opacity-40 rounded-xl text-xs font-semibold shrink-0 transition-colors border border-neutral-700 flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Add URL</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Drag and Drop Zone */}
+                <div
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={handleScreenshotDrop}
+                  onClick={() => screenshotInputRef.current?.click()}
+                  className={`border-2 border-dashed rounded-2xl p-6 text-center cursor-pointer transition-colors ${
+                    screenshots.length > 0
+                      ? 'border-neutral-800 hover:border-cyan-500/80 bg-neutral-950/40'
+                      : 'border-cyan-800/60 hover:border-cyan-500 bg-neutral-950/70'
+                  }`}
+                >
+                  <div className="flex flex-col items-center justify-center space-y-1.5">
+                    <UploadCloud className="w-8 h-8 text-cyan-400" />
+                    <p className="text-xs font-bold text-white">
+                      Drag & drop multiple screenshot images here
+                    </p>
+                    <p className="text-[11px] text-neutral-400">
+                      Supports JPG, PNG, WEBP. Add 3, 4, 5, 6, or more screenshots. Images are auto-compressed for lightning-fast loading!
+                    </p>
+                  </div>
+                </div>
+
+                {/* Visual Screenshots Gallery Grid */}
+                {screenshots.length > 0 ? (
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between text-xs text-neutral-400">
+                      <span>Showcase Gallery ({screenshots.length} Screenshots Added)</span>
+                      <span className="text-[11px] text-neutral-500">Reorder with arrows • Click Enlarge to inspect</span>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3.5">
+                      {screenshots.map((shot, idx) => (
+                        <div
+                          key={idx}
+                          className="group relative rounded-2xl overflow-hidden border border-neutral-800 hover:border-cyan-500/60 bg-neutral-950 aspect-[16/10] transition-all shadow-md flex flex-col justify-between"
+                        >
+                          <img
+                            src={shot}
+                            alt={`App Screenshot ${idx + 1}`}
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                            onError={(e) => {
+                              e.currentTarget.onerror = null;
+                              e.currentTarget.src = '/zuzustore-logo.png';
+                            }}
+                          />
+                          <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/20 to-black/50 opacity-90 group-hover:opacity-100 transition-opacity" />
+
+                          {/* Top Badges & Remove */}
+                          <div className="absolute top-2 left-2 right-2 flex items-center justify-between z-10">
+                            <span
+                              className={`text-[10px] font-bold px-2 py-0.5 rounded-full backdrop-blur-md ${
+                                idx === 0
+                                  ? 'bg-cyan-500/90 text-neutral-950 shadow-sm'
+                                  : 'bg-black/75 text-neutral-200 border border-neutral-700/60'
+                              }`}
+                            >
+                              {idx === 0 ? '★ Primary Cover' : `#${idx + 1}`}
+                            </span>
+
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleRemoveScreenshot(idx);
+                              }}
+                              className="p-1 rounded-full bg-black/70 hover:bg-rose-600 text-neutral-300 hover:text-white transition-colors"
+                              title="Delete screenshot"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+
+                          {/* Bottom Action Controls (Reorder & Preview) */}
+                          <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between z-10">
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                disabled={idx === 0}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleMoveScreenshot(idx, idx - 1);
+                                }}
+                                className="p-1 rounded-lg bg-black/70 hover:bg-neutral-800 disabled:opacity-30 text-white transition-colors border border-neutral-700/60"
+                                title="Move Left"
+                              >
+                                <ArrowLeft className="w-3 h-3" />
+                              </button>
+                              <button
+                                type="button"
+                                disabled={idx === screenshots.length - 1}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleMoveScreenshot(idx, idx + 1);
+                                }}
+                                className="p-1 rounded-lg bg-black/70 hover:bg-neutral-800 disabled:opacity-30 text-white transition-colors border border-neutral-700/60"
+                                title="Move Right"
+                              >
+                                <ArrowRight className="w-3 h-3" />
+                              </button>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setPublisherLightboxUrl(shot);
+                              }}
+                              className="p-1 px-1.5 rounded-lg bg-black/70 hover:bg-cyan-950 text-cyan-300 text-[10px] font-semibold flex items-center gap-1 border border-cyan-800/60 transition-colors"
+                              title="View full image"
+                            >
+                              <Eye className="w-3 h-3" />
+                              <span>Enlarge</span>
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-6 bg-neutral-950/40 border border-neutral-800/80 rounded-2xl text-center text-xs text-neutral-400 space-y-1">
+                    <p className="font-medium text-neutral-300">No screenshots added yet.</p>
+                    <p className="text-[11px] text-neutral-400">
+                      Click <strong className="text-cyan-400">"Upload Screenshots"</strong> or <strong className="text-amber-400">"Load 4 Sample Screenshots"</strong> above to showcase your application before publishing.
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -1240,6 +1748,18 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
 
                   <div className="flex flex-wrap items-center gap-2.5 self-end sm:self-auto">
                     <button
+                      onClick={() => {
+                        setEditingScreenshotsApp(app);
+                        setEditingScreenshotsList(app.screenshots && app.screenshots.length > 0 ? app.screenshots : []);
+                      }}
+                      className="px-3 py-1.5 text-xs font-semibold text-cyan-300 hover:text-white bg-cyan-950/40 hover:bg-cyan-900/60 border border-cyan-800/60 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
+                      title="Add or update screenshots for this app"
+                    >
+                      <ImageIcon className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>Screenshots ({app.screenshots?.length || 0})</span>
+                    </button>
+
+                    <button
                       onClick={() => onDownloadTest(app.id, app.releases[0]?.id)}
                       className="px-3 py-1.5 text-xs font-semibold text-neutral-200 bg-neutral-800 hover:bg-neutral-700 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
                       title="Download the latest package as a tester"
@@ -1250,18 +1770,14 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
 
                     <button
                       onClick={() => onViewAppInStore(app)}
-                      className="px-3 py-1.5 text-xs font-semibold text-cyan-400 hover:text-cyan-300 bg-cyan-950/40 border border-cyan-800/60 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
+                      className="px-3 py-1.5 text-xs font-semibold text-neutral-300 hover:text-white bg-neutral-800 hover:bg-neutral-700 border border-neutral-700/80 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
                     >
                       <ExternalLink className="w-3.5 h-3.5" />
                       <span>View in Store</span>
                     </button>
 
                     <button
-                      onClick={() => {
-                        if (confirm(`Are you sure you want to delete "${app.name}" from the store?`)) {
-                          onDeleteApp(app.id);
-                        }
-                      }}
+                      onClick={() => setAppToDelete(app)}
                       className="p-2 text-neutral-400 hover:text-rose-400 bg-neutral-800/50 hover:bg-rose-950/40 rounded-lg transition-colors border border-neutral-700/50 cursor-pointer"
                       title="Delete app"
                     >
@@ -1272,6 +1788,318 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {/* In-App Delete Confirmation Modal (Replaces window.confirm on mobile) */}
+      {appToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+          <div
+            className="w-full max-w-md bg-neutral-900 border border-neutral-800 rounded-2xl p-6 shadow-2xl text-neutral-100 space-y-4"
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className="flex items-center gap-3 text-rose-400">
+              <div className="p-2.5 rounded-xl bg-rose-950/60 border border-rose-800/60">
+                <AlertTriangle className="w-5 h-5 text-rose-400" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">Delete Application</h3>
+                <p className="text-xs text-neutral-400">Permanent removal from store and cloud database</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-neutral-300 leading-relaxed bg-neutral-950 p-3.5 rounded-xl border border-neutral-800/80">
+              Are you sure you want to permanently delete <strong className="text-white font-semibold">"{appToDelete.name}"</strong>?
+              This will remove the package from the live public catalog and Firestore cloud database for all visitors.
+            </p>
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={() => setAppToDelete(null)}
+                className="px-4 py-2 text-xs font-semibold text-neutral-300 hover:text-white bg-neutral-800 hover:bg-neutral-700 rounded-xl transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={handleConfirmDelete}
+                className="px-4 py-2 text-xs font-bold text-white bg-rose-600 hover:bg-rose-500 rounded-xl transition-colors flex items-center gap-2 shadow-lg shadow-rose-950/40 active:scale-95 disabled:opacity-50 cursor-pointer"
+              >
+                {isDeleting ? (
+                  <>
+                    <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    <span>Deleting...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Yes, Delete App</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MANAGE SCREENSHOTS MODAL FOR EXISTING LIVE APPS */}
+      {editingScreenshotsApp && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-fade-in">
+          <div
+            className="w-full max-w-4xl bg-neutral-900 border border-neutral-800 rounded-3xl p-6 sm:p-7 shadow-2xl text-neutral-100 space-y-6 max-h-[90vh] overflow-y-auto"
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className="flex items-start justify-between gap-4 border-b border-neutral-800 pb-4">
+              <div className="flex items-center gap-3">
+                <img
+                  src={editingScreenshotsApp.iconUrl}
+                  alt={editingScreenshotsApp.name}
+                  className="w-12 h-12 rounded-xl object-contain border border-neutral-800 bg-neutral-950 p-1"
+                />
+                <div>
+                  <h3 className="text-base sm:text-lg font-bold text-white">
+                    Manage Screenshots for &quot;{editingScreenshotsApp.name}&quot;
+                  </h3>
+                  <p className="text-xs text-neutral-400">
+                    Add more than 3 screenshots or rearrange existing showcase previews.
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setEditingScreenshotsApp(null)}
+                className="p-1.5 text-neutral-400 hover:text-white rounded-lg hover:bg-neutral-800 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Screenshots counter & requirement status in modal */}
+            <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 bg-neutral-950/80 border border-neutral-800 rounded-2xl">
+              <div className="flex items-center gap-2 text-xs">
+                {editingScreenshotsList.length >= 3 ? (
+                  <span className="text-emerald-400 font-bold flex items-center gap-1.5">
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span>{editingScreenshotsList.length} Screenshots (Meets 3+ Showcase Target!)</span>
+                  </span>
+                ) : (
+                  <span className="text-amber-400 font-semibold flex items-center gap-1.5">
+                    <AlertTriangle className="w-4 h-4" />
+                    <span>{editingScreenshotsList.length} Screenshots • Add {Math.max(0, 3 - editingScreenshotsList.length)} more to reach 3+</span>
+                  </span>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2">
+                <input
+                  ref={editScreenshotInputRef}
+                  type="file"
+                  multiple
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handleSelectEditScreenshotFiles}
+                />
+                <button
+                  type="button"
+                  onClick={() => editScreenshotInputRef.current?.click()}
+                  disabled={isSavingScreenshots}
+                  className="px-3.5 py-1.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 rounded-xl transition-all shadow-md active:scale-95 disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
+                >
+                  <UploadCloud className="w-3.5 h-3.5" />
+                  <span>Upload More Screenshots</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingScreenshotsList((prev) => [...prev, ...SAMPLE_SCREENSHOTS]);
+                  }}
+                  className="px-3 py-1.5 text-xs font-medium text-neutral-300 hover:text-white bg-neutral-800 hover:bg-neutral-700 rounded-xl border border-neutral-700 transition-colors flex items-center gap-1 cursor-pointer"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                  <span>+ Samples</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Add by URL */}
+            <div className="flex gap-2">
+              <input
+                type="url"
+                value={customEditScreenshotUrl}
+                onChange={(e) => setCustomEditScreenshotUrl(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    if (customEditScreenshotUrl.trim()) {
+                      setEditingScreenshotsList((prev) => [...prev, customEditScreenshotUrl.trim()]);
+                      setCustomEditScreenshotUrl('');
+                    }
+                  }
+                }}
+                placeholder="Or paste screenshot image URL..."
+                className="flex-1 px-3 py-2 bg-neutral-950 border border-neutral-800 rounded-xl text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-cyan-500"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  if (customEditScreenshotUrl.trim()) {
+                    setEditingScreenshotsList((prev) => [...prev, customEditScreenshotUrl.trim()]);
+                    setCustomEditScreenshotUrl('');
+                  }
+                }}
+                disabled={!customEditScreenshotUrl.trim()}
+                className="px-3.5 py-2 bg-neutral-800 hover:bg-neutral-700 text-cyan-400 hover:text-cyan-300 disabled:opacity-40 rounded-xl text-xs font-semibold shrink-0 transition-colors border border-neutral-700 cursor-pointer"
+              >
+                Add URL
+              </button>
+            </div>
+
+            {/* Screenshots grid */}
+            {editingScreenshotsList.length > 0 ? (
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                {editingScreenshotsList.map((shot, idx) => (
+                  <div
+                    key={idx}
+                    className="group relative rounded-xl overflow-hidden border border-neutral-800 hover:border-cyan-500/60 bg-neutral-950 aspect-[16/10] transition-all flex flex-col justify-between"
+                  >
+                    <img
+                      src={shot}
+                      alt={`Preview ${idx + 1}`}
+                      className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                      onError={(e) => {
+                        e.currentTarget.onerror = null;
+                        e.currentTarget.src = '/zuzustore-logo.png';
+                      }}
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/20 to-black/50" />
+
+                    <div className="absolute top-1.5 left-1.5 right-1.5 flex items-center justify-between z-10">
+                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-black/75 text-cyan-300">
+                        {idx === 0 ? 'Cover' : `#${idx + 1}`}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setEditingScreenshotsList((prev) => prev.filter((_, i) => i !== idx))
+                        }
+                        className="p-1 rounded-full bg-black/70 hover:bg-rose-600 text-white transition-colors"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+
+                    <div className="absolute bottom-1.5 left-1.5 right-1.5 flex items-center justify-between z-10">
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          disabled={idx === 0}
+                          onClick={() => {
+                            setEditingScreenshotsList((prev) => {
+                              const copy = [...prev];
+                              const [item] = copy.splice(idx, 1);
+                              copy.splice(idx - 1, 0, item);
+                              return copy;
+                            });
+                          }}
+                          className="p-1 rounded bg-black/70 hover:bg-neutral-800 disabled:opacity-30 text-white"
+                        >
+                          <ArrowLeft className="w-3 h-3" />
+                        </button>
+                        <button
+                          type="button"
+                          disabled={idx === editingScreenshotsList.length - 1}
+                          onClick={() => {
+                            setEditingScreenshotsList((prev) => {
+                              const copy = [...prev];
+                              const [item] = copy.splice(idx, 1);
+                              copy.splice(idx + 1, 0, item);
+                              return copy;
+                            });
+                          }}
+                          className="p-1 rounded bg-black/70 hover:bg-neutral-800 disabled:opacity-30 text-white"
+                        >
+                          <ArrowRight className="w-3 h-3" />
+                        </button>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => setPublisherLightboxUrl(shot)}
+                        className="p-1 px-1.5 rounded bg-black/70 text-cyan-300 text-[10px] flex items-center gap-1"
+                      >
+                        <Eye className="w-3 h-3" />
+                        <span>View</span>
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="p-8 text-center text-xs text-neutral-400 bg-neutral-950/60 rounded-2xl border border-neutral-800">
+                No screenshots currently attached. Click &quot;Upload More Screenshots&quot; or &quot;+ Samples&quot; to add previews.
+              </div>
+            )}
+
+            {/* Modal actions */}
+            <div className="flex items-center justify-end gap-3 pt-3 border-t border-neutral-800">
+              <button
+                type="button"
+                onClick={() => setEditingScreenshotsApp(null)}
+                className="px-4 py-2 text-xs font-semibold text-neutral-400 hover:text-white bg-neutral-800 rounded-xl"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isSavingScreenshots}
+                onClick={handleSaveAppScreenshots}
+                className="px-5 py-2 text-xs font-bold text-white bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 rounded-xl transition-all shadow-md active:scale-95 disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
+              >
+                {isSavingScreenshots ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Saving to Firestore...</span>
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span>Save Screenshots ({editingScreenshotsList.length})</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* PUBLISHER LIGHTBOX PREVIEW */}
+      {publisherLightboxUrl && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/90 backdrop-blur-md animate-fade-in"
+          onClick={() => setPublisherLightboxUrl(null)}
+        >
+          <div
+            className="relative max-w-4xl max-h-[90vh] flex flex-col items-center"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={() => setPublisherLightboxUrl(null)}
+              className="absolute -top-10 right-0 p-2 text-neutral-400 hover:text-white"
+            >
+              <X className="w-6 h-6" />
+            </button>
+            <img
+              src={publisherLightboxUrl}
+              alt="Screenshot full preview"
+              className="max-h-[80vh] w-auto object-contain rounded-2xl border border-neutral-800 shadow-2xl"
+            />
+          </div>
         </div>
       )}
     </div>

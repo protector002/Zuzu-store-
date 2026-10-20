@@ -313,7 +313,7 @@ const conditionalUpload = (req: express.Request, res: express.Response, next: ex
     upload.fields([
       { name: 'apkFile', maxCount: 1 },
       { name: 'iconFile', maxCount: 1 },
-      { name: 'screenshotFiles', maxCount: 6 }
+      { name: 'screenshotFiles', maxCount: 20 }
     ])(req, res, (err: any) => {
       if (err) {
         if (err.code === 'LIMIT_FILE_SIZE') {
@@ -529,6 +529,9 @@ app.get('/api/apps/:id/download', async (req, res) => {
   const appIndex = apps.findIndex((a) => a.id === id || a.slug === id);
 
   if (appIndex === -1) {
+    if (req.accepts('html')) {
+      return res.status(404).send(`<!DOCTYPE html><html lang="en"><head><title>Package Updating | ZuzuStore</title><meta name="viewport" content="width=device-width, initial-scale=1.0"><style>body{background:#0a0a0a;color:#eee;font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:20px;text-align:center;}.box{background:#171717;border:1px solid #262626;border-radius:24px;padding:32px;max-width:440px;}h2{color:#fff;margin:0 0 8px;}p{color:#a3a3a3;font-size:14px;line-height:1.6;}a{display:inline-block;margin-top:16px;padding:10px 20px;background:#0891b2;color:#fff;text-decoration:none;border-radius:12px;font-weight:bold;font-size:14px;}</style></head><body><div class="box"><h2>Package Updating</h2><p>This APK package is being updated by the publisher. Please return to the store catalog to check for available releases.</p><a href="/">Return to Storefront</a></div></body></html>`);
+    }
     return res.status(404).json({ error: 'Application package not found.' });
   }
 
@@ -538,6 +541,9 @@ app.get('/api/apps/:id/download', async (req, res) => {
     : targetApp.releases[0];
 
   if (!targetRelease) {
+    if (req.accepts('html')) {
+      return res.status(404).send(`<!DOCTYPE html><html lang="en"><head><title>Release Not Found | ZuzuStore</title><meta name="viewport" content="width=device-width, initial-scale=1.0"><style>body{background:#0a0a0a;color:#eee;font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:20px;text-align:center;}.box{background:#171717;border:1px solid #262626;border-radius:24px;padding:32px;max-width:440px;}h2{color:#fff;margin:0 0 8px;}p{color:#a3a3a3;font-size:14px;line-height:1.6;}a{display:inline-block;margin-top:16px;padding:10px 20px;background:#0891b2;color:#fff;text-decoration:none;border-radius:12px;font-weight:bold;font-size:14px;}</style></head><body><div class="box"><h2>Release Not Found</h2><p>This application release is currently unavailable.</p><a href="/">Return to Storefront</a></div></body></html>`);
+    }
     return res.status(404).json({ error: 'Release package not found for this app.' });
   }
 
@@ -758,11 +764,28 @@ app.post(
         iconUrlFallback ||
         '/zuzustore-logo.png';
 
-      const screenshotUrls = screenshots.length
-        ? screenshots.map((s) => `/uploads/images/${path.basename(s.path)}`)
-        : [
-            '/zuzustore-logo.png'
-          ];
+      let screenshotUrls: string[] = [];
+      if (req.body.screenshots) {
+        if (Array.isArray(req.body.screenshots)) {
+          screenshotUrls = req.body.screenshots.filter(Boolean);
+        } else if (typeof req.body.screenshots === 'string') {
+          try {
+            const parsed = JSON.parse(req.body.screenshots);
+            if (Array.isArray(parsed)) screenshotUrls = parsed.filter(Boolean);
+          } catch (_) {
+            if (req.body.screenshots.trim()) screenshotUrls = [req.body.screenshots.trim()];
+          }
+        }
+      }
+
+      if (screenshots.length > 0) {
+        const uploadedUrls = screenshots.map((s) => `/uploads/images/${path.basename(s.path)}`);
+        screenshotUrls = [...screenshotUrls, ...uploadedUrls];
+      }
+
+      if (screenshotUrls.length === 0) {
+        screenshotUrls = [finalIconUrl];
+      }
 
       const changelogList = (changelog || 'Initial release on Zuzu Store.')
         .split('\n')
@@ -969,20 +992,47 @@ app.post('/api/admin/sync', requireAdmin, (req, res) => {
   return res.json({ success: true, count: current.length });
 });
 
+// Admin: Update app details (e.g. screenshots, tagline, description, icon)
+app.patch('/api/admin/apps/:id', requireAdmin, (req, res) => {
+  const { id } = req.params;
+  const updates = req.body;
+  const apps = getApps();
+  const index = apps.findIndex((a) => a.id === id || a.slug === id);
+
+  if (index === -1) {
+    return res.status(404).json({ error: 'App not found in store catalog.' });
+  }
+
+  const currentApp = apps[index];
+  const updatedApp: StoreApp = {
+    ...currentApp,
+    ...updates,
+    updatedAt: new Date().toISOString()
+  };
+
+  apps[index] = updatedApp;
+  saveApps(apps);
+
+  return res.json({
+    success: true,
+    message: `App "${updatedApp.name}" updated successfully.`,
+    app: updatedApp
+  });
+});
+
 // Admin: Delete an app
 app.delete('/api/admin/apps/:id', requireAdmin, (req, res) => {
   const { id } = req.params;
   const apps = getApps();
   const appItem = apps.find((a) => a.id === id || a.slug === id);
 
-  if (!appItem) {
-    return res.status(404).json({ error: 'App not found.' });
-  }
-
   const updated = apps.filter((a) => a.id !== id && a.slug !== id);
   saveApps(updated);
 
-  return res.json({ success: true, message: `App "${appItem.name}" deleted.` });
+  return res.json({
+    success: true,
+    message: appItem ? `App "${appItem.name}" removed.` : 'App removed from store catalog.'
+  });
 });
 
 // Admin: Reset store to defaults if needed

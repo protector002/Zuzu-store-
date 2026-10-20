@@ -17,6 +17,7 @@ import {
   checkAdminSession,
   adminLogout,
   adminUploadApp,
+  adminUpdateApp,
   adminAddRelease,
   adminDeleteApp,
   adminResetStore,
@@ -154,15 +155,16 @@ export default function App() {
 
   // Handle APK Download (PUBLIC - NO ACCOUNT REQUIRED)
   const handleDownload = async (appId: string, releaseId?: string) => {
-    // Check if the physical APK file is cached in local client storage (supports files up to 1GB)
+    const targetApp = apps.find((a) => a.id === appId || a.slug === appId);
+    const targetRelease = releaseId
+      ? targetApp?.releases.find((r) => r.id === releaseId) || targetApp?.releases[0]
+      : targetApp?.releases[0];
+    const fileName =
+      targetRelease?.fileName || `${targetApp?.slug || 'app'}-v${targetRelease?.version || '1.0.0'}.apk`;
+
+    // 1. Check if the physical APK file is cached in local client storage (uploader device)
     const localBlob = await getApkBlob(appId);
     if (localBlob) {
-      const targetApp = apps.find((a) => a.id === appId);
-      const targetRelease = releaseId
-        ? targetApp?.releases.find((r) => r.id === releaseId) || targetApp?.releases[0]
-        : targetApp?.releases[0];
-      const fileName = targetRelease?.fileName || `${targetApp?.slug || 'app'}-v${targetRelease?.version || '1.0.0'}.apk`;
-
       const blobUrl = URL.createObjectURL(localBlob);
       const link = document.createElement('a');
       link.href = blobUrl;
@@ -176,17 +178,55 @@ export default function App() {
       return;
     }
 
+    // 2. Direct Cloud Download (Google Drive, Dropbox, GitHub Releases, MediaFire, etc.)
+    if (targetRelease?.directDownloadUrl) {
+      let directUrl = targetRelease.directDownloadUrl.trim();
+      const gdMatch =
+        directUrl.match(/\/file\/d\/([a-zA-Z0-9_-]{20,})/) ||
+        directUrl.match(/[?&]id=([a-zA-Z0-9_-]{20,})/);
+
+      if (gdMatch && gdMatch[1]) {
+        directUrl = `https://drive.usercontent.google.com/download?id=${gdMatch[1]}&export=download&confirm=t`;
+      } else if (directUrl.includes('dropbox.com') && directUrl.includes('dl=0')) {
+        directUrl = directUrl.replace('dl=0', 'dl=1');
+      }
+
+      showToast(`Downloading ${fileName} directly...`);
+
+      const link = document.createElement('a');
+      link.href = directUrl;
+      link.setAttribute('download', fileName);
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      return;
+    }
+
+    // 3. Fallback: Query backend safely without letting Chrome download 404 JSON as a file
     const downloadUrl = getDownloadUrl(appId, releaseId);
 
-    // Trigger direct browser download
-    const link = document.createElement('a');
-    link.href = downloadUrl;
-    link.setAttribute('download', '');
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    try {
+      showToast('Preparing download package...');
+      const checkRes = await fetch(downloadUrl, { method: 'HEAD' });
+      const contentType = checkRes.headers.get('content-type') || '';
 
-    showToast('Download started! No account required.');
+      if (!checkRes.ok || contentType.includes('application/json')) {
+        showToast('Download package is updating. Please check back shortly.');
+        return;
+      }
+
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.setAttribute('download', fileName);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      showToast(`Downloading ${fileName}! No account required.`);
+    } catch (err) {
+      window.location.href = downloadUrl;
+    }
 
     // Refresh apps to reflect updated download counters
     setTimeout(() => {
@@ -206,6 +246,14 @@ export default function App() {
     const res = await adminUploadApp(payload);
     await loadApps();
     showToast(res.message || 'App published successfully!');
+    return res.app;
+  };
+
+  // Handle Admin Update App (e.g. screenshots, metadata)
+  const handleUpdateApp = async (appId: string, updates: Partial<StoreApp>): Promise<StoreApp> => {
+    const res = await adminUpdateApp(appId, updates);
+    await loadApps();
+    showToast(res.message || 'App updated successfully!');
     return res.app;
   };
 
@@ -401,6 +449,7 @@ export default function App() {
                 admin={admin}
                 onOpenLoginModal={() => setIsLoginModalOpen(true)}
                 onUploadApp={handleUploadApp}
+                onUpdateApp={handleUpdateApp}
                 onAddRelease={handleAddRelease}
                 onDeleteApp={handleDeleteApp}
                 onResetCatalog={handleResetCatalog}
