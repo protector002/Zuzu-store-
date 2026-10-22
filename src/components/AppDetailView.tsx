@@ -152,8 +152,9 @@ export const AppDetailView: React.FC<AppDetailViewProps> = ({
               <span>•</span>
               <span>{primaryRelease?.fileSize || '34 MB'}</span>
               <span>•</span>
-              <span className="tabular-nums font-mono text-cyan-400">
-                {app.downloadsTotal.toLocaleString()} Downloads
+              <span className="tabular-nums font-mono text-cyan-300 font-semibold flex items-center gap-1.5">
+                <Download className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                <span>{app.downloadsTotal.toLocaleString()} People Downloaded</span>
               </span>
               <span>•</span>
               <span className="flex items-center gap-1 text-amber-400 font-semibold">
@@ -204,6 +205,20 @@ export const AppDetailView: React.FC<AppDetailViewProps> = ({
                   <span>Drive Mirror</span>
                 </a>
               )}
+
+              {/* Community Downloads Metric Pill */}
+              <div
+                className="flex items-center gap-2 px-3.5 py-3 rounded-xl bg-cyan-950/60 border border-cyan-800/50 text-cyan-300 text-xs font-medium"
+                title="Total confirmed downloads for this application"
+              >
+                <Download className="w-4 h-4 text-cyan-400 shrink-0" />
+                <span>
+                  <strong className="text-white font-mono font-bold tabular-nums">
+                    {app.downloadsTotal.toLocaleString()}
+                  </strong>{' '}
+                  people downloaded
+                </span>
+              </div>
 
               <button
                 onClick={() => onOpenGuide('Android')}
@@ -320,6 +335,11 @@ export const AppDetailView: React.FC<AppDetailViewProps> = ({
                       <span className="text-xs text-neutral-400">{rel.platform}</span>
                       <span className="text-neutral-600">•</span>
                       <span className="text-xs text-neutral-400">{rel.fileSize}</span>
+                      <span className="text-neutral-600">•</span>
+                      <span className="text-xs text-cyan-400 font-mono flex items-center gap-1">
+                        <Download className="w-3 h-3 text-cyan-400" />
+                        <span>{(rel.downloadCount || 0).toLocaleString()} dl</span>
+                      </span>
                     </div>
 
                     <button
@@ -332,8 +352,12 @@ export const AppDetailView: React.FC<AppDetailViewProps> = ({
                     </button>
                   </div>
 
-                  <div className="text-xs text-neutral-400">
+                  <div className="flex items-center gap-3 text-xs text-neutral-400">
                     <span className="text-neutral-500">Released: {rel.releaseDate}</span>
+                    <span className="text-neutral-600">•</span>
+                    <span className="text-neutral-400 font-mono">
+                      {(rel.downloadCount || 0).toLocaleString()} users downloaded this release
+                    </span>
                   </div>
 
                   <ul className="space-y-1 text-xs text-neutral-300">

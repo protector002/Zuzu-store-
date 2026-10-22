@@ -632,6 +632,34 @@ HOW TO INSTALL ON ANDROID:
   return res.send(buffer);
 });
 
+// Increment download count (Public - called whenever an app is downloaded)
+app.post('/api/apps/:id/download-count', (req, res) => {
+  const { id } = req.params;
+  const { releaseId } = req.body || {};
+
+  const apps = getApps();
+  const appIndex = apps.findIndex((a) => a.id === id || a.slug === id);
+
+  if (appIndex === -1) {
+    return res.status(404).json({ error: 'App not found.' });
+  }
+
+  const targetApp = apps[appIndex];
+  targetApp.downloadsTotal = (targetApp.downloadsTotal || 0) + 1;
+  if (releaseId) {
+    const rel = targetApp.releases.find((r) => r.id === releaseId);
+    if (rel) {
+      rel.downloadCount = (rel.downloadCount || 0) + 1;
+    }
+  }
+  saveApps(apps);
+
+  return res.json({
+    success: true,
+    downloadsTotal: targetApp.downloadsTotal
+  });
+});
+
 // Leave review (Public - anyone can rate)
 app.post('/api/apps/:id/reviews', (req, res) => {
   const { id } = req.params;

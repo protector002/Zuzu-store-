@@ -7,6 +7,8 @@ interface StoreWelcomeBannerProps {
   onOpenLoginModal: () => void;
   onNavigateToUpload: () => void;
   onOpenGuide: () => void;
+  totalDownloads?: number;
+  totalApps?: number;
 }
 
 export const StoreWelcomeBanner: React.FC<StoreWelcomeBannerProps> = ({
@@ -14,6 +16,8 @@ export const StoreWelcomeBanner: React.FC<StoreWelcomeBannerProps> = ({
   onOpenLoginModal,
   onNavigateToUpload,
   onOpenGuide,
+  totalDownloads = 0,
+  totalApps = 0,
 }) => {
   return (
     <section className="relative pt-8 sm:pt-14 pb-14 sm:pb-20 border-b border-neutral-800/60 overflow-hidden">
@@ -46,6 +50,32 @@ export const StoreWelcomeBanner: React.FC<StoreWelcomeBannerProps> = ({
           <p className="text-sm sm:text-base text-neutral-300 max-w-2xl mx-auto leading-relaxed">
             Welcome to <strong className="text-cyan-300 font-bold">ZuzuStore</strong>. Anyone can download applications freely with zero accounts, paywalls, or registrations. Direct, verified APK packages ready for immediate installation.
           </p>
+
+          {/* Real-time Community Downloads Metric */}
+          <div className="inline-flex items-center gap-4 px-4 py-2 rounded-xl bg-neutral-900/90 border border-cyan-500/30 text-xs shadow-md">
+            <div className="flex items-center gap-1.5 text-cyan-300">
+              <Download className="w-4 h-4 text-cyan-400 animate-bounce" />
+              <span className="font-mono font-bold text-white text-sm tabular-nums">
+                {totalDownloads.toLocaleString()}
+              </span>
+              <span>People Downloaded</span>
+            </div>
+            {totalApps > 0 && (
+              <>
+                <span className="text-neutral-700">•</span>
+                <div className="flex items-center gap-1.5 text-neutral-300">
+                  <Smartphone className="w-4 h-4 text-indigo-400" />
+                  <span className="font-mono font-bold text-white tabular-nums">{totalApps}</span>
+                  <span>Active APKs</span>
+                </div>
+              </>
+            )}
+            <span className="text-neutral-700 hidden sm:inline">•</span>
+            <div className="hidden sm:flex items-center gap-1.5 text-emerald-400">
+              <ShieldCheck className="w-4 h-4" />
+              <span>100% Free & Open</span>
+            </div>
+          </div>
         </div>
 
         {/* Feature Highlights Grid */}

@@ -91,8 +91,9 @@ export const HeroZuzu: React.FC<HeroZuzuProps> = ({
               <span className="text-neutral-600">•</span>
               <span>{matchingRelease?.minOS || 'Android 8.0+'}</span>
               <span className="text-neutral-600">•</span>
-              <span className="tabular-nums font-mono text-cyan-400 font-medium">
-                {app.downloadsTotal.toLocaleString()} Downloads
+              <span className="tabular-nums font-mono text-cyan-300 font-semibold flex items-center gap-1.5">
+                <Download className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                <span>{app.downloadsTotal.toLocaleString()} People Downloaded</span>
               </span>
               {app.ratingCount > 0 && (
                 <>

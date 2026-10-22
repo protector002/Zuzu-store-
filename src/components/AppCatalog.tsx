@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Search, Download, Star, QrCode, Smartphone, Laptop, Check } from 'lucide-react';
+import { Search, Download, Star, QrCode, Smartphone, Laptop, Check, TrendingUp } from 'lucide-react';
 import { StoreApp, AppCategory, Platform, AdminUser } from '../types';
 
 interface AppCatalogProps {
@@ -32,24 +32,35 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [selectedPlatform, setSelectedPlatform] = useState<'All' | Platform>('All');
+  const [sortBy, setSortBy] = useState<'downloads' | 'latest' | 'rating'>('downloads');
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
 
   // Filter apps
-  const filteredApps = apps.filter((app) => {
-    const matchesSearch =
-      app.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      app.tagline.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      app.category.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      app.packageId.toLowerCase().includes(searchQuery.toLowerCase());
+  const filteredApps = apps
+    .filter((app) => {
+      const matchesSearch =
+        app.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        app.tagline.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        app.category.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        app.packageId.toLowerCase().includes(searchQuery.toLowerCase());
 
-    const matchesCategory =
-      selectedCategory === 'All' || app.category.toLowerCase() === selectedCategory.toLowerCase();
+      const matchesCategory =
+        selectedCategory === 'All' || app.category.toLowerCase() === selectedCategory.toLowerCase();
 
-    const matchesPlatform =
-      selectedPlatform === 'All' || app.supportedPlatforms.includes(selectedPlatform);
+      const matchesPlatform =
+        selectedPlatform === 'All' || app.supportedPlatforms.includes(selectedPlatform);
 
-    return matchesSearch && matchesCategory && matchesPlatform;
-  });
+      return matchesSearch && matchesCategory && matchesPlatform;
+    })
+    .sort((a, b) => {
+      if (sortBy === 'downloads') {
+        return (b.downloadsTotal || 0) - (a.downloadsTotal || 0);
+      }
+      if (sortBy === 'rating') {
+        return b.rating - a.rating;
+      }
+      return 0; // latest / natural order
+    });
 
   const handleDownloadClick = async (e: React.MouseEvent, app: StoreApp) => {
     e.stopPropagation();
@@ -107,21 +118,61 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
           ))}
         </div>
 
-        <div className="flex items-center gap-2 text-xs text-neutral-400 shrink-0">
-          <span className="hidden sm:inline">Platform:</span>
-          {(['All', 'Android', 'Windows'] as const).map((plat) => (
-            <button
-              key={plat}
-              onClick={() => setSelectedPlatform(plat)}
-              className={`px-2.5 py-1 rounded transition-colors text-xs ${
-                selectedPlatform === plat
-                  ? 'bg-neutral-800 text-cyan-300 font-semibold'
-                  : 'text-neutral-500 hover:text-neutral-300'
-              }`}
-            >
-              {plat}
-            </button>
-          ))}
+        <div className="flex flex-wrap items-center gap-3 text-xs text-neutral-400 shrink-0">
+          <div className="flex items-center gap-1.5">
+            <span className="hidden sm:inline">Sort:</span>
+            <div className="flex items-center bg-neutral-900 border border-neutral-800 rounded-lg p-0.5">
+              <button
+                onClick={() => setSortBy('downloads')}
+                className={`px-2.5 py-1 rounded transition-colors text-xs flex items-center gap-1 ${
+                  sortBy === 'downloads'
+                    ? 'bg-neutral-800 text-cyan-300 font-semibold'
+                    : 'text-neutral-500 hover:text-neutral-300'
+                }`}
+                title="Sort by Most Downloaded"
+              >
+                <TrendingUp className="w-3 h-3 text-cyan-400" />
+                <span>Most Downloaded</span>
+              </button>
+              <button
+                onClick={() => setSortBy('latest')}
+                className={`px-2.5 py-1 rounded transition-colors text-xs ${
+                  sortBy === 'latest'
+                    ? 'bg-neutral-800 text-white font-semibold'
+                    : 'text-neutral-500 hover:text-neutral-300'
+                }`}
+              >
+                Latest
+              </button>
+              <button
+                onClick={() => setSortBy('rating')}
+                className={`px-2.5 py-1 rounded transition-colors text-xs ${
+                  sortBy === 'rating'
+                    ? 'bg-neutral-800 text-amber-300 font-semibold'
+                    : 'text-neutral-500 hover:text-neutral-300'
+                }`}
+              >
+                Top Rated
+              </button>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            <span className="hidden sm:inline">Platform:</span>
+            {(['All', 'Android', 'Windows'] as const).map((plat) => (
+              <button
+                key={plat}
+                onClick={() => setSelectedPlatform(plat)}
+                className={`px-2.5 py-1 rounded transition-colors text-xs ${
+                  selectedPlatform === plat
+                    ? 'bg-neutral-800 text-cyan-300 font-semibold'
+                    : 'text-neutral-500 hover:text-neutral-300'
+                }`}
+              >
+                {plat}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -145,6 +196,7 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
                   setSearchQuery('');
                   setSelectedCategory('All');
                   setSelectedPlatform('All');
+                  setSortBy('downloads');
                 }}
                 className="px-4 py-2 text-xs text-neutral-300 hover:text-white bg-neutral-800 rounded-lg transition-colors"
               >
@@ -226,9 +278,16 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
 
                 {/* Bottom Card Action */}
                 <div className="mt-5 pt-3.5 border-t border-neutral-800/80 flex items-center justify-between gap-2">
-                  <span className="text-xs text-neutral-400 tabular-nums font-mono">
-                    {app.downloadsTotal.toLocaleString()} dl
-                  </span>
+                  <div
+                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-neutral-950/80 border border-neutral-800 text-neutral-300 text-xs"
+                    title={`${app.downloadsTotal.toLocaleString()} total downloads`}
+                  >
+                    <Download className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                    <span className="font-mono font-bold text-white tabular-nums">
+                      {app.downloadsTotal.toLocaleString()}
+                    </span>
+                    <span className="text-[10px] text-neutral-400">dl</span>
+                  </div>
 
                   <div className="flex items-center gap-2">
                     <button

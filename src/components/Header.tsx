@@ -8,6 +8,7 @@ interface HeaderProps {
   onOpenInstallGuide: () => void;
   onQuickDownload?: () => void;
   hasApps: boolean;
+  totalDownloads?: number;
   admin: AdminUser | null;
   onOpenLoginModal: () => void;
   onLogout: () => void;
@@ -20,6 +21,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenInstallGuide,
   onQuickDownload,
   hasApps,
+  totalDownloads = 0,
   admin,
   onOpenLoginModal,
   onLogout,
@@ -143,6 +145,18 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Right Action Zone */}
         <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+          {/* Total App Downloads Metric Badge */}
+          <div
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-neutral-900 border border-neutral-800 text-neutral-300 text-xs shadow-inner"
+            title="Total downloads across all applications on ZuzuStore"
+          >
+            <Download className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+            <span className="font-mono font-bold text-white tabular-nums">
+              {totalDownloads.toLocaleString()}
+            </span>
+            <span className="text-[11px] text-neutral-400 hidden sm:inline">downloads</span>
+          </div>
+
           {/* Quick Direct Download Button if apps exist - public for all visitors */}
           {hasApps && onQuickDownload && (
             <button

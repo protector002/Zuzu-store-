@@ -7,6 +7,8 @@ import {
   getDoc,
   setDoc,
   deleteDoc,
+  updateDoc,
+  increment,
   getDocFromServer,
   query,
   orderBy
@@ -77,6 +79,58 @@ export async function saveAppToFirestore(appData: StoreApp): Promise<void> {
   } catch (err) {
     console.error('Failed to save app to Firestore:', err);
     throw err;
+  }
+}
+
+/**
+ * Atomically increment download count in Firestore cloud database
+ */
+export async function incrementAppDownloadInFirestore(appId: string, releaseId?: string): Promise<void> {
+  try {
+    const docRef = doc(db, APPS_COLLECTION, appId);
+    const snap = await getDoc(docRef);
+    if (snap.exists()) {
+      const data = snap.data() as StoreApp;
+      const updatedReleases = data.releases
+        ? data.releases.map((r) => {
+            if (!releaseId || r.id === releaseId) {
+              return { ...r, downloadCount: (r.downloadCount || 0) + 1 };
+            }
+            return r;
+          })
+        : [];
+
+      await updateDoc(docRef, {
+        downloadsTotal: increment(1),
+        releases: updatedReleases,
+        updatedAt: new Date().toISOString()
+      });
+      return;
+    }
+
+    // Fallback: match by ID or slug in collection
+    const snapCollection = await getDocs(collection(db, APPS_COLLECTION));
+    snapCollection.forEach(async (d) => {
+      const data = d.data() as StoreApp;
+      if (d.id === appId || data.id === appId || data.slug === appId) {
+        const updatedReleases = data.releases
+          ? data.releases.map((r) => {
+              if (!releaseId || r.id === releaseId) {
+                return { ...r, downloadCount: (r.downloadCount || 0) + 1 };
+              }
+              return r;
+            })
+          : [];
+
+        await updateDoc(d.ref, {
+          downloadsTotal: increment(1),
+          releases: updatedReleases,
+          updatedAt: new Date().toISOString()
+        });
+      }
+    });
+  } catch (err) {
+    console.warn('Notice: Firestore increment download warning:', err);
   }
 }
 

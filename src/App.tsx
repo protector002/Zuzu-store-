@@ -14,6 +14,7 @@ import { Footer } from './components/Footer';
 import {
   fetchApps,
   getDownloadUrl,
+  recordDownload,
   checkAdminSession,
   adminLogout,
   adminUploadApp,
@@ -161,6 +162,37 @@ export default function App() {
       : targetApp?.releases[0];
     const fileName =
       targetRelease?.fileName || `${targetApp?.slug || 'app'}-v${targetRelease?.version || '1.0.0'}.apk`;
+
+    // Fast Immediate Increment: Optimistically update UI so visitors see the download counter jump up instantly!
+    setApps((prevApps) =>
+      prevApps.map((a) =>
+        a.id === appId || a.slug === appId
+          ? {
+              ...a,
+              downloadsTotal: (a.downloadsTotal || 0) + 1,
+              releases: a.releases.map((r) =>
+                r.id === targetRelease?.id ? { ...r, downloadCount: (r.downloadCount || 0) + 1 } : r
+              )
+            }
+          : a
+      )
+    );
+    if (selectedApp && (selectedApp.id === appId || selectedApp.slug === appId)) {
+      setSelectedApp((prev) =>
+        prev
+          ? {
+              ...prev,
+              downloadsTotal: (prev.downloadsTotal || 0) + 1,
+              releases: prev.releases.map((r) =>
+                r.id === targetRelease?.id ? { ...r, downloadCount: (r.downloadCount || 0) + 1 } : r
+              )
+            }
+          : null
+      );
+    }
+
+    // Persist download increment to Firestore cloud database & server
+    recordDownload(appId, targetRelease?.id);
 
     // 1. Check if the physical APK file is cached in local client storage (uploader device)
     const localBlob = await getApkBlob(appId);
@@ -314,6 +346,7 @@ export default function App() {
   };
 
   const featuredApp = apps[0] || null;
+  const totalDownloads = apps.reduce((sum, a) => sum + (a.downloadsTotal || 0), 0);
 
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col font-sans selection:bg-cyan-500/25 selection:text-cyan-200">
@@ -340,6 +373,7 @@ export default function App() {
             : undefined
         }
         hasApps={apps.length > 0}
+        totalDownloads={totalDownloads}
         admin={admin}
         onOpenLoginModal={() => setIsLoginModalOpen(true)}
         onLogout={handleLogout}
@@ -399,6 +433,8 @@ export default function App() {
                     onOpenLoginModal={() => setIsLoginModalOpen(true)}
                     onNavigateToUpload={() => setCurrentView('upload')}
                     onOpenGuide={() => openGuideModal('Android')}
+                    totalDownloads={totalDownloads}
+                    totalApps={apps.length}
                   />
                 )}
 

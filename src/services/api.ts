@@ -3,6 +3,7 @@ import {
   getAppsFromFirestore,
   saveAppToFirestore,
   deleteAppFromFirestore,
+  incrementAppDownloadInFirestore,
   syncLocalCatalogToFirestore
 } from './firebase';
 
@@ -113,6 +114,46 @@ export function getDownloadUrl(appId: string, releaseId?: string): string {
     return `/api/apps/${encodeURIComponent(appId)}/download?releaseId=${encodeURIComponent(releaseId)}`;
   }
   return `/api/apps/${encodeURIComponent(appId)}/download`;
+}
+
+/**
+ * Record a download event and increment the download count across Firestore, local storage, and server
+ */
+export async function recordDownload(appId: string, releaseId?: string): Promise<number | null> {
+  // 1. Increment in Firestore cloud database immediately so all devices see the new count
+  incrementAppDownloadInFirestore(appId, releaseId).catch((e) => console.warn('Firestore download inc notice:', e));
+
+  // 2. Increment in local storage cache
+  try {
+    const cached = localStorage.getItem('zuzu_local_catalog');
+    if (cached) {
+      const existing: StoreApp[] = JSON.parse(cached);
+      const app = existing.find((a) => a.id === appId || a.slug === appId);
+      if (app) {
+        app.downloadsTotal = (app.downloadsTotal || 0) + 1;
+        if (releaseId && app.releases) {
+          const rel = app.releases.find((r) => r.id === releaseId);
+          if (rel) rel.downloadCount = (rel.downloadCount || 0) + 1;
+        }
+        localStorage.setItem('zuzu_local_catalog', JSON.stringify(existing));
+      }
+    }
+  } catch (_) {}
+
+  // 3. Increment on backend server API
+  try {
+    const res = await fetch(`/api/apps/${encodeURIComponent(appId)}/download-count`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ releaseId })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      return data.downloadsTotal;
+    }
+  } catch (_) {}
+
+  return null;
 }
 
 export async function submitReview(
