@@ -36,6 +36,7 @@ interface PublisherPortalProps {
   onUploadApp: (payload: FormData | Record<string, any>) => Promise<StoreApp>;
   onUpdateApp?: (appId: string, updates: Partial<StoreApp>) => Promise<StoreApp>;
   onAddRelease: (appId: string, payload: FormData | Record<string, any>) => Promise<StoreApp>;
+  onDeleteRelease?: (appId: string, releaseId: string) => Promise<StoreApp>;
   onDeleteApp: (appId: string) => Promise<void>;
   onResetCatalog: () => Promise<void>;
   onViewAppInStore: (app: StoreApp) => void;
@@ -168,6 +169,7 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
   onUploadApp,
   onUpdateApp,
   onAddRelease,
+  onDeleteRelease,
   onDeleteApp,
   onResetCatalog,
   onViewAppInStore,
@@ -220,21 +222,40 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
   const [updateMinOS, setUpdateMinOS] = useState('Android 9.0+');
   const [updateChangelog, setUpdateChangelog] = useState('Critical stability fixes, updated APK signature, and performance improvements.');
 
-  // In-app Delete Confirmation Modal state (replaces unreliable window.confirm on mobile)
+  // In-app Delete App Confirmation Modal state
   const [appToDelete, setAppToDelete] = useState<StoreApp | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  // In-app Delete Release/Version Confirmation Modal state
+  const [expandedReleasesAppId, setExpandedReleasesAppId] = useState<string | null>(null);
+  const [releaseToDelete, setReleaseToDelete] = useState<{ app: StoreApp; releaseId: string; version: string; fileName: string } | null>(null);
+  const [isDeletingRelease, setIsDeletingRelease] = useState(false);
 
   const handleConfirmDelete = async () => {
     if (!appToDelete) return;
     setIsDeleting(true);
     try {
       await onDeleteApp(appToDelete.id);
-      setSuccessMessage(`"${appToDelete.name}" was permanently removed from the store and cloud database.`);
+      setSuccessMessage(`"${appToDelete.name}" was permanently removed from the website and cloud database.`);
       setAppToDelete(null);
     } catch (err: any) {
       setErrorMessage(err.message || 'Failed to delete application.');
     } finally {
       setIsDeleting(false);
+    }
+  };
+
+  const handleConfirmDeleteRelease = async () => {
+    if (!releaseToDelete || !onDeleteRelease) return;
+    setIsDeletingRelease(true);
+    try {
+      await onDeleteRelease(releaseToDelete.app.id, releaseToDelete.releaseId);
+      setSuccessMessage(`Version "${releaseToDelete.version}" was permanently removed from the website.`);
+      setReleaseToDelete(null);
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Failed to delete version release.');
+    } finally {
+      setIsDeletingRelease(false);
     }
   };
   const [updateFile, setUpdateFile] = useState<File | null>(null);
@@ -1710,10 +1731,10 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
           ) : (
             <div className="grid grid-cols-1 gap-4">
               {apps.map((app) => (
-                <div
-                  key={app.id}
-                  className="p-5 bg-neutral-900/60 border border-neutral-800 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4"
-                >
+                <React.Fragment key={app.id}>
+                  <div
+                    className="p-5 bg-neutral-900/60 border border-neutral-800 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4"
+                  >
                   <div className="flex items-center gap-4">
                     <img
                       src={app.iconUrl}
@@ -1748,6 +1769,20 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
 
                   <div className="flex flex-wrap items-center gap-2.5 self-end sm:self-auto">
                     <button
+                      type="button"
+                      onClick={() => setExpandedReleasesAppId(expandedReleasesAppId === app.id ? null : app.id)}
+                      className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer ${
+                        expandedReleasesAppId === app.id
+                          ? 'bg-neutral-700 text-white border border-neutral-600'
+                          : 'text-neutral-300 hover:text-white bg-neutral-800 hover:bg-neutral-700 border border-neutral-700/80'
+                      }`}
+                      title="View and manage individual version releases"
+                    >
+                      <Layers className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>Versions ({app.releases?.length || 0})</span>
+                    </button>
+
+                    <button
                       onClick={() => {
                         setEditingScreenshotsApp(app);
                         setEditingScreenshotsList(app.screenshots && app.screenshots.length > 0 ? app.screenshots : []);
@@ -1779,19 +1814,87 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
                     <button
                       onClick={() => setAppToDelete(app)}
                       className="p-2 text-neutral-400 hover:text-rose-400 bg-neutral-800/50 hover:bg-rose-950/40 rounded-lg transition-colors border border-neutral-700/50 cursor-pointer"
-                      title="Delete app"
+                      title="Delete app permanently"
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
                   </div>
                 </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
 
-      {/* In-App Delete Confirmation Modal (Replaces window.confirm on mobile) */}
+                {/* Expandable Version / Releases Management Drawer */}
+                {expandedReleasesAppId === app.id && (
+                  <div className="-mt-2 mb-2 p-4 bg-neutral-950/90 border-x border-b border-neutral-800/80 rounded-b-2xl space-y-3 animate-fade-in">
+                    <div className="flex items-center justify-between text-xs pb-2 border-b border-neutral-800/70">
+                      <span className="font-semibold text-neutral-300 flex items-center gap-1.5">
+                        <Layers className="w-3.5 h-3.5 text-cyan-400" />
+                        <span>Published Versions for {app.name}</span>
+                      </span>
+                      <span className="text-neutral-500 text-[11px]">
+                        {app.releases?.length || 0} active {app.releases?.length === 1 ? 'version' : 'versions'}
+                      </span>
+                    </div>
+
+                    {!app.releases || app.releases.length === 0 ? (
+                      <p className="text-xs text-neutral-500 italic py-2">No version releases found for this application.</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {app.releases.map((rel) => (
+                          <div
+                            key={rel.id}
+                            className="p-3 bg-neutral-900/80 border border-neutral-800/80 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs"
+                          >
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2">
+                                <span className="font-mono font-bold text-white bg-neutral-800 px-2 py-0.5 rounded border border-neutral-700">
+                                  v{rel.version}
+                                </span>
+                                <span className="text-neutral-500">•</span>
+                                <span className="text-cyan-400 font-medium">{rel.platform}</span>
+                                <span className="text-neutral-500">•</span>
+                                <span className="text-neutral-400">{rel.fileSize}</span>
+                                <span className="text-neutral-500">•</span>
+                                <span className="text-neutral-400 font-mono">{(rel.downloadCount || 0).toLocaleString()} dl</span>
+                              </div>
+                              <p className="text-[11px] text-neutral-400 font-mono truncate max-w-md">
+                                {rel.fileName} {rel.releaseDate ? `(${rel.releaseDate})` : ''}
+                              </p>
+                            </div>
+
+                            <div className="flex items-center gap-2 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => onDownloadTest(app.id, rel.id)}
+                                className="px-2.5 py-1 text-xs text-neutral-300 hover:text-white bg-neutral-800 hover:bg-neutral-700 rounded-lg transition-colors flex items-center gap-1 cursor-pointer"
+                                title="Download and verify this version package"
+                              >
+                                <Download className="w-3 h-3 text-cyan-400" />
+                                <span>Download</span>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => setReleaseToDelete({ app, releaseId: rel.id, version: rel.version, fileName: rel.fileName })}
+                                className="px-2.5 py-1 text-xs text-rose-400 hover:text-white bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/50 rounded-lg transition-colors flex items-center gap-1 cursor-pointer"
+                                title={`Delete version ${rel.version} permanently`}
+                              >
+                                <Trash2 className="w-3 h-3" />
+                                <span>Delete Version</span>
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </React.Fragment>
+            ))}
+          </div>
+        )}
+      </div>
+    )}
+
+      {/* In-App Delete App Confirmation Modal */}
       {appToDelete && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
           <div
@@ -1805,13 +1908,13 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
               </div>
               <div>
                 <h3 className="text-base font-bold text-white">Delete Application</h3>
-                <p className="text-xs text-neutral-400">Permanent removal from store and cloud database</p>
+                <p className="text-xs text-neutral-400">Permanent removal from website and cloud database</p>
               </div>
             </div>
 
             <p className="text-xs text-neutral-300 leading-relaxed bg-neutral-950 p-3.5 rounded-xl border border-neutral-800/80">
               Are you sure you want to permanently delete <strong className="text-white font-semibold">"{appToDelete.name}"</strong>?
-              This will remove the package from the live public catalog and Firestore cloud database for all visitors.
+              This application and all its versions will be deleted from the database and will <strong className="text-rose-300">never appear again on the website</strong>.
             </p>
 
             <div className="flex items-center justify-end gap-3 pt-2">
@@ -1838,6 +1941,65 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
                   <>
                     <Trash2 className="w-3.5 h-3.5" />
                     <span>Yes, Delete App</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* In-App Delete Release/Version Confirmation Modal */}
+      {releaseToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+          <div
+            className="w-full max-w-md bg-neutral-900 border border-neutral-800 rounded-2xl p-6 shadow-2xl text-neutral-100 space-y-4"
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className="flex items-center gap-3 text-rose-400">
+              <div className="p-2.5 rounded-xl bg-rose-950/60 border border-rose-800/60">
+                <AlertTriangle className="w-5 h-5 text-rose-400" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">Delete Version Release</h3>
+                <p className="text-xs text-neutral-400">{releaseToDelete.app.name}</p>
+              </div>
+            </div>
+
+            <div className="text-xs text-neutral-300 leading-relaxed bg-neutral-950 p-3.5 rounded-xl border border-neutral-800/80 space-y-1.5">
+              <p>
+                Are you sure you want to permanently delete version <strong className="text-white font-mono font-semibold">v{releaseToDelete.version}</strong> ({releaseToDelete.fileName})?
+              </p>
+              <p className="text-[11px] text-neutral-400">
+                This specific version build will be permanently purged from the cloud database and will <strong className="text-rose-300">never appear again on the website</strong>.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                disabled={isDeletingRelease}
+                onClick={() => setReleaseToDelete(null)}
+                className="px-4 py-2 text-xs font-semibold text-neutral-300 hover:text-white bg-neutral-800 hover:bg-neutral-700 rounded-xl transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isDeletingRelease}
+                onClick={handleConfirmDeleteRelease}
+                className="px-4 py-2 text-xs font-bold text-white bg-rose-600 hover:bg-rose-500 rounded-xl transition-colors flex items-center gap-2 shadow-lg shadow-rose-950/40 active:scale-95 disabled:opacity-50 cursor-pointer"
+              >
+                {isDeletingRelease ? (
+                  <>
+                    <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    <span>Deleting Version...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Yes, Delete Version</span>
                   </>
                 )}
               </button>

@@ -1048,11 +1048,54 @@ app.patch('/api/admin/apps/:id', requireAdmin, (req, res) => {
   });
 });
 
+// Admin: Delete a specific release/version of an app
+app.delete('/api/admin/apps/:id/releases/:releaseId', requireAdmin, (req, res) => {
+  const { id, releaseId } = req.params;
+  const apps = getApps();
+  const appItem = apps.find((a) => a.id === id || a.slug === id);
+
+  if (!appItem) {
+    return res.status(404).json({ error: 'App not found.' });
+  }
+
+  const targetRel = appItem.releases.find((r) => r.id === releaseId);
+  if (targetRel?.filePath && fs.existsSync(targetRel.filePath)) {
+    try {
+      fs.unlinkSync(targetRel.filePath);
+    } catch (_) {}
+  }
+
+  appItem.releases = appItem.releases.filter((r) => r.id !== releaseId);
+  if (appItem.releases.length > 0) {
+    appItem.currentVersion = appItem.releases[0].version;
+  }
+  appItem.updatedAt = new Date().toISOString();
+
+  saveApps(apps);
+
+  return res.json({
+    success: true,
+    message: targetRel ? `Version ${targetRel.version} removed.` : 'Release removed.',
+    app: appItem
+  });
+});
+
 // Admin: Delete an app
 app.delete('/api/admin/apps/:id', requireAdmin, (req, res) => {
   const { id } = req.params;
   const apps = getApps();
   const appItem = apps.find((a) => a.id === id || a.slug === id);
+
+  if (appItem) {
+    // Clean up any uploaded binaries
+    for (const rel of appItem.releases || []) {
+      if (rel.filePath && fs.existsSync(rel.filePath)) {
+        try {
+          fs.unlinkSync(rel.filePath);
+        } catch (_) {}
+      }
+    }
+  }
 
   const updated = apps.filter((a) => a.id !== id && a.slug !== id);
   saveApps(updated);

@@ -21,6 +21,7 @@ import {
   adminUpdateApp,
   adminAddRelease,
   adminDeleteApp,
+  adminDeleteRelease,
   adminResetStore,
   submitReview
 } from './services/api';
@@ -297,6 +298,17 @@ export default function App() {
     return res.app;
   };
 
+  // Handle Admin Delete Release/Version
+  const handleDeleteRelease = async (appId: string, releaseId: string): Promise<StoreApp> => {
+    const res = await adminDeleteRelease(appId, releaseId);
+    await loadApps();
+    if (selectedApp?.id === appId) {
+      setSelectedApp(res.app);
+    }
+    showToast(res.message || 'Version release permanently deleted.');
+    return res.app;
+  };
+
   // Handle Admin Delete App
   const handleDeleteApp = async (appId: string) => {
     await deleteApkBlob(appId);
@@ -306,7 +318,7 @@ export default function App() {
       setSelectedApp(null);
       setCurrentView('store');
     }
-    showToast('Application removed from store.');
+    showToast('Application permanently deleted from website.');
   };
 
   // Handle Admin Reset Catalog
@@ -467,6 +479,7 @@ export default function App() {
             {currentView === 'detail' && selectedApp && (
               <AppDetailView
                 app={selectedApp}
+                admin={admin}
                 onBack={() => {
                   setCurrentView('store');
                   window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -476,6 +489,8 @@ export default function App() {
                 onOpenGuide={(plat) => openGuideModal(plat)}
                 onAddReview={handleAddReview}
                 onPreviewScreenshot={(idx) => openScreenshotPreview(selectedApp, idx)}
+                onDeleteRelease={(releaseId) => handleDeleteRelease(selectedApp.id, releaseId)}
+                onDeleteApp={() => handleDeleteApp(selectedApp.id)}
               />
             )}
 
@@ -487,6 +502,7 @@ export default function App() {
                 onUploadApp={handleUploadApp}
                 onUpdateApp={handleUpdateApp}
                 onAddRelease={handleAddRelease}
+                onDeleteRelease={handleDeleteRelease}
                 onDeleteApp={handleDeleteApp}
                 onResetCatalog={handleResetCatalog}
                 onViewAppInStore={(app) => {

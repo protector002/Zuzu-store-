@@ -3,9 +3,12 @@ import {
   getAppsFromFirestore,
   saveAppToFirestore,
   deleteAppFromFirestore,
+  deleteReleaseFromFirestore,
+  getTombstonesFromFirestore,
   incrementAppDownloadInFirestore,
   syncLocalCatalogToFirestore
 } from './firebase';
+import { deleteApkBlob } from '../utils/fileStorage';
 
 const TOKEN_KEY = 'zuzu_admin_token';
 
@@ -31,38 +34,45 @@ function getAuthHeaders(): HeadersInit {
 // =====================================
 
 export async function fetchApps(params?: { category?: string; search?: string; platform?: string }): Promise<StoreApp[]> {
-  // Step 1: Auto-sync any existing local app from publisher's device to Firestore cloud database
+  const { deletedAppIds, deletedReleaseIds } = await getTombstonesFromFirestore();
+
+  // Step 1: Read pristine apps from Firestore cloud database (with tombstone filter)
   try {
     const cloudApps = await syncLocalCatalogToFirestore();
-    if (Array.isArray(cloudApps) && cloudApps.length > 0) {
-      try {
-        localStorage.setItem('zuzu_local_catalog', JSON.stringify(cloudApps));
-      } catch (_) {}
+    // Cache to localStorage
+    try {
+      const clean = cloudApps
+        .filter((a) => !deletedAppIds.has(a.id) && !deletedAppIds.has(a.slug))
+        .map((a) => ({
+          ...a,
+          releases: (a.releases || []).filter((r) => !deletedReleaseIds.has(r.id))
+        }));
+      localStorage.setItem('zuzu_local_catalog', JSON.stringify(clean));
+    } catch (_) {}
 
-      // Apply in-memory client filters if provided
-      let filtered = cloudApps;
-      if (params?.category && params.category !== 'All') {
-        filtered = filtered.filter((a) => a.category?.toLowerCase() === params.category?.toLowerCase());
-      }
-      if (params?.platform && params.platform !== 'All') {
-        filtered = filtered.filter((a) => a.supportedPlatforms?.includes(params.platform as any));
-      }
-      if (params?.search) {
-        const q = params.search.toLowerCase();
-        filtered = filtered.filter(
-          (a) =>
-            a.name.toLowerCase().includes(q) ||
-            a.tagline.toLowerCase().includes(q) ||
-            a.description?.toLowerCase().includes(q)
-        );
-      }
-      return filtered;
+    // Apply in-memory client filters if provided
+    let filtered = cloudApps;
+    if (params?.category && params.category !== 'All') {
+      filtered = filtered.filter((a) => a.category?.toLowerCase() === params.category?.toLowerCase());
     }
+    if (params?.platform && params.platform !== 'All') {
+      filtered = filtered.filter((a) => a.supportedPlatforms?.includes(params.platform as any));
+    }
+    if (params?.search) {
+      const q = params.search.toLowerCase();
+      filtered = filtered.filter(
+        (a) =>
+          a.name.toLowerCase().includes(q) ||
+          a.tagline.toLowerCase().includes(q) ||
+          a.description?.toLowerCase().includes(q)
+      );
+    }
+    return filtered;
   } catch (firestoreErr) {
-    console.warn('Firestore sync attempt:', firestoreErr);
+    console.warn('Firestore fetch notice:', firestoreErr);
   }
 
-  // Step 2: Fallback to Backend API
+  // Step 2: Fallback to Backend API (filter out tombstones strictly!)
   const query = new URLSearchParams();
   if (params?.category && params.category !== 'All') query.append('category', params.category);
   if (params?.platform && params.platform !== 'All') query.append('platform', params.platform);
@@ -72,28 +82,36 @@ export async function fetchApps(params?: { category?: string; search?: string; p
     const res = await fetch(`/api/apps?${query.toString()}`);
     if (res.ok) {
       const data: StoreApp[] = await res.json();
-      if (Array.isArray(data) && data.length > 0) {
+      if (Array.isArray(data)) {
+        const clean = data
+          .filter((a) => !deletedAppIds.has(a.id) && !deletedAppIds.has(a.slug))
+          .map((a) => ({
+            ...a,
+            releases: (a.releases || []).filter((r) => !deletedReleaseIds.has(r.id))
+          }));
+
         try {
-          localStorage.setItem('zuzu_local_catalog', JSON.stringify(data));
-          // Save to Firestore so it's backed up in cloud
-          for (const item of data) {
-            saveAppToFirestore(item).catch(() => {});
-          }
+          localStorage.setItem('zuzu_local_catalog', JSON.stringify(clean));
         } catch (_) {}
-        return data;
+        return clean;
       }
     }
   } catch (err) {
-    console.warn('Network issue fetching apps, falling back to local storage cache:', err);
+    console.warn('Backend fallback notice:', err);
   }
 
   // Step 3: Fallback to local catalog if offline
   try {
     const cached = localStorage.getItem('zuzu_local_catalog');
     if (cached) {
-      const parsed = JSON.parse(cached);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed;
+      const parsed: StoreApp[] = JSON.parse(cached);
+      if (Array.isArray(parsed)) {
+        return parsed
+          .filter((a) => !deletedAppIds.has(a.id) && !deletedAppIds.has(a.slug))
+          .map((a) => ({
+            ...a,
+            releases: (a.releases || []).filter((r) => !deletedReleaseIds.has(r.id))
+          }));
       }
     }
   } catch (_) {}
@@ -463,15 +481,79 @@ export async function adminUpdateApp(
   throw new Error('Application could not be found to update.');
 }
 
+export async function adminDeleteRelease(
+  appId: string,
+  releaseId: string
+): Promise<{ success: boolean; app: StoreApp; message: string }> {
+  // 1. Delete release from Firestore cloud database & record release tombstone
+  let updatedApp: StoreApp | null = null;
+  try {
+    updatedApp = await deleteReleaseFromFirestore(appId, releaseId);
+  } catch (e) {
+    console.warn('Firestore delete release notice:', e);
+  }
+
+  // 2. Remove binary from IndexedDB local physical blob cache if present
+  try {
+    await deleteApkBlob(`${appId}_${releaseId}`);
+    await deleteApkBlob(releaseId);
+  } catch (_) {}
+
+  // 3. Update local browser cache
+  try {
+    const cached = localStorage.getItem('zuzu_local_catalog');
+    if (cached) {
+      const existing: StoreApp[] = JSON.parse(cached);
+      const idx = existing.findIndex((a) => a.id === appId || a.slug === appId);
+      if (idx !== -1) {
+        existing[idx].releases = (existing[idx].releases || []).filter((r) => r.id !== releaseId);
+        if (existing[idx].releases[0]?.version) {
+          existing[idx].currentVersion = existing[idx].releases[0].version;
+        }
+        if (!updatedApp) {
+          updatedApp = existing[idx];
+        }
+        localStorage.setItem('zuzu_local_catalog', JSON.stringify(existing));
+      }
+    }
+  } catch (_) {}
+
+  // 4. Notify backend server
+  try {
+    const res = await fetch(`/api/admin/apps/${encodeURIComponent(appId)}/releases/${encodeURIComponent(releaseId)}`, {
+      method: 'DELETE',
+      headers: {
+        ...getAuthHeaders()
+      }
+    });
+    if (res.ok) {
+      const data = await res.json().catch(() => ({}));
+      if (data.app) {
+        return { success: true, app: data.app, message: `Version release removed successfully.` };
+      }
+    }
+  } catch (_) {}
+
+  if (updatedApp) {
+    return { success: true, app: updatedApp, message: 'Version release permanently removed.' };
+  }
+  throw new Error('Version release could not be found to delete.');
+}
+
 export async function adminDeleteApp(appId: string): Promise<{ success: boolean; message: string }> {
-  // 1. Delete from Firestore cloud database
+  // 1. Delete from Firestore cloud database & record tombstone
   try {
     await deleteAppFromFirestore(appId);
   } catch (e) {
     console.warn('Firestore cloud delete notice:', e);
   }
 
-  // 2. Remove from local browser cache immediately
+  // 2. Delete all IndexedDB physical file caches
+  try {
+    await deleteApkBlob(appId);
+  } catch (_) {}
+
+  // 3. Remove from local browser cache immediately and add to deleted set
   try {
     const cached = localStorage.getItem('zuzu_local_catalog');
     if (cached) {
@@ -481,7 +563,7 @@ export async function adminDeleteApp(appId: string): Promise<{ success: boolean;
     }
   } catch (_) {}
 
-  // 3. Notify backend (if available) without throwing if serverless returned 404
+  // 4. Notify backend (if available) without throwing if serverless returned 404
   try {
     const res = await fetch(`/api/admin/apps/${encodeURIComponent(appId)}`, {
       method: 'DELETE',

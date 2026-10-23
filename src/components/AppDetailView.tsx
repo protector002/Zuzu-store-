@@ -14,33 +14,73 @@ import {
   Terminal,
   Layers,
   Sparkles,
-  ExternalLink
+  ExternalLink,
+  Trash2,
+  AlertTriangle
 } from 'lucide-react';
-import { StoreApp, AppRelease, Platform } from '../types';
+import { StoreApp, AppRelease, Platform, AdminUser } from '../types';
 
 interface AppDetailViewProps {
   app: StoreApp;
+  admin?: AdminUser | null;
   onBack: () => void;
   onDownloadRelease: (appId: string, releaseId?: string) => Promise<void>;
   onOpenQR: (app: StoreApp, release?: AppRelease) => void;
   onOpenGuide: (platform: Platform) => void;
   onAddReview: (appId: string, review: { author: string; rating: number; platform: string; title: string; comment: string }) => Promise<void>;
   onPreviewScreenshot: (index: number) => void;
+  onDeleteRelease?: (releaseId: string) => Promise<any>;
+  onDeleteApp?: () => Promise<void>;
 }
 
 export const AppDetailView: React.FC<AppDetailViewProps> = ({
   app,
+  admin,
   onBack,
   onDownloadRelease,
   onOpenQR,
   onOpenGuide,
   onAddReview,
   onPreviewScreenshot,
+  onDeleteRelease,
+  onDeleteApp,
 }) => {
   const [downloadingRelId, setDownloadingRelId] = useState<string | null>(null);
   const [showAllVersions, setShowAllVersions] = useState(false);
   const [showReviewForm, setShowReviewForm] = useState(false);
   const [copiedChecksum, setCopiedChecksum] = useState(false);
+
+  // Deletion modal states
+  const [releaseToDelete, setReleaseToDelete] = useState<AppRelease | null>(null);
+  const [isDeletingRelease, setIsDeletingRelease] = useState(false);
+  const [showDeleteAppModal, setShowDeleteAppModal] = useState(false);
+  const [isDeletingApp, setIsDeletingApp] = useState(false);
+
+  const handleConfirmDeleteRelease = async () => {
+    if (!releaseToDelete || !onDeleteRelease) return;
+    setIsDeletingRelease(true);
+    try {
+      await onDeleteRelease(releaseToDelete.id);
+      setReleaseToDelete(null);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsDeletingRelease(false);
+    }
+  };
+
+  const handleConfirmDeleteApp = async () => {
+    if (!onDeleteApp) return;
+    setIsDeletingApp(true);
+    try {
+      await onDeleteApp();
+      setShowDeleteAppModal(false);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsDeletingApp(false);
+    }
+  };
 
   // Review form state
   const [reviewAuthor, setReviewAuthor] = useState('');
@@ -227,6 +267,18 @@ export const AppDetailView: React.FC<AppDetailViewProps> = ({
                 <HelpCircle className="w-3.5 h-3.5 text-cyan-400" />
                 <span>APK Installation Help</span>
               </button>
+
+              {admin && onDeleteApp && (
+                <button
+                  type="button"
+                  onClick={() => setShowDeleteAppModal(true)}
+                  className="px-3.5 py-3 text-xs font-semibold text-rose-400 hover:text-white bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/60 rounded-xl transition-colors flex items-center gap-1.5 cursor-pointer ml-auto"
+                  title="Permanently delete this entire application from the website"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Delete App</span>
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -342,14 +394,27 @@ export const AppDetailView: React.FC<AppDetailViewProps> = ({
                       </span>
                     </div>
 
-                    <button
-                      onClick={() => handleDownload(rel)}
-                      disabled={downloadingRelId === rel.id}
-                      className="px-3 py-1.5 text-xs font-semibold text-white bg-neutral-800 hover:bg-neutral-700 rounded-lg transition-colors flex items-center gap-1.5 shrink-0"
-                    >
-                      <Download className="w-3.5 h-3.5 text-cyan-400" />
-                      <span>Download {rel.fileName}</span>
-                    </button>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        onClick={() => handleDownload(rel)}
+                        disabled={downloadingRelId === rel.id}
+                        className="px-3 py-1.5 text-xs font-semibold text-white bg-neutral-800 hover:bg-neutral-700 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <Download className="w-3.5 h-3.5 text-cyan-400" />
+                        <span>Download {rel.fileName}</span>
+                      </button>
+
+                      {admin && onDeleteRelease && (
+                        <button
+                          type="button"
+                          onClick={() => setReleaseToDelete(rel)}
+                          className="p-1.5 text-neutral-400 hover:text-rose-400 bg-neutral-900 hover:bg-rose-950/40 border border-neutral-800 hover:border-rose-800/60 rounded-lg transition-colors cursor-pointer"
+                          title={`Permanently delete version ${rel.version}`}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
                   </div>
 
                   <div className="flex items-center gap-3 text-xs text-neutral-400">
@@ -583,6 +648,120 @@ export const AppDetailView: React.FC<AppDetailViewProps> = ({
           )}
         </div>
       </div>
+
+      {/* In-App Delete App Confirmation Modal */}
+      {showDeleteAppModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+          <div
+            className="w-full max-w-md bg-neutral-900 border border-neutral-800 rounded-2xl p-6 shadow-2xl text-neutral-100 space-y-4"
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className="flex items-center gap-3 text-rose-400">
+              <div className="p-2.5 rounded-xl bg-rose-950/60 border border-rose-800/60">
+                <AlertTriangle className="w-5 h-5 text-rose-400" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">Delete Application</h3>
+                <p className="text-xs text-neutral-400">Permanent removal from website and cloud database</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-neutral-300 leading-relaxed bg-neutral-950 p-3.5 rounded-xl border border-neutral-800/80">
+              Are you sure you want to permanently delete <strong className="text-white font-semibold">"{app.name}"</strong>?
+              This application and all its versions will be permanently removed from the website and will <strong className="text-rose-300">never appear again</strong>.
+            </p>
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                disabled={isDeletingApp}
+                onClick={() => setShowDeleteAppModal(false)}
+                className="px-4 py-2 text-xs font-semibold text-neutral-300 hover:text-white bg-neutral-800 hover:bg-neutral-700 rounded-xl transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isDeletingApp}
+                onClick={handleConfirmDeleteApp}
+                className="px-4 py-2 text-xs font-bold text-white bg-rose-600 hover:bg-rose-500 rounded-xl transition-colors flex items-center gap-2 shadow-lg shadow-rose-950/40 active:scale-95 disabled:opacity-50 cursor-pointer"
+              >
+                {isDeletingApp ? (
+                  <>
+                    <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    <span>Deleting...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Yes, Delete App</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* In-App Delete Version/Release Confirmation Modal */}
+      {releaseToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+          <div
+            className="w-full max-w-md bg-neutral-900 border border-neutral-800 rounded-2xl p-6 shadow-2xl text-neutral-100 space-y-4"
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className="flex items-center gap-3 text-rose-400">
+              <div className="p-2.5 rounded-xl bg-rose-950/60 border border-rose-800/60">
+                <AlertTriangle className="w-5 h-5 text-rose-400" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">Delete Version Release</h3>
+                <p className="text-xs text-neutral-400">{app.name}</p>
+              </div>
+            </div>
+
+            <div className="text-xs text-neutral-300 leading-relaxed bg-neutral-950 p-3.5 rounded-xl border border-neutral-800/80 space-y-1.5">
+              <p>
+                Are you sure you want to permanently delete version <strong className="text-white font-mono font-semibold">v{releaseToDelete.version}</strong> ({releaseToDelete.fileName})?
+              </p>
+              <p className="text-[11px] text-neutral-400">
+                This specific version package will be permanently purged and will <strong className="text-rose-300">never appear again on the website</strong>.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                disabled={isDeletingRelease}
+                onClick={() => setReleaseToDelete(null)}
+                className="px-4 py-2 text-xs font-semibold text-neutral-300 hover:text-white bg-neutral-800 hover:bg-neutral-700 rounded-xl transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isDeletingRelease}
+                onClick={handleConfirmDeleteRelease}
+                className="px-4 py-2 text-xs font-bold text-white bg-rose-600 hover:bg-rose-500 rounded-xl transition-colors flex items-center gap-2 shadow-lg shadow-rose-950/40 active:scale-95 disabled:opacity-50 cursor-pointer"
+              >
+                {isDeletingRelease ? (
+                  <>
+                    <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    <span>Deleting Version...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Yes, Delete Version</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
