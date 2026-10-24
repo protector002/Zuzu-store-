@@ -1,1 +1,56 @@
-[]
+[
+  {
+    "id": "zuzu-super-cleaner",
+    "slug": "zuzu-super-cleaner",
+    "name": "Zuzu Super Cleaner",
+    "tagline": "Android Application",
+    "description": "Official verified package from Zuzu Store",
+    "iconUrl": "/zuzustore-logo.png",
+    "heroImageUrl": "/zuzustore-logo.png",
+    "screenshots": [],
+    "category": "Utilities",
+    "developer": {
+      "name": "John Sseruwagi (Publisher)",
+      "email": "sseruwagijohn452@gmail.com",
+      "verified": true
+    },
+    "rating": 5,
+    "ratingCount": 1,
+    "downloadsTotal": 2,
+    "supportedPlatforms": [
+      "Android"
+    ],
+    "currentVersion": "1.0.0",
+    "packageId": "com.zuzu.zuzu.super.cleaner",
+    "architecture": "Universal (arm64-v8a)",
+    "minRequirements": {
+      "Android": "Android 8.0+"
+    },
+    "permissions": [
+      "android.permission.INTERNET"
+    ],
+    "features": [],
+    "releases": [
+      {
+        "id": "rel-1",
+        "version": "1.0.0",
+        "buildNumber": 1,
+        "releaseDate": "2026-10-24",
+        "fileSize": "32.0 MB",
+        "fileName": "zuzu-super-cleaner-v1.0.0.apk",
+        "platform": "Android",
+        "minOS": "Android 8.0+",
+        "changelog": [
+          "Official verified release"
+        ],
+        "downloadCount": 2,
+        "sha256Checksum": "5b9efce478ac559120c63d975cf2ea12181a2ae5dfef24f73fe149b21fc1b2e9",
+        "isLatest": true
+      }
+    ],
+    "reviews": [],
+    "isOfficial": true,
+    "createdAt": "2026-10-24T07:51:05.876Z",
+    "updatedAt": "2026-10-24T07:51:05.876Z"
+  }
+]

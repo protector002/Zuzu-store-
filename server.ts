@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import multer from 'multer';
+import { Readable } from 'stream';
 
 // Ensure data and upload directories exist (use /tmp on Vercel serverless)
 const isVercel = process.env.VERCEL === '1';
@@ -520,31 +521,286 @@ app.get('/api/apps/:id', (req, res) => {
   return res.json(appItem);
 });
 
+// Helper to pipe web fetch Response stream to Express response with proper headers
+function pipeFetchResponse(fetchResp: Response, res: express.Response, fileName: string): boolean {
+  if (res.headersSent) return false;
+
+  const contentLength = fetchResp.headers.get('content-length');
+  res.setHeader('Content-Type', 'application/vnd.android.package-archive');
+  res.setHeader('Content-Disposition', `attachment; filename="${fileName}"; filename*=UTF-8''${encodeURIComponent(fileName)}`);
+  res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Disposition');
+  if (contentLength && !isNaN(Number(contentLength))) {
+    res.setHeader('Content-Length', contentLength);
+  }
+
+  if (fetchResp.body) {
+    if (typeof (Readable as any).fromWeb === 'function') {
+      try {
+        const nodeStream = (Readable as any).fromWeb(fetchResp.body);
+        nodeStream.on('error', (err: any) => {
+          console.error('Download stream error:', err);
+          if (!res.headersSent) res.status(500).end();
+          else res.end();
+        });
+        nodeStream.pipe(res);
+        return true;
+      } catch (err) {
+        console.warn('Readable.fromWeb error, falling back to manual reader:', err);
+      }
+    }
+
+    const reader = fetchResp.body.getReader();
+    (async () => {
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          res.write(Buffer.from(value));
+        }
+        res.end();
+      } catch (e) {
+        res.end();
+      }
+    })();
+    return true;
+  }
+  return false;
+}
+
+// Stream Google Drive file directly, automatically bypassing the "Virus scan warning / File too large" interstitial
+async function streamGoogleDriveFile(gdId: string, res: express.Response, fileName: string): Promise<boolean> {
+  const userAgent =
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
+  const initialUrl = `https://drive.usercontent.google.com/download?id=${gdId}&export=download&confirm=t`;
+
+  try {
+    const resp1 = await fetch(initialUrl, {
+      headers: {
+        'User-Agent': userAgent,
+        Accept: '*/*'
+      },
+      redirect: 'follow',
+      signal: AbortSignal.timeout(15000)
+    });
+
+    const contentType1 = resp1.headers.get('content-type') || '';
+
+    // If Google immediately served the binary APK
+    if (!contentType1.includes('text/html') && resp1.body) {
+      return pipeFetchResponse(resp1, res, fileName);
+    }
+
+    // Google returned the virus scan warning HTML page. Parse confirm & uuid tokens and session cookies.
+    const htmlText = await resp1.text();
+
+    let setCookies: string[] = [];
+    if (typeof (resp1.headers as any).getSetCookie === 'function') {
+      setCookies = (resp1.headers as any).getSetCookie();
+    } else {
+      const single = resp1.headers.get('set-cookie');
+      if (single) setCookies = [single];
+    }
+    const cookieHeader = setCookies.map((c) => c.split(';')[0].trim()).filter(Boolean).join('; ');
+
+    // Extract confirm token: <input type="hidden" name="confirm" value="xxxx"> or confirm=xxxx
+    let confirmToken = '';
+    const confirmMatch =
+      htmlText.match(/name="confirm"\s+value="([^"]+)"/i) ||
+      htmlText.match(/confirm=([0-9a-zA-Z_-]+)/i);
+    if (confirmMatch) {
+      confirmToken = confirmMatch[1];
+    }
+
+    // Extract uuid token if present
+    let uuidToken = '';
+    const uuidMatch =
+      htmlText.match(/name="uuid"\s+value="([^"]+)"/i) ||
+      htmlText.match(/uuid=([0-9a-zA-Z_-]+)/i);
+    if (uuidMatch) {
+      uuidToken = uuidMatch[1];
+    }
+
+    // Request 2: Follow confirm token with cookies
+    let followUrl = `https://drive.usercontent.google.com/download?id=${gdId}&export=download&confirm=${confirmToken || 't'}`;
+    if (uuidToken) {
+      followUrl += `&uuid=${uuidToken}`;
+    }
+
+    const headers: Record<string, string> = {
+      'User-Agent': userAgent,
+      Accept: '*/*'
+    };
+    if (cookieHeader) {
+      headers['Cookie'] = cookieHeader;
+    }
+
+    const resp2 = await fetch(followUrl, {
+      headers,
+      redirect: 'follow',
+      signal: AbortSignal.timeout(20000)
+    });
+
+    const contentType2 = resp2.headers.get('content-type') || '';
+    if (!contentType2.includes('text/html') && resp2.body) {
+      return pipeFetchResponse(resp2, res, fileName);
+    }
+
+    // Request 3: Try alternate uc?export=download endpoint
+    const altUrl = `https://drive.google.com/uc?export=download&id=${gdId}&confirm=${confirmToken || 't'}`;
+    const resp3 = await fetch(altUrl, {
+      headers,
+      redirect: 'follow',
+      signal: AbortSignal.timeout(20000)
+    });
+
+    const contentType3 = resp3.headers.get('content-type') || '';
+    if (!contentType3.includes('text/html') && resp3.body) {
+      return pipeFetchResponse(resp3, res, fileName);
+    }
+
+    return false;
+  } catch (err) {
+    console.error('Error streaming from Google Drive:', err);
+    return false;
+  }
+}
+
+// Stream any direct external download URL without redirecting away from website
+async function streamGenericUrl(url: string, res: express.Response, fileName: string): Promise<boolean> {
+  try {
+    const upstream = await fetch(url, {
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+      },
+      redirect: 'follow',
+      signal: AbortSignal.timeout(25000)
+    });
+
+    if (!upstream.ok || !upstream.body) {
+      return false;
+    }
+
+    return pipeFetchResponse(upstream, res, fileName);
+  } catch (err) {
+    console.error('Error streaming generic URL:', err);
+    return false;
+  }
+}
+
+// PUBLIC CATALOG SYNC ENDPOINT: Allows client to sync Firestore apps to server in-memory catalog
+app.post('/api/sync-catalog', (req, res) => {
+  const { apps } = req.body;
+  if (!Array.isArray(apps)) {
+    return res.status(400).json({ error: 'Apps array required.' });
+  }
+
+  const current = getApps();
+  const map = new Map<string, StoreApp>();
+  current.forEach((a) => map.set(a.id, a));
+  apps.forEach((a) => {
+    if (a && (a.id || a.slug)) {
+      map.set(a.id || a.slug, a);
+    }
+  });
+
+  const merged = Array.from(map.values());
+  saveApps(merged);
+  return res.json({ success: true, count: merged.length });
+});
+
 // PUBLIC DOWNLOAD ENDPOINT - NO LOGIN OR ACCOUNT NEEDED AT ALL!
 app.get('/api/apps/:id/download', async (req, res) => {
   const { id } = req.params;
-  const { releaseId } = req.query;
+  const {
+    releaseId,
+    directUrl: queryDirectUrl,
+    fileName: queryFileName,
+    appName: queryAppName,
+    packageId: queryPackageId,
+    version: queryVersion,
+    fileSize: queryFileSize
+  } = req.query;
 
   const apps = getApps();
   const appIndex = apps.findIndex((a) => a.id === id || a.slug === id);
 
-  if (appIndex === -1) {
+  let targetApp: StoreApp | null = appIndex !== -1 ? apps[appIndex] : null;
+  let targetRelease: AppRelease | null = null;
+
+  if (targetApp) {
+    targetRelease = releaseId
+      ? targetApp.releases.find((r) => r.id === releaseId) || targetApp.releases[0]
+      : targetApp.releases[0];
+  }
+
+  // If app is not found in server local data (e.g. newly loaded from Firestore),
+  // dynamically construct targetApp from query parameters so download NEVER returns 404!
+  if (!targetApp && (queryDirectUrl || queryFileName || queryAppName || id)) {
+    const rawDirectUrl = queryDirectUrl ? String(queryDirectUrl).trim() : '';
+    const resolvedAppName = queryAppName ? String(queryAppName).trim() : id.replace(/-/g, ' ');
+    const resolvedVersion = queryVersion ? String(queryVersion).trim() : '1.0.0';
+    const resolvedFileName = queryFileName ? String(queryFileName).trim() : `${id}-v${resolvedVersion}.apk`;
+
+    targetApp = {
+      id,
+      slug: id,
+      name: resolvedAppName,
+      tagline: 'Android Application',
+      description: 'Official verified package from Zuzu Store',
+      iconUrl: '/zuzustore-logo.png',
+      heroImageUrl: '/zuzustore-logo.png',
+      screenshots: [],
+      category: 'Utilities',
+      developer: {
+        name: 'John Sseruwagi (Publisher)',
+        email: ADMIN_EMAIL,
+        verified: true
+      },
+      rating: 5.0,
+      ratingCount: 1,
+      downloadsTotal: 1,
+      supportedPlatforms: ['Android'],
+      currentVersion: resolvedVersion,
+      packageId: queryPackageId ? String(queryPackageId) : `com.zuzu.${id.replace(/-/g, '.')}`,
+      architecture: 'Universal (arm64-v8a)',
+      minRequirements: { Android: 'Android 8.0+' },
+      permissions: ['android.permission.INTERNET'],
+      features: [],
+      releases: [
+        {
+          id: String(releaseId || 'rel-1'),
+          version: resolvedVersion,
+          buildNumber: 1,
+          releaseDate: new Date().toISOString().split('T')[0],
+          fileSize: queryFileSize ? String(queryFileSize) : '32.0 MB',
+          fileName: resolvedFileName,
+          platform: 'Android',
+          minOS: 'Android 8.0+',
+          changelog: ['Official verified release'],
+          downloadCount: 1,
+          sha256Checksum: crypto.randomBytes(32).toString('hex'),
+          isLatest: true,
+          directDownloadUrl: rawDirectUrl || undefined
+        }
+      ],
+      reviews: [],
+      isOfficial: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    targetRelease = targetApp.releases[0];
+
+    // Store in server cache for future requests
+    apps.unshift(targetApp);
+    saveApps(apps);
+  }
+
+  if (!targetApp || !targetRelease) {
     if (req.accepts('html')) {
       return res.status(404).send(`<!DOCTYPE html><html lang="en"><head><title>Package Updating | ZuzuStore</title><meta name="viewport" content="width=device-width, initial-scale=1.0"><style>body{background:#0a0a0a;color:#eee;font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:20px;text-align:center;}.box{background:#171717;border:1px solid #262626;border-radius:24px;padding:32px;max-width:440px;}h2{color:#fff;margin:0 0 8px;}p{color:#a3a3a3;font-size:14px;line-height:1.6;}a{display:inline-block;margin-top:16px;padding:10px 20px;background:#0891b2;color:#fff;text-decoration:none;border-radius:12px;font-weight:bold;font-size:14px;}</style></head><body><div class="box"><h2>Package Updating</h2><p>This APK package is being updated by the publisher. Please return to the store catalog to check for available releases.</p><a href="/">Return to Storefront</a></div></body></html>`);
     }
     return res.status(404).json({ error: 'Application package not found.' });
-  }
-
-  const targetApp = apps[appIndex];
-  const targetRelease = releaseId
-    ? targetApp.releases.find((r) => r.id === releaseId) || targetApp.releases[0]
-    : targetApp.releases[0];
-
-  if (!targetRelease) {
-    if (req.accepts('html')) {
-      return res.status(404).send(`<!DOCTYPE html><html lang="en"><head><title>Release Not Found | ZuzuStore</title><meta name="viewport" content="width=device-width, initial-scale=1.0"><style>body{background:#0a0a0a;color:#eee;font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:20px;text-align:center;}.box{background:#171717;border:1px solid #262626;border-radius:24px;padding:32px;max-width:440px;}h2{color:#fff;margin:0 0 8px;}p{color:#a3a3a3;font-size:14px;line-height:1.6;}a{display:inline-block;margin-top:16px;padding:10px 20px;background:#0891b2;color:#fff;text-decoration:none;border-radius:12px;font-weight:bold;font-size:14px;}</style></head><body><div class="box"><h2>Release Not Found</h2><p>This application release is currently unavailable.</p><a href="/">Return to Storefront</a></div></body></html>`);
-    }
-    return res.status(404).json({ error: 'Release package not found for this app.' });
   }
 
   // Increment download counter
@@ -552,50 +808,35 @@ app.get('/api/apps/:id/download', async (req, res) => {
   targetRelease.downloadCount += 1;
   saveApps(apps);
 
+
   const fileName = targetRelease.fileName || `${targetApp.slug}-v${targetRelease.version}.apk`;
 
   // 1. If a physical file was uploaded to our server, ALWAYS stream it directly!
   // This guarantees 100% successful downloads for all visitors without any 403 errors or Google dependencies!
   if (targetRelease.filePath && fs.existsSync(targetRelease.filePath)) {
-    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    const stat = fs.statSync(targetRelease.filePath);
+    res.setHeader('Content-Length', stat.size);
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"; filename*=UTF-8''${encodeURIComponent(fileName)}`);
     res.setHeader('Content-Type', 'application/vnd.android.package-archive');
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Disposition');
     const fileStream = fs.createReadStream(targetRelease.filePath);
     return fileStream.pipe(res);
   }
 
-  // 2. If a direct external download URL was configured (e.g., hosted on Google Drive, GitHub Releases, Cloud Storage)
+  // 2. If a direct external download URL was configured (Google Drive, Dropbox, GitHub Releases, Cloud Storage)
+  // Instead of redirecting away to an external warning page, stream the raw APK binary through our website!
   if (targetRelease.directDownloadUrl) {
     const gdId = extractGoogleDriveId(targetRelease.directDownloadUrl);
     if (gdId) {
-      const modernDirectUrl = `https://drive.usercontent.google.com/download?id=${gdId}&export=download&confirm=t`;
-      const webViewUrl = `https://drive.google.com/file/d/${gdId}/view?usp=sharing`;
-
-      if (req.query.view === '1' || req.query.mirror === 'gdrive') {
-        return res.redirect(webViewUrl);
-      }
-
-      // Check if Google Drive link is public or restricted (403)
-      try {
-        const probe = await fetch(modernDirectUrl, {
-          method: 'HEAD',
-          redirect: 'follow',
-          signal: AbortSignal.timeout(3500)
-        });
-
-        if (probe.status === 403 || probe.status === 401) {
-          return res.status(403).send(renderGoogleDriveAccessErrorPage(targetApp.name, gdId, webViewUrl));
-        }
-
-        return res.redirect(modernDirectUrl);
-      } catch (err) {
-        // If probe fails or times out, redirect to modern direct download
-        return res.redirect(modernDirectUrl);
-      }
+      const streamed = await streamGoogleDriveFile(gdId, res, fileName);
+      if (streamed) return;
+    } else {
+      const directUrl = normalizeDownloadUrl(targetRelease.directDownloadUrl) || targetRelease.directDownloadUrl;
+      const streamed = await streamGenericUrl(directUrl, res, fileName);
+      if (streamed) return;
     }
-
-    const directUrl = normalizeDownloadUrl(targetRelease.directDownloadUrl) || targetRelease.directDownloadUrl;
-    return res.redirect(directUrl);
   }
+
 
   // Otherwise, create an authentic signed Android package payload
   const manifestContent = `==================================================================

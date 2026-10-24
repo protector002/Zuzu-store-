@@ -48,7 +48,15 @@ export async function fetchApps(params?: { category?: string; search?: string; p
           releases: (a.releases || []).filter((r) => !deletedReleaseIds.has(r.id))
         }));
       localStorage.setItem('zuzu_local_catalog', JSON.stringify(clean));
+
+      // Sync cleanly to backend server in background so server download streaming has all app releases
+      fetch('/api/sync-catalog', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ apps: clean })
+      }).catch(() => {});
     } catch (_) {}
+
 
     // Apply in-memory client filters if provided
     let filtered = cloudApps;
@@ -642,3 +650,140 @@ export async function verifyDirectUrl(url: string): Promise<{
   }
   return res.json();
 }
+
+// =====================================
+// In-App Download Streaming & Progress
+// =====================================
+
+export function parseFileSizeToBytes(sizeStr?: string): number {
+  if (!sizeStr) return 0;
+  const cleaned = sizeStr.trim().toUpperCase();
+  const numMatch = cleaned.match(/^([0-9.]+)\s*([A-Z]*)$/);
+  if (!numMatch) return 0;
+  const num = parseFloat(numMatch[1]);
+  const unit = numMatch[2] || '';
+  if (unit.startsWith('G')) return Math.round(num * 1024 * 1024 * 1024);
+  if (unit.startsWith('M')) return Math.round(num * 1024 * 1024);
+  if (unit.startsWith('K')) return Math.round(num * 1024);
+  return Math.round(num);
+}
+
+export function formatBytes(bytes: number): string {
+  if (bytes <= 0 || isNaN(bytes)) return '0 MB';
+  const mb = bytes / (1024 * 1024);
+  if (mb >= 1024) {
+    return `${(mb / 1024).toFixed(1)} GB`;
+  }
+  return `${mb.toFixed(1)} MB`;
+}
+
+export function formatSpeed(bytesPerSec: number): string {
+  if (bytesPerSec <= 0 || isNaN(bytesPerSec)) return '0 KB/s';
+  const mbPerSec = bytesPerSec / (1024 * 1024);
+  if (mbPerSec >= 1) {
+    return `${mbPerSec.toFixed(1)} MB/s`;
+  }
+  return `${Math.round(bytesPerSec / 1024)} KB/s`;
+}
+
+export function formatEta(seconds: number): string {
+  if (!isFinite(seconds) || seconds <= 0 || isNaN(seconds)) return '0s';
+  if (seconds < 60) return `${Math.ceil(seconds)}s`;
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.ceil(seconds % 60);
+  return `${mins}m ${secs}s`;
+}
+
+export interface DownloadProgressUpdate {
+  percent: number;
+  downloadedBytes: number;
+  totalBytes: number;
+  downloadedMbFormatted: string;
+  remainingMbFormatted: string;
+  speedFormatted: string;
+  timeRemainingFormatted: string;
+}
+
+export async function downloadWithProgress(
+  url: string,
+  fileName: string,
+  fallbackFileSizeStr?: string,
+  onProgress?: (update: DownloadProgressUpdate) => void,
+  signal?: AbortSignal
+): Promise<{ blob: Blob; blobUrl: string }> {
+  const response = await fetch(url, { signal });
+  if (!response.ok) {
+    throw new Error(`Download failed with status ${response.status}`);
+  }
+
+  const contentLengthHeader = response.headers.get('content-length');
+  let totalBytes = contentLengthHeader ? parseInt(contentLengthHeader, 10) : 0;
+  if (!totalBytes || isNaN(totalBytes) || totalBytes <= 0) {
+    totalBytes = parseFileSizeToBytes(fallbackFileSizeStr) || 25 * 1024 * 1024;
+  }
+
+  if (!response.body) {
+    const blob = await response.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    return { blob, blobUrl };
+  }
+
+  const reader = response.body.getReader();
+  const chunks: BlobPart[] = [];
+  let downloadedBytes = 0;
+  const startTime = Date.now();
+  let lastReportTime = startTime;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    if (value) {
+      chunks.push(value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength));
+      downloadedBytes += value.length;
+
+
+      const now = Date.now();
+      if (now - lastReportTime > 80 || downloadedBytes >= totalBytes) {
+        lastReportTime = now;
+        const elapsedSec = Math.max(0.05, (now - startTime) / 1000);
+        const speed = downloadedBytes / elapsedSec;
+
+        const effectiveTotal = Math.max(totalBytes, downloadedBytes);
+        const remainingBytes = Math.max(0, effectiveTotal - downloadedBytes);
+        const eta = speed > 0 ? remainingBytes / speed : 0;
+        const percent = Math.min(99, Math.round((downloadedBytes / effectiveTotal) * 100));
+
+        if (onProgress) {
+          onProgress({
+            percent,
+            downloadedBytes,
+            totalBytes: effectiveTotal,
+            downloadedMbFormatted: formatBytes(downloadedBytes),
+            remainingMbFormatted: formatBytes(remainingBytes),
+            speedFormatted: formatSpeed(speed),
+            timeRemainingFormatted: formatEta(eta)
+          });
+        }
+      }
+    }
+  }
+
+  const blob = new Blob(chunks, { type: 'application/vnd.android.package-archive' });
+  const blobUrl = URL.createObjectURL(blob);
+
+  if (onProgress) {
+    onProgress({
+      percent: 100,
+      downloadedBytes,
+      totalBytes: downloadedBytes,
+      downloadedMbFormatted: formatBytes(downloadedBytes),
+      remainingMbFormatted: '0 MB',
+      speedFormatted: 'Done',
+      timeRemainingFormatted: '0s'
+    });
+  }
+
+  return { blob, blobUrl };
+}
+

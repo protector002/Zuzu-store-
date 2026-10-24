@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Header } from './components/Header';
 import { HeroZuzu } from './components/HeroZuzu';
 import { StoreWelcomeBanner } from './components/StoreWelcomeBanner';
@@ -10,6 +10,7 @@ import { AdminLoginModal } from './components/AdminLoginModal';
 import { QRModal } from './components/QRModal';
 import { InstallGuideModal } from './components/InstallGuideModal';
 import { ScreenshotModal } from './components/ScreenshotModal';
+import { DownloadProgressModal } from './components/DownloadProgressModal';
 import { Footer } from './components/Footer';
 import {
   fetchApps,
@@ -23,11 +24,15 @@ import {
   adminDeleteApp,
   adminDeleteRelease,
   adminResetStore,
-  submitReview
+  submitReview,
+  downloadWithProgress,
+  parseFileSizeToBytes,
+  formatBytes
 } from './services/api';
-import { StoreApp, AppRelease, Platform, AdminUser } from './types';
+import { StoreApp, AppRelease, Platform, AdminUser, DownloadProgressState } from './types';
 import { getApkBlob, deleteApkBlob } from './utils/fileStorage';
 import { CheckCircle2, ArrowRight } from 'lucide-react';
+
 
 export default function App() {
   const [apps, setApps] = useState<StoreApp[]>([]);
@@ -57,10 +62,30 @@ export default function App() {
   // Toast Notification
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
+  // In-App Download Progress Modal State
+  const [downloadProgress, setDownloadProgress] = useState<DownloadProgressState>({
+    isOpen: false,
+    status: 'idle',
+    percent: 0,
+    downloadedBytes: 0,
+    totalBytes: 0,
+    downloadedMbFormatted: '0 MB',
+    remainingMbFormatted: '0 MB',
+    speedFormatted: '0 KB/s',
+    timeRemainingFormatted: '0s',
+    appName: '',
+    appIcon: '',
+    version: '',
+    fileName: ''
+  });
+  const downloadAbortRef = useRef<AbortController | null>(null);
+  const activeDownloadTargetRef = useRef<{ appId: string; releaseId?: string } | null>(null);
+
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3800);
   };
+
 
   // Load apps and check admin session on mount
   const loadApps = async () => {
@@ -155,14 +180,19 @@ export default function App() {
     };
   }, [admin]);
 
-  // Handle APK Download (PUBLIC - NO ACCOUNT REQUIRED)
+  // Handle APK Download (PUBLIC - NO ACCOUNT REQUIRED, STREAMS IN-APP WITH PROGRESS)
   const handleDownload = async (appId: string, releaseId?: string) => {
     const targetApp = apps.find((a) => a.id === appId || a.slug === appId);
+    if (!targetApp) return;
+
     const targetRelease = releaseId
-      ? targetApp?.releases.find((r) => r.id === releaseId) || targetApp?.releases[0]
-      : targetApp?.releases[0];
+      ? targetApp.releases.find((r) => r.id === releaseId) || targetApp.releases[0]
+      : targetApp.releases[0];
     const fileName =
-      targetRelease?.fileName || `${targetApp?.slug || 'app'}-v${targetRelease?.version || '1.0.0'}.apk`;
+      targetRelease?.fileName || `${targetApp.slug || 'app'}-v${targetRelease?.version || '1.0.0'}.apk`;
+
+    // Save active download target for retry support
+    activeDownloadTargetRef.current = { appId, releaseId };
 
     // Fast Immediate Increment: Optimistically update UI so visitors see the download counter jump up instantly!
     setApps((prevApps) =>
@@ -195,77 +225,228 @@ export default function App() {
     // Persist download increment to Firestore cloud database & server
     recordDownload(appId, targetRelease?.id);
 
+    // Initial state for the in-app progress modal
+    const estimatedTotalBytes = parseFileSizeToBytes(targetRelease?.fileSize) || 25 * 1024 * 1024;
+    setDownloadProgress({
+      isOpen: true,
+      status: 'connecting',
+      percent: 0,
+      downloadedBytes: 0,
+      totalBytes: estimatedTotalBytes,
+      downloadedMbFormatted: '0 MB',
+      remainingMbFormatted: targetRelease?.fileSize || 'Calculating...',
+      speedFormatted: 'Connecting...',
+      timeRemainingFormatted: 'Estimating...',
+      appName: targetApp.name,
+      appIcon: targetApp.iconUrl,
+      version: targetRelease?.version || '1.0.0',
+      fileName,
+      fileSize: targetRelease?.fileSize
+    });
+
     // 1. Check if the physical APK file is cached in local client storage (uploader device)
     const localBlob = await getApkBlob(appId);
     if (localBlob) {
-      const blobUrl = URL.createObjectURL(localBlob);
+      try {
+        const total = localBlob.size;
+        setDownloadProgress((prev) => ({
+          ...prev,
+          status: 'downloading',
+          percent: 35,
+          downloadedMbFormatted: formatBytes(total * 0.35),
+          remainingMbFormatted: formatBytes(total * 0.65),
+          speedFormatted: 'Streaming local package...',
+          timeRemainingFormatted: '1s'
+        }));
+        await new Promise((r) => setTimeout(r, 220));
+
+        setDownloadProgress((prev) => ({
+          ...prev,
+          percent: 85,
+          downloadedMbFormatted: formatBytes(total * 0.85),
+          remainingMbFormatted: formatBytes(total * 0.15),
+          speedFormatted: 'Finalizing APK...',
+          timeRemainingFormatted: '<1s'
+        }));
+        await new Promise((r) => setTimeout(r, 180));
+
+        const blobUrl = URL.createObjectURL(localBlob);
+        const link = document.createElement('a');
+        link.href = blobUrl;
+        link.download = fileName;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+
+        setDownloadProgress((prev) => ({
+          ...prev,
+          status: 'completed',
+          percent: 100,
+          downloadedMbFormatted: formatBytes(total),
+          remainingMbFormatted: '0 MB',
+          speedFormatted: 'Finished',
+          timeRemainingFormatted: '0s',
+          blobUrl
+        }));
+        showToast(`Downloaded ${fileName} successfully!`);
+        return;
+      } catch (err: any) {
+        setDownloadProgress((prev) => ({
+          ...prev,
+          status: 'error',
+          errorMessage: 'Failed to extract package from local storage.'
+        }));
+        return;
+      }
+    }
+
+    // 2. Stream directly through our backend download proxy
+    // This streams Google Drive, Dropbox, GitHub Releases, or Server-stored APKs
+    // with 0 external pages/tabs opened and live in-app progress!
+    const queryParams = new URLSearchParams();
+    if (targetRelease?.id) queryParams.append('releaseId', targetRelease.id);
+    if (targetRelease?.directDownloadUrl) queryParams.append('directUrl', targetRelease.directDownloadUrl);
+    if (fileName) queryParams.append('fileName', fileName);
+    if (targetApp.name) queryParams.append('appName', targetApp.name);
+    if (targetApp.packageId) queryParams.append('packageId', targetApp.packageId);
+    if (targetRelease?.version) queryParams.append('version', targetRelease.version);
+    if (targetRelease?.fileSize) queryParams.append('fileSize', targetRelease.fileSize);
+    const downloadUrl = `/api/apps/${targetApp.id}/download?${queryParams.toString()}`;
+
+    if (downloadAbortRef.current) {
+      downloadAbortRef.current.abort();
+    }
+    const controller = new AbortController();
+    downloadAbortRef.current = controller;
+
+    try {
+      setDownloadProgress((prev) => ({
+        ...prev,
+        status: 'downloading',
+        speedFormatted: 'Starting stream...'
+      }));
+
+      const { blobUrl } = await downloadWithProgress(
+        downloadUrl,
+        fileName,
+        targetRelease?.fileSize,
+        (update) => {
+          setDownloadProgress((prev) => ({
+            ...prev,
+            status: update.percent >= 100 ? 'verifying' : 'downloading',
+            percent: update.percent,
+            downloadedBytes: update.downloadedBytes,
+            totalBytes: update.totalBytes,
+            downloadedMbFormatted: update.downloadedMbFormatted,
+            remainingMbFormatted: update.remainingMbFormatted,
+            speedFormatted: update.speedFormatted,
+            timeRemainingFormatted: update.timeRemainingFormatted
+          }));
+        },
+        controller.signal
+      );
+
+      // Trigger standard browser download directly into user's downloads folder
       const link = document.createElement('a');
       link.href = blobUrl;
       link.download = fileName;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-      setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
 
-      showToast(`Downloading ${fileName}! No account required.`);
-      return;
-    }
-
-    // 2. Direct Cloud Download (Google Drive, Dropbox, GitHub Releases, MediaFire, etc.)
-    if (targetRelease?.directDownloadUrl) {
-      let directUrl = targetRelease.directDownloadUrl.trim();
-      const gdMatch =
-        directUrl.match(/\/file\/d\/([a-zA-Z0-9_-]{20,})/) ||
-        directUrl.match(/[?&]id=([a-zA-Z0-9_-]{20,})/);
-
-      if (gdMatch && gdMatch[1]) {
-        directUrl = `https://drive.usercontent.google.com/download?id=${gdMatch[1]}&export=download&confirm=t`;
-      } else if (directUrl.includes('dropbox.com') && directUrl.includes('dl=0')) {
-        directUrl = directUrl.replace('dl=0', 'dl=1');
-      }
-
-      showToast(`Downloading ${fileName} directly...`);
-
-      const link = document.createElement('a');
-      link.href = directUrl;
-      link.setAttribute('download', fileName);
-      link.target = '_blank';
-      link.rel = 'noopener noreferrer';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      return;
-    }
-
-    // 3. Fallback: Query backend safely without letting Chrome download 404 JSON as a file
-    const downloadUrl = getDownloadUrl(appId, releaseId);
-
-    try {
-      showToast('Preparing download package...');
-      const checkRes = await fetch(downloadUrl, { method: 'HEAD' });
-      const contentType = checkRes.headers.get('content-type') || '';
-
-      if (!checkRes.ok || contentType.includes('application/json')) {
-        showToast('Download package is updating. Please check back shortly.');
+      setDownloadProgress((prev) => ({
+        ...prev,
+        status: 'completed',
+        percent: 100,
+        downloadedMbFormatted: prev.fileSize || prev.downloadedMbFormatted,
+        remainingMbFormatted: '0 MB',
+        speedFormatted: 'Finished',
+        timeRemainingFormatted: '0s',
+        blobUrl
+      }));
+      showToast(`Downloaded ${fileName} successfully!`);
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        setDownloadProgress((prev) => ({ ...prev, isOpen: false, status: 'idle' }));
         return;
       }
+      console.warn('Download stream notice:', err);
 
-      const link = document.createElement('a');
-      link.href = downloadUrl;
-      link.setAttribute('download', fileName);
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      showToast(`Downloading ${fileName}! No account required.`);
-    } catch (err) {
-      window.location.href = downloadUrl;
+      // Graceful Mirror Fallback: If server proxy was interrupted but targetRelease has directDownloadUrl,
+      // trigger immediate direct download without opening external tabs
+      if (targetRelease?.directDownloadUrl) {
+        try {
+          const directUrl = targetRelease.directDownloadUrl.trim();
+          let cleanUrl = directUrl;
+          const gdMatch =
+            directUrl.match(/\/file\/d\/([a-zA-Z0-9_-]{20,})/) ||
+            directUrl.match(/[?&]id=([a-zA-Z0-9_-]{20,})/);
+          if (gdMatch && gdMatch[1]) {
+            cleanUrl = `https://drive.usercontent.google.com/download?id=${gdMatch[1]}&export=download&confirm=t`;
+          }
+
+          const link = document.createElement('a');
+          link.href = cleanUrl;
+          link.download = fileName;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+
+          setDownloadProgress((prev) => ({
+            ...prev,
+            status: 'completed',
+            percent: 100,
+            remainingMbFormatted: '0 MB',
+            speedFormatted: 'Finished',
+            timeRemainingFormatted: '0s'
+          }));
+          showToast(`Downloading ${fileName}...`);
+          return;
+        } catch (mirrorErr) {
+          console.error('Mirror download error:', mirrorErr);
+        }
+      }
+
+      setDownloadProgress((prev) => ({
+        ...prev,
+        status: 'error',
+        errorMessage: err.message || 'The download was interrupted. Please check your connection and retry.'
+      }));
     }
+
 
     // Refresh apps to reflect updated download counters
     setTimeout(() => {
       loadApps();
     }, 1200);
   };
+
+  const handleCancelDownload = () => {
+    if (downloadAbortRef.current) {
+      downloadAbortRef.current.abort();
+      downloadAbortRef.current = null;
+    }
+    setDownloadProgress((prev) => ({ ...prev, isOpen: false, status: 'idle' }));
+  };
+
+  const handleRetryDownload = () => {
+    if (activeDownloadTargetRef.current) {
+      handleDownload(activeDownloadTargetRef.current.appId, activeDownloadTargetRef.current.releaseId);
+    }
+  };
+
+  const handleSaveAgain = () => {
+    if (downloadProgress.blobUrl) {
+      const link = document.createElement('a');
+      link.href = downloadProgress.blobUrl;
+      link.download = downloadProgress.fileName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      showToast(`Saved copy of ${downloadProgress.fileName}!`);
+    }
+  };
+
 
   // Handle Admin Logout
   const handleLogout = async () => {
@@ -560,6 +741,16 @@ export default function App() {
         onClose={() => setIsGuideOpen(false)}
         defaultPlatform={guidePlatform}
       />
+
+      {/* In-App Live Download Streaming Progress Modal */}
+      <DownloadProgressModal
+        progress={downloadProgress}
+        onClose={() => setDownloadProgress((prev) => ({ ...prev, isOpen: false }))}
+        onCancel={handleCancelDownload}
+        onRetry={handleRetryDownload}
+        onSaveAgain={handleSaveAgain}
+      />
+
 
       {/* Screenshot Lightbox Modal */}
       {screenshotTargetApp && (

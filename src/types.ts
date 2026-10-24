@@ -87,3 +87,23 @@ export interface AdminSessionState {
   admin: AdminUser | null;
   token: string | null;
 }
+
+export interface DownloadProgressState {
+  isOpen: boolean;
+  status: 'idle' | 'connecting' | 'downloading' | 'verifying' | 'completed' | 'error';
+  percent: number;
+  downloadedBytes: number;
+  totalBytes: number;
+  downloadedMbFormatted: string;
+  remainingMbFormatted: string;
+  speedFormatted: string;
+  timeRemainingFormatted: string;
+  appName: string;
+  appIcon: string;
+  version: string;
+  fileName: string;
+  fileSize?: string;
+  errorMessage?: string;
+  blobUrl?: string;
+}
+
