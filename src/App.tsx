@@ -11,6 +11,8 @@ import { QRModal } from './components/QRModal';
 import { InstallGuideModal } from './components/InstallGuideModal';
 import { ScreenshotModal } from './components/ScreenshotModal';
 import { DownloadProgressModal } from './components/DownloadProgressModal';
+import { CompanionStoreModal } from './components/CompanionStoreModal';
+import { TvPage } from './components/TvPage';
 import { Footer } from './components/Footer';
 import {
   fetchApps,
@@ -31,13 +33,20 @@ import {
 } from './services/api';
 import { StoreApp, AppRelease, Platform, AdminUser, DownloadProgressState } from './types';
 import { getApkBlob, deleteApkBlob } from './utils/fileStorage';
+import {
+  recordAppInstalled,
+  recordAppUninstalled,
+  triggerAndroidInstall,
+  triggerAndroidUninstall
+} from './utils/androidBridge';
 import { CheckCircle2, ArrowRight } from 'lucide-react';
+
 
 
 export default function App() {
   const [apps, setApps] = useState<StoreApp[]>([]);
   const [loading, setLoading] = useState(true);
-  const [currentView, setCurrentView] = useState<'store' | 'upload' | 'detail'>('store');
+  const [currentView, setCurrentView] = useState<'store' | 'upload' | 'detail' | 'tv'>('store');
   const [selectedApp, setSelectedApp] = useState<StoreApp | null>(null);
 
   // Opening Logo Splash Screen
@@ -59,8 +68,12 @@ export default function App() {
   const [activeScreenshotIndex, setActiveScreenshotIndex] = useState(0);
   const [screenshotTargetApp, setScreenshotTargetApp] = useState<StoreApp | null>(null);
 
+  // Zuzu Store Companion Client Modal (Play Store mode)
+  const [isCompanionModalOpen, setIsCompanionModalOpen] = useState(false);
+
   // Toast Notification
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+
 
   // In-App Download Progress Modal State
   const [downloadProgress, setDownloadProgress] = useState<DownloadProgressState>({
@@ -241,8 +254,10 @@ export default function App() {
       appIcon: targetApp.iconUrl,
       version: targetRelease?.version || '1.0.0',
       fileName,
-      fileSize: targetRelease?.fileSize
+      fileSize: targetRelease?.fileSize,
+      packageId: targetApp.packageId
     });
+
 
     // 1. Check if the physical APK file is cached in local client storage (uploader device)
     const localBlob = await getApkBlob(appId);
@@ -346,13 +361,11 @@ export default function App() {
         controller.signal
       );
 
-      // Trigger standard browser download directly into user's downloads folder
-      const link = document.createElement('a');
-      link.href = blobUrl;
-      link.download = fileName;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
+      // Trigger standard browser download & Android package installer prompt directly
+      triggerAndroidInstall(blobUrl, fileName);
+
+      // Record as installed in local device registry
+      recordAppInstalled(targetApp.packageId, targetApp.name, targetRelease?.version || '1.0.0', fileName);
 
       setDownloadProgress((prev) => ({
         ...prev,
@@ -364,7 +377,7 @@ export default function App() {
         timeRemainingFormatted: '0s',
         blobUrl
       }));
-      showToast(`Downloaded ${fileName} successfully!`);
+      showToast(`Downloaded ${fileName} successfully! Launching installer...`);
     } catch (err: any) {
       if (err.name === 'AbortError') {
         setDownloadProgress((prev) => ({ ...prev, isOpen: false, status: 'idle' }));
@@ -385,12 +398,8 @@ export default function App() {
             cleanUrl = `https://drive.usercontent.google.com/download?id=${gdMatch[1]}&export=download&confirm=t`;
           }
 
-          const link = document.createElement('a');
-          link.href = cleanUrl;
-          link.download = fileName;
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
+          triggerAndroidInstall(cleanUrl, fileName);
+          recordAppInstalled(targetApp.packageId, targetApp.name, targetRelease?.version || '1.0.0', fileName);
 
           setDownloadProgress((prev) => ({
             ...prev,
@@ -437,15 +446,21 @@ export default function App() {
 
   const handleSaveAgain = () => {
     if (downloadProgress.blobUrl) {
-      const link = document.createElement('a');
-      link.href = downloadProgress.blobUrl;
-      link.download = downloadProgress.fileName;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      showToast(`Saved copy of ${downloadProgress.fileName}!`);
+      triggerAndroidInstall(downloadProgress.blobUrl, downloadProgress.fileName);
+      showToast(`Launching installer for ${downloadProgress.fileName}!`);
     }
   };
+
+  const handleDownloadCompanionClient = () => {
+    const link = document.createElement('a');
+    link.href = '/api/zuzu-store-app/download';
+    link.download = 'ZuzuStore-Client-v2.4.0.apk';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    showToast('Downloading Zuzu Store Companion Client APK...');
+  };
+
 
 
   // Handle Admin Logout
@@ -571,7 +586,9 @@ export default function App() {
         onOpenLoginModal={() => setIsLoginModalOpen(true)}
         onLogout={handleLogout}
         onSecretAdminTrigger={handleOpenSecretAdmin}
+        onOpenCompanionModal={() => setIsCompanionModalOpen(true)}
       />
+
 
       {/* Floating Publisher Banner when in Admin Studio */}
       {currentView === 'upload' && admin && (
@@ -597,9 +614,28 @@ export default function App() {
       {/* Main View Router */}
       <main className="flex-1">
         {loading ? (
-          <div className="py-24 text-center space-y-3">
-            <div className="w-9 h-9 border-3 border-cyan-500/20 border-t-cyan-400 rounded-full animate-spin mx-auto" />
-            <p className="text-xs text-neutral-400">Loading ZuzuStore...</p>
+          <div className="py-24 text-center space-y-4">
+            <div className="relative inline-block">
+              {/* Outer glowing pulsing halo */}
+              <div className="absolute -inset-2 bg-gradient-to-r from-amber-500 via-red-500 to-amber-500 rounded-3xl blur-md opacity-75 animate-pulse" />
+              <img
+                src="/public/assets/aistudio/file_00000000212c8208b64f5bd04e8c4ee8_95799501.png"
+                alt="Loading ZuzuStore..."
+                className="relative w-16 h-16 sm:w-20 sm:h-20 object-contain rounded-2xl shadow-2xl border-2 border-amber-400/60 animate-bounce"
+                style={{ animationDuration: '1.4s' }}
+                onError={(e) => {
+                  e.currentTarget.onerror = null;
+                  e.currentTarget.src = '/zuzustore-logo.png';
+                }}
+              />
+            </div>
+            <div className="space-y-1">
+              <p className="text-sm font-bold text-white tracking-wide">Opening ZuzuStore...</p>
+              <p className="text-xs text-amber-400/80 font-medium">Preparing verified packages</p>
+            </div>
+            <div className="w-32 h-1 bg-neutral-900 rounded-full overflow-hidden mx-auto border border-neutral-800">
+              <div className="h-full bg-gradient-to-r from-amber-400 via-amber-500 to-red-600 rounded-full animate-pulse" />
+            </div>
           </div>
         ) : (
           <>
@@ -618,6 +654,10 @@ export default function App() {
                       window.scrollTo({ top: 0, behavior: 'smooth' });
                     }}
                     onPreviewScreenshot={(idx) => openScreenshotPreview(featuredApp, idx)}
+                    onNavigateToTv={() => {
+                      setCurrentView('tv');
+                      window.scrollTo({ top: 0, behavior: 'smooth' });
+                    }}
                   />
                 ) : (
                   /* If no apps published yet, show clean ZuzuStore welcome banner with logo */
@@ -626,6 +666,10 @@ export default function App() {
                     onOpenLoginModal={() => setIsLoginModalOpen(true)}
                     onNavigateToUpload={() => setCurrentView('upload')}
                     onOpenGuide={() => openGuideModal('Android')}
+                    onNavigateToTv={() => {
+                      setCurrentView('tv');
+                      window.scrollTo({ top: 0, behavior: 'smooth' });
+                    }}
                     totalDownloads={totalDownloads}
                     totalApps={apps.length}
                   />
@@ -672,6 +716,39 @@ export default function App() {
                 onPreviewScreenshot={(idx) => openScreenshotPreview(selectedApp, idx)}
                 onDeleteRelease={(releaseId) => handleDeleteRelease(selectedApp.id, releaseId)}
                 onDeleteApp={() => handleDeleteApp(selectedApp.id)}
+                onOpenCompanionModal={() => setIsCompanionModalOpen(true)}
+                onTriggerUninstall={(pkg) => {
+                  recordAppUninstalled(pkg);
+                  showToast('Triggering Android uninstaller...');
+                }}
+              />
+
+            )}
+
+            {currentView === 'tv' && (
+              <TvPage
+                apps={apps}
+                admin={admin}
+                onDownloadApp={handleDownload}
+                onSelectApp={(app) => {
+                  setSelectedApp(app);
+                  setCurrentView('detail');
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
+                onOpenQR={(app) => openQRModal(app)}
+                onNavigateToUpload={() => {
+                  if (!admin) {
+                    handleOpenSecretAdmin();
+                  } else {
+                    setCurrentView('upload');
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                  }
+                }}
+                onOpenGuide={(plat) => openGuideModal(plat || 'Android')}
+                onNavigateToPhoneStore={() => {
+                  setCurrentView('store');
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
               />
             )}
 
@@ -749,6 +826,18 @@ export default function App() {
         onCancel={handleCancelDownload}
         onRetry={handleRetryDownload}
         onSaveAgain={handleSaveAgain}
+        onOpenCompanionModal={() => setIsCompanionModalOpen(true)}
+        onTriggerUninstall={(pkg) => {
+          recordAppUninstalled(pkg);
+          showToast('Triggering Android uninstaller...');
+        }}
+      />
+
+      {/* Zuzu Store Companion Client Modal (Play Store background mode) */}
+      <CompanionStoreModal
+        isOpen={isCompanionModalOpen}
+        onClose={() => setIsCompanionModalOpen(false)}
+        onDownloadClient={handleDownloadCompanionClient}
       />
 
 

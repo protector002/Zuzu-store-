@@ -59,7 +59,7 @@ export const QRModal: React.FC<QRModalProps> = ({ isOpen, onClose, app, release 
 
         <div className="flex items-center gap-3 mb-4">
           <div className="p-2.5 rounded-xl bg-neutral-800 border border-neutral-700/60">
-            <Smartphone className="w-5 h-5 text-cyan-400" />
+            <Smartphone className="w-5 h-5 text-amber-400" />
           </div>
           <div>
             <h3 className="text-base font-bold text-white">Scan to Download on Phone</h3>

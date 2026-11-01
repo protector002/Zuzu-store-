@@ -23,7 +23,8 @@ import {
   ArrowLeft,
   ArrowRight,
   Eye,
-  X
+  X,
+  Tv
 } from 'lucide-react';
 import { StoreApp, Platform, AppCategory, AdminUser } from '../types';
 import { saveApkBlob } from '../utils/fileStorage';
@@ -180,6 +181,11 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
   const [uploadProgress, setUploadProgress] = useState(0);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // Target edition selector: Phone vs Smart TV
+  const [targetEdition, setTargetEdition] = useState<'phone' | 'tv'>('phone');
+  // Catalog filter tab: all, phone, tv
+  const [catalogFilter, setCatalogFilter] = useState<'all' | 'phone' | 'tv'>('all');
 
   // Form state for New App
   const [appName, setAppName] = useState('');
@@ -585,6 +591,8 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
         fd.append('fileSize', finalFileSize);
         fd.append('iconUrl', finalIcon);
         fd.append('apkFile', uploadedBinaryFile);
+        fd.append('appEdition', targetEdition === 'tv' ? 'tv' : 'phone');
+        fd.append('isTvCompatible', (targetEdition === 'tv' || appPlatform === 'Android TV' || appPlatform === 'Fire TV' || appPlatform === 'Smart TV') ? 'true' : 'false');
         // Include screenshots in FormData
         fd.append('screenshots', JSON.stringify(finalScreenshots));
         screenshotFiles.forEach((f) => {
@@ -594,13 +602,15 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
       } else {
         payload = {
           name: appName.trim(),
-          tagline: appTagline.trim() || `${appName} for Android`,
+          tagline: appTagline.trim() || `${appName} for ${appPlatform}`,
           category: appCategory,
-          description: appDescription.trim() || `${appName} official APK build.`,
+          description: appDescription.trim() || `${appName} official ${appPlatform} installation package.`,
           packageId: appPackageId.trim() || `com.zuzu.${appName.toLowerCase().replace(/[^a-z0-9]/g, '')}`,
           version: appVersion.trim() || '1.0.0',
           platform: appPlatform,
-          minOS: appMinOS.trim() || 'Android 8.0+',
+          appEdition: targetEdition === 'tv' ? 'tv' : 'phone',
+          isTvCompatible: targetEdition === 'tv' || appPlatform === 'Android TV' || appPlatform === 'Fire TV' || appPlatform === 'Smart TV',
+          minOS: appMinOS.trim() || (targetEdition === 'tv' || appPlatform === 'Android TV' ? 'Android TV 8.0+' : 'Android 8.0+'),
           changelog: appChangelog,
           directDownloadUrl: formattedLink,
           fileName: finalFileName,
@@ -807,10 +817,85 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
             {/* Left Column: Binary File Drop & Metadata */}
             <div className="lg:col-span-7 space-y-6">
+              {/* Target Edition Selector: Android Phone vs Smart TV App */}
+              <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-neutral-900 via-neutral-900 to-cyan-950/40 border border-neutral-800 space-y-3.5">
+                <div>
+                  <div className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                    <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
+                    <span>Select Target Product Edition</span>
+                  </div>
+                  <p className="text-[11px] text-neutral-400 mt-0.5">
+                    Choose whether you are publishing an <strong className="text-white font-medium">Android Phone App</strong> or a <strong className="text-white font-medium">Smart TV App</strong> so it appears on the correct storefront page.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTargetEdition('phone');
+                      setAppPlatform('Android');
+                      if (appCategory === 'Smart TV' || appCategory === 'TV & Movies') {
+                        setAppCategory('Productivity');
+                      }
+                      setAppMinOS('Android 8.0+');
+                    }}
+                    className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer flex items-start gap-3 ${
+                      targetEdition === 'phone'
+                        ? 'bg-indigo-950/50 border-indigo-500 shadow-md ring-1 ring-indigo-500/30'
+                        : 'bg-neutral-950/70 border-neutral-800 hover:border-neutral-700 text-neutral-400'
+                    }`}
+                  >
+                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                      targetEdition === 'phone' ? 'bg-indigo-600 text-white' : 'bg-neutral-800 text-neutral-400'
+                    }`}>
+                      <Smartphone className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className={`text-xs font-bold ${targetEdition === 'phone' ? 'text-white' : 'text-neutral-300'}`}>
+                        Android App (Phones & Tablets)
+                      </div>
+                      <div className="text-[11px] text-neutral-400 mt-0.5 leading-snug">
+                        Appears on main Android App storefront page. Touch UI optimized.
+                      </div>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTargetEdition('tv');
+                      setAppPlatform('Android TV');
+                      setAppCategory('Smart TV');
+                      setAppMinOS('Android TV 9.0+ / Fire OS 7+');
+                    }}
+                    className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer flex items-start gap-3 ${
+                      targetEdition === 'tv'
+                        ? 'bg-cyan-950/60 border-cyan-400 shadow-md ring-1 ring-cyan-500/30'
+                        : 'bg-neutral-950/70 border-neutral-800 hover:border-neutral-700 text-neutral-400'
+                    }`}
+                  >
+                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                      targetEdition === 'tv' ? 'bg-cyan-600 text-white' : 'bg-neutral-800 text-neutral-400'
+                    }`}>
+                      <Tv className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className={`text-xs font-bold ${targetEdition === 'tv' ? 'text-cyan-200' : 'text-neutral-300'}`}>
+                        Smart TV App (Smart TV & Fire TV)
+                      </div>
+                      <div className="text-[11px] text-neutral-400 mt-0.5 leading-snug">
+                        Appears on dedicated Smart TV page. 10-foot remote D-pad ready.
+                      </div>
+                    </div>
+                  </button>
+                </div>
+              </div>
+
               {/* Package Dropzone */}
               <div>
                 <label className="block text-xs font-semibold text-neutral-300 mb-2">
-                  Select Android APK File (Supports at least 1GB - up to 2GB)
+                  Select {targetEdition === 'tv' ? 'Smart TV' : 'Android'} APK File (Supports at least 1GB - up to 2GB)
                 </label>
                 <div
                   onDragOver={(e) => e.preventDefault()}
@@ -1005,6 +1090,7 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
                     >
                       <option value="Productivity">Productivity</option>
                       <option value="Entertainment">Entertainment</option>
+                      <option value="TV & Movies">TV & Movies</option>
                       <option value="Utilities">Utilities</option>
                       <option value="Tools">Tools</option>
                       <option value="Social">Social</option>
@@ -1015,13 +1101,30 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
                   </div>
 
                   <div>
-                    <label className="block text-xs font-medium text-neutral-400 mb-1">Platform</label>
+                    <label className="block text-xs font-medium text-neutral-400 mb-1 flex items-center justify-between">
+                      <span>Target Platform</span>
+                      {(appPlatform === 'Android TV' || appPlatform === 'Fire TV') && (
+                        <span className="text-[10px] text-cyan-400 font-semibold bg-cyan-950/60 px-1.5 py-0.5 rounded border border-cyan-800/50">
+                          TV 10-ft Leanback
+                        </span>
+                      )}
+                    </label>
                     <select
                       value={appPlatform}
-                      onChange={(e) => setAppPlatform(e.target.value as Platform)}
+                      onChange={(e) => {
+                        const val = e.target.value as Platform;
+                        setAppPlatform(val);
+                        if (val === 'Android TV') {
+                          if (appMinOS === 'Android 8.0+' || !appMinOS) setAppMinOS('Android TV 8.0+ / Google TV');
+                        } else if (val === 'Fire TV') {
+                          if (appMinOS === 'Android 8.0+' || !appMinOS) setAppMinOS('Fire OS 7.0+ (Android 9+)');
+                        }
+                      }}
                       className="w-full px-3.5 py-2.5 bg-neutral-950 border border-neutral-800 rounded-xl text-sm text-white focus:outline-none focus:border-cyan-500"
                     >
-                      <option value="Android">Android (.apk)</option>
+                      <option value="Android">Android Phone & Tablet (.apk)</option>
+                      <option value="Android TV">Android TV / Google TV (.apk)</option>
+                      <option value="Fire TV">Amazon Fire TV / Fire Stick (.apk)</option>
                       <option value="Windows">Windows (.exe)</option>
                     </select>
                   </div>
@@ -1551,13 +1654,30 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
                 </div>
 
                 <div>
-                  <label className="block text-xs font-medium text-neutral-400 mb-1">Platform</label>
+                  <label className="block text-xs font-medium text-neutral-400 mb-1 flex items-center justify-between">
+                    <span>Target Platform</span>
+                    {(updatePlatform === 'Android TV' || updatePlatform === 'Fire TV') && (
+                      <span className="text-[10px] text-cyan-400 font-semibold bg-cyan-950/60 px-1.5 py-0.5 rounded border border-cyan-800/50">
+                        TV 10-ft Leanback
+                      </span>
+                    )}
+                  </label>
                   <select
                     value={updatePlatform}
-                    onChange={(e) => setUpdatePlatform(e.target.value as Platform)}
+                    onChange={(e) => {
+                      const val = e.target.value as Platform;
+                      setUpdatePlatform(val);
+                      if (val === 'Android TV') {
+                        if (updateMinOS === 'Android 9.0+' || !updateMinOS) setUpdateMinOS('Android TV 8.0+ / Google TV');
+                      } else if (val === 'Fire TV') {
+                        if (updateMinOS === 'Android 9.0+' || !updateMinOS) setUpdateMinOS('Fire OS 7.0+ (Android 9+)');
+                      }
+                    }}
                     className="w-full px-3.5 py-2.5 bg-neutral-950 border border-neutral-800 rounded-xl text-sm text-white focus:outline-none focus:border-cyan-500"
                   >
-                    <option value="Android">Android (.apk)</option>
+                    <option value="Android">Android Phone & Tablet (.apk)</option>
+                    <option value="Android TV">Android TV / Google TV (.apk)</option>
+                    <option value="Fire TV">Amazon Fire TV / Fire Stick (.apk)</option>
                     <option value="Windows">Windows (.exe)</option>
                   </select>
                 </div>
@@ -1690,72 +1810,151 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
       )}
 
       {/* TAB 3: MANAGE LIVE CATALOG */}
-      {activeTab === 'manage' && (
-        <div className="space-y-6">
-          <div className="flex items-center justify-between">
-            <h3 className="text-base font-bold text-white">Live Store Catalog ({apps.length} {apps.length === 1 ? 'App' : 'Apps'})</h3>
-            {apps.length > 0 && (
-              <button
-                onClick={() => {
-                  if (confirm('Clear all store apps from catalog?')) {
-                    onResetCatalog();
-                  }
-                }}
-                className="px-3 py-1.5 text-xs text-neutral-400 hover:text-rose-400 bg-neutral-900 border border-neutral-800 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
-                title="Clear all apps from catalog"
-              >
-                <RefreshCw className="w-3.5 h-3.5" />
-                <span>Clear Catalog</span>
-              </button>
-            )}
-          </div>
+      {activeTab === 'manage' && (() => {
+        const phoneApps = apps.filter((a) => {
+          const isTvOnly = (a.appEdition === 'tv' || a.supportedPlatforms?.includes('Smart TV') || a.supportedPlatforms?.includes('Android TV') || a.supportedPlatforms?.includes('Fire TV') || a.category === 'Smart TV') && a.appEdition !== 'phone' && a.appEdition !== 'both';
+          return !isTvOnly;
+        });
 
-          {apps.length === 0 ? (
-            <div className="p-12 text-center bg-neutral-900/40 border border-dashed border-neutral-800 rounded-3xl space-y-3">
-              <FolderArchive className="w-10 h-10 text-neutral-500 mx-auto" />
-              <h4 className="text-base font-bold text-white">No Live Applications in Catalog</h4>
-              <p className="text-xs text-neutral-400 max-w-md mx-auto leading-relaxed">
-                Your store is ready for distribution. Upload your first APK package to publish it live for direct public download.
-              </p>
-              <div className="pt-2">
+        const smartTvApps = apps.filter((a) => {
+          return a.appEdition === 'tv' || a.appEdition === 'both' || a.isTvCompatible || a.supportedPlatforms?.includes('Android TV') || a.supportedPlatforms?.includes('Smart TV') || a.supportedPlatforms?.includes('Fire TV') || a.category === 'Smart TV';
+        });
+
+        const displayedApps = catalogFilter === 'phone' ? phoneApps : catalogFilter === 'tv' ? smartTvApps : apps;
+
+        return (
+          <div className="space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <h3 className="text-base font-bold text-white">Live Store Catalog ({apps.length} {apps.length === 1 ? 'App' : 'Apps'})</h3>
+                <p className="text-xs text-neutral-400 mt-0.5">Manage live packages published to the Android App store and the Smart TV page.</p>
+              </div>
+              {apps.length > 0 && (
+                <button
+                  onClick={() => {
+                    if (confirm('Clear all store apps from catalog?')) {
+                      onResetCatalog();
+                    }
+                  }}
+                  className="px-3 py-1.5 text-xs text-neutral-400 hover:text-rose-400 bg-neutral-900 border border-neutral-800 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer self-start sm:self-auto"
+                  title="Clear all apps from catalog"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>Clear Catalog</span>
+                </button>
+              )}
+            </div>
+
+            {/* Filter Tabs: All | Android App | Smart TV */}
+            {apps.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2 p-1.5 bg-neutral-900/80 border border-neutral-800 rounded-xl">
                 <button
                   type="button"
-                  onClick={() => setActiveTab('upload-new')}
-                  className="px-5 py-2.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 rounded-xl transition-all shadow-md inline-flex items-center gap-1.5 cursor-pointer"
+                  onClick={() => setCatalogFilter('all')}
+                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
+                    catalogFilter === 'all'
+                      ? 'bg-neutral-800 text-white shadow-sm'
+                      : 'text-neutral-400 hover:text-neutral-200'
+                  }`}
                 >
-                  <Plus className="w-4 h-4" />
-                  <span>Upload Your First APK</span>
+                  All Applications ({apps.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCatalogFilter('phone')}
+                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 ${
+                    catalogFilter === 'phone'
+                      ? 'bg-indigo-950 text-indigo-300 border border-indigo-700/60 shadow-sm'
+                      : 'text-neutral-400 hover:text-neutral-200'
+                  }`}
+                >
+                  <Smartphone className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>Android Apps ({phoneApps.length})</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCatalogFilter('tv')}
+                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 ${
+                    catalogFilter === 'tv'
+                      ? 'bg-cyan-950 text-cyan-300 border border-cyan-700/60 shadow-sm'
+                      : 'text-neutral-400 hover:text-neutral-200'
+                  }`}
+                >
+                  <Tv className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>Smart TV Apps ({smartTvApps.length})</span>
                 </button>
               </div>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 gap-4">
-              {apps.map((app) => (
-                <React.Fragment key={app.id}>
-                  <div
-                    className="p-5 bg-neutral-900/60 border border-neutral-800 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4"
+            )}
+
+            {displayedApps.length === 0 ? (
+              <div className="p-12 text-center bg-neutral-900/40 border border-dashed border-neutral-800 rounded-3xl space-y-3">
+                <FolderArchive className="w-10 h-10 text-neutral-500 mx-auto" />
+                <h4 className="text-base font-bold text-white">No Applications Found in this Filter</h4>
+                <p className="text-xs text-neutral-400 max-w-md mx-auto leading-relaxed">
+                  {catalogFilter === 'tv'
+                    ? 'No Smart TV apps published yet. Switch to "Upload New APK" and choose "Smart TV App" to post your TV build.'
+                    : 'Your store catalog has no applications matching this criteria.'}
+                </p>
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (catalogFilter === 'tv') {
+                        setTargetEdition('tv');
+                        setAppPlatform('Android TV');
+                        setAppCategory('Smart TV');
+                      }
+                      setActiveTab('upload-new');
+                    }}
+                    className="px-5 py-2.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 rounded-xl transition-all shadow-md inline-flex items-center gap-1.5 cursor-pointer"
                   >
-                  <div className="flex items-center gap-4">
-                    <img
-                      src={app.iconUrl}
-                      alt={app.name}
-                      className="w-14 h-14 rounded-xl object-contain border border-neutral-800 shrink-0 bg-neutral-950 p-1"
-                      onError={(e) => {
-                        e.currentTarget.onerror = null;
-                        e.currentTarget.src = '/zuzustore-logo.png';
-                      }}
-                    />
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <h4 className="text-base font-bold text-white">{app.name}</h4>
-                        {app.isOfficial && (
-                          <span className="text-[10px] text-cyan-400 font-semibold bg-cyan-950/60 px-1.5 py-0.5 rounded border border-cyan-800/50">
-                            Verified
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-xs text-neutral-400 line-clamp-1">{app.tagline}</p>
-                      <div className="flex items-center gap-2 text-xs text-neutral-500 mt-1">
+                    <Plus className="w-4 h-4" />
+                    <span>Upload {catalogFilter === 'tv' ? 'Smart TV' : 'New'} APK</span>
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-4">
+                {displayedApps.map((app) => {
+                  const isAppTv = app.appEdition === 'tv' || app.appEdition === 'both' || app.isTvCompatible || app.supportedPlatforms?.includes('Android TV') || app.supportedPlatforms?.includes('Smart TV') || app.supportedPlatforms?.includes('Fire TV') || app.category === 'Smart TV';
+
+                  return (
+                    <React.Fragment key={app.id}>
+                      <div
+                        className="p-5 bg-neutral-900/60 border border-neutral-800 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4"
+                      >
+                      <div className="flex items-center gap-4">
+                        <img
+                          src={app.iconUrl}
+                          alt={app.name}
+                          className="w-14 h-14 rounded-xl object-contain border border-neutral-800 shrink-0 bg-neutral-950 p-1"
+                          onError={(e) => {
+                            e.currentTarget.onerror = null;
+                            e.currentTarget.src = '/zuzustore-logo.png';
+                          }}
+                        />
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <h4 className="text-base font-bold text-white">{app.name}</h4>
+                            {isAppTv ? (
+                              <span className="text-[10px] text-cyan-300 font-semibold bg-cyan-950/80 px-2 py-0.5 rounded border border-cyan-700/60 flex items-center gap-1">
+                                <Tv className="w-3 h-3 text-cyan-400" />
+                                <span>Smart TV App</span>
+                              </span>
+                            ) : (
+                              <span className="text-[10px] text-indigo-300 font-semibold bg-indigo-950/80 px-2 py-0.5 rounded border border-indigo-700/60 flex items-center gap-1">
+                                <Smartphone className="w-3 h-3 text-indigo-400" />
+                                <span>Android Phone App</span>
+                              </span>
+                            )}
+                            {app.isOfficial && (
+                              <span className="text-[10px] text-cyan-400 font-semibold bg-cyan-950/60 px-1.5 py-0.5 rounded border border-cyan-800/50">
+                                Verified
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs text-neutral-400 line-clamp-1">{app.tagline}</p>
+                          <div className="flex items-center gap-2 text-xs text-neutral-500 mt-1">
                         <span>v{app.currentVersion}</span>
                         <span>•</span>
                         <span>{app.releases.length} releases</span>
@@ -1888,11 +2087,13 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
                   </div>
                 )}
               </React.Fragment>
-            ))}
-          </div>
-        )}
-      </div>
-    )}
+            );
+          })}
+        </div>
+      )}
+        </div>
+      );
+    })()}
 
       {/* In-App Delete App Confirmation Modal */}
       {appToDelete && (

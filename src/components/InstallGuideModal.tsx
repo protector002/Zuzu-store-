@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, ShieldCheck, CheckCircle2, Smartphone, Laptop } from 'lucide-react';
+import { X, ShieldCheck, CheckCircle2, Smartphone, Laptop, Tv } from 'lucide-react';
 import { Platform } from '../types';
 
 interface InstallGuideModalProps {
@@ -26,36 +26,42 @@ export const InstallGuideModal: React.FC<InstallGuideModalProps> = ({
       >
         <button
           onClick={onClose}
-          className="absolute top-4 right-4 p-2 text-neutral-400 hover:text-white rounded-lg transition-colors"
+          className="absolute top-4 right-4 p-2 text-neutral-400 hover:text-white rounded-lg transition-colors cursor-pointer"
           aria-label="Close modal"
         >
           <X className="w-5 h-5" />
         </button>
 
         <div className="flex items-center gap-3 mb-6">
-          <div className="p-2.5 rounded-xl bg-neutral-800 border border-neutral-700/60 text-cyan-400">
+          <div className="p-2.5 rounded-xl bg-neutral-800 border border-neutral-700/60 text-amber-400">
             <ShieldCheck className="w-5 h-5" />
           </div>
           <div>
             <h3 className="text-lg font-bold text-white">APK Installation Guide</h3>
-            <p className="text-xs text-neutral-400">Step-by-step instructions to install APKs on your phone or computer</p>
+            <p className="text-xs text-neutral-400">Step-by-step instructions to install APKs on Phone, Smart TV, or PC</p>
           </div>
         </div>
 
         {/* Platform Tabs */}
         <div className="flex items-center gap-1.5 p-1 bg-neutral-950 border border-neutral-800 rounded-xl mb-6">
-          {(['Android', 'Windows'] as Platform[]).map((plat) => (
+          {(['Android', 'Android TV', 'Windows'] as Platform[]).map((plat) => (
             <button
               key={plat}
               onClick={() => setActiveTab(plat)}
-              className={`flex-1 py-2 text-xs font-semibold rounded-lg transition-all flex items-center justify-center gap-2 ${
+              className={`flex-1 py-2 text-xs font-semibold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
                 activeTab === plat
-                  ? 'bg-neutral-800 text-white shadow-sm'
+                  ? 'bg-neutral-800 text-white shadow-sm font-bold'
                   : 'text-neutral-400 hover:text-neutral-200'
               }`}
             >
-              {plat === 'Android' ? <Smartphone className="w-3.5 h-3.5" /> : <Laptop className="w-3.5 h-3.5" />}
-              <span>{plat === 'Android' ? 'Android (.apk)' : 'Windows (.exe)'}</span>
+              {plat === 'Android' ? (
+                <Smartphone className="w-3.5 h-3.5 text-amber-400" />
+              ) : plat === 'Android TV' ? (
+                <Tv className="w-3.5 h-3.5 text-red-500" />
+              ) : (
+                <Laptop className="w-3.5 h-3.5 text-neutral-400" />
+              )}
+              <span>{plat === 'Android' ? 'Phone / Tablet' : plat === 'Android TV' ? 'Smart TV' : 'Windows'}</span>
             </button>
           ))}
         </div>
@@ -63,8 +69,8 @@ export const InstallGuideModal: React.FC<InstallGuideModalProps> = ({
         {/* Tab Content */}
         {activeTab === 'Android' && (
           <div className="space-y-4 text-sm text-neutral-300">
-            <div className="p-3.5 bg-cyan-950/40 border border-cyan-800/50 rounded-xl text-xs text-cyan-200 flex items-start gap-2.5">
-              <CheckCircle2 className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5" />
+            <div className="p-3.5 bg-amber-950/40 border border-amber-800/50 rounded-xl text-xs text-amber-200 flex items-start gap-2.5">
+              <CheckCircle2 className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
               <span>
                 All APK packages from Zuzu Store are direct, untouched binaries with verified SHA-256 signatures. No Google account or registration is required to download.
               </span>
@@ -72,7 +78,7 @@ export const InstallGuideModal: React.FC<InstallGuideModalProps> = ({
 
             <ol className="space-y-4">
               <li className="flex items-start gap-3">
-                <span className="flex items-center justify-center w-6 h-6 rounded-full bg-cyan-950 border border-cyan-800/80 text-cyan-400 text-xs font-bold shrink-0 mt-0.5">
+                <span className="flex items-center justify-center w-6 h-6 rounded-full bg-amber-950 border border-amber-800/80 text-amber-400 text-xs font-bold shrink-0 mt-0.5">
                   1
                 </span>
                 <div>
@@ -115,6 +121,55 @@ export const InstallGuideModal: React.FC<InstallGuideModalProps> = ({
                   <p className="font-semibold text-white">Confirm Installation</p>
                   <p className="text-xs text-neutral-400 mt-0.5 leading-relaxed">
                     Tap <strong className="text-neutral-200">&quot;Install&quot;</strong>. In just a few seconds, the application will appear on your home screen and app drawer ready to launch!
+                  </p>
+                </div>
+              </li>
+            </ol>
+          </div>
+        )}
+
+        {activeTab === 'Android TV' && (
+          <div className="space-y-4 text-sm text-neutral-300">
+            <div className="p-3.5 bg-cyan-950/40 border border-cyan-800/50 rounded-xl text-xs text-cyan-200 flex items-start gap-2.5">
+              <CheckCircle2 className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5" />
+              <span>
+                Android TV and Fire TV require sideloading since they run Leanback TV OS. The easiest method is using the free <strong>&quot;Downloader&quot;</strong> app by AFTVnews with our 6-digit code.
+              </span>
+            </div>
+
+            <ol className="space-y-4">
+              <li className="flex items-start gap-3">
+                <span className="flex items-center justify-center w-6 h-6 rounded-full bg-cyan-950 border border-cyan-800/80 text-cyan-400 text-xs font-bold shrink-0 mt-0.5">
+                  1
+                </span>
+                <div>
+                  <p className="font-semibold text-white">Install &quot;Downloader&quot; on your TV</p>
+                  <p className="text-xs text-neutral-400 mt-0.5 leading-relaxed">
+                    Search for <strong>Downloader</strong> in your TV&apos;s Google Play Store or Fire TV Appstore. Install and open it.
+                  </p>
+                </div>
+              </li>
+
+              <li className="flex items-start gap-3">
+                <span className="flex items-center justify-center w-6 h-6 rounded-full bg-cyan-950 border border-cyan-800/80 text-cyan-400 text-xs font-bold shrink-0 mt-0.5">
+                  2
+                </span>
+                <div>
+                  <p className="font-semibold text-white">Enter Downloader Code <span className="text-cyan-300 font-mono">742910</span></p>
+                  <p className="text-xs text-neutral-400 mt-0.5 leading-relaxed">
+                    In the Downloader URL box, enter quick code <strong className="text-cyan-300 font-mono">742910</strong> and click <strong>Go</strong>. The TV APK will download automatically.
+                  </p>
+                </div>
+              </li>
+
+              <li className="flex items-start gap-3">
+                <span className="flex items-center justify-center w-6 h-6 rounded-full bg-cyan-950 border border-cyan-800/80 text-cyan-400 text-xs font-bold shrink-0 mt-0.5">
+                  3
+                </span>
+                <div>
+                  <p className="font-semibold text-white">Enable Unknown Sources &amp; Press Install</p>
+                  <p className="text-xs text-neutral-400 mt-0.5 leading-relaxed">
+                    If prompted, go to <em>Settings ➔ Security ➔ Install Unknown Apps</em> and allow Downloader. Then click <strong>Install</strong> on screen!
                   </p>
                 </div>
               </li>

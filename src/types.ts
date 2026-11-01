@@ -1,14 +1,16 @@
-export type Platform = 'Android' | 'Windows' | 'iOS' | 'macOS';
+export type Platform = 'Android' | 'Smart TV' | 'Android TV' | 'Fire TV' | 'Windows' | 'iOS' | 'macOS';
 
 export type AppCategory =
   | 'Productivity'
   | 'Utilities'
   | 'Tools'
   | 'Entertainment'
+  | 'Smart TV'
   | 'Social'
   | 'Lifestyle'
   | 'Finance'
-  | 'Games';
+  | 'Games'
+  | 'TV & Movies';
 
 export interface AppRelease {
   id: string;
@@ -72,6 +74,10 @@ export interface StoreApp {
   releases: AppRelease[];
   reviews: AppReview[];
   isOfficial: boolean;
+  appEdition?: 'phone' | 'tv' | 'both';
+  isTvCompatible?: boolean;
+  tvBannerUrl?: string;
+  downloaderCode?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -105,5 +111,15 @@ export interface DownloadProgressState {
   fileSize?: string;
   errorMessage?: string;
   blobUrl?: string;
+  packageId?: string;
 }
+
+export interface InstalledAppRecord {
+  packageId: string;
+  name: string;
+  version: string;
+  installedAt: string;
+  fileName?: string;
+}
+
 

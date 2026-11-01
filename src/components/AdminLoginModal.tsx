@@ -60,9 +60,13 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
         {/* Brand Header */}
         <div className="flex items-center gap-3.5 mb-5">
           <img
-            src="/zuzustore-logo.png"
+            src="/public/assets/aistudio/file_00000000212c8208b64f5bd04e8c4ee8_95799501.png"
             alt="ZuzuStore Logo"
-            className="w-11 h-11 rounded-xl object-contain shadow-md bg-neutral-950 p-1 border border-cyan-400/40"
+            className="w-12 h-12 rounded-xl object-contain shadow-md bg-neutral-950 p-1 border-2 border-amber-400/50"
+            onError={(e) => {
+              e.currentTarget.onerror = null;
+              e.currentTarget.src = '/zuzustore-logo.png';
+            }}
           />
           <div>
             <h2 className="text-lg font-black text-white tracking-tight">Publisher Login</h2>
@@ -72,7 +76,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
 
         {/* Public Notice */}
         <div className="p-3 bg-neutral-950 border border-neutral-800 rounded-xl text-xs text-neutral-300 flex items-start gap-2.5 mb-5">
-          <ShieldCheck className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5" />
+          <ShieldCheck className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
           <div className="text-[11px] leading-relaxed">
             <span className="text-white font-medium">Public access notice:</span> Regular visitors can download all APKs freely without logging in. Sign in is only needed for the administrator to publish and manage APK packages.
           </div>
@@ -105,7 +109,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
               onChange={(e) => setEmail(e.target.value)}
               placeholder="Enter administrator email"
               autoComplete="username"
-              className="w-full px-3.5 py-2.5 bg-neutral-950 border border-neutral-800 rounded-xl text-xs sm:text-sm text-white placeholder-neutral-500 focus:outline-none focus:border-cyan-500 transition-colors"
+              className="w-full px-3.5 py-2.5 bg-neutral-950 border border-neutral-800 rounded-xl text-xs sm:text-sm text-white placeholder-neutral-500 focus:outline-none focus:border-amber-400 transition-colors"
             />
           </div>
 
@@ -120,7 +124,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
               onChange={(e) => setPassword(e.target.value)}
               placeholder="Enter administrator password"
               autoComplete="current-password"
-              className="w-full px-3.5 py-2.5 bg-neutral-950 border border-neutral-800 rounded-xl text-xs sm:text-sm text-white placeholder-neutral-500 focus:outline-none focus:border-cyan-500 transition-colors"
+              className="w-full px-3.5 py-2.5 bg-neutral-950 border border-neutral-800 rounded-xl text-xs sm:text-sm text-white placeholder-neutral-500 focus:outline-none focus:border-amber-400 transition-colors"
             />
           </div>
 
@@ -128,7 +132,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
             <button
               type="submit"
               disabled={isLoading || success}
-              className="w-full py-3 text-xs sm:text-sm font-bold text-white bg-gradient-to-r from-cyan-500 via-blue-600 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 rounded-xl transition-all shadow-lg shadow-cyan-950/40 active:scale-95 disabled:opacity-75 flex items-center justify-center gap-2"
+              className="w-full py-3 text-xs sm:text-sm font-bold text-white bg-gradient-to-r from-amber-500 via-amber-600 to-red-600 hover:from-amber-400 hover:to-red-500 rounded-xl transition-all shadow-lg shadow-red-950/40 active:scale-95 disabled:opacity-75 flex items-center justify-center gap-2 cursor-pointer"
             >
               {isLoading ? (
                 <>
@@ -145,7 +149,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
           </div>
 
           <div className="pt-2 text-center text-[10px] text-neutral-400">
-            Quick Access: Press <kbd className="px-1.5 py-0.5 rounded bg-neutral-800 border border-neutral-700 text-neutral-300 font-mono">Ctrl+Shift+A</kbd> or add <span className="font-mono text-cyan-400">#admin</span> to the URL
+            Quick Access: Press <kbd className="px-1.5 py-0.5 rounded bg-neutral-800 border border-neutral-700 text-neutral-300 font-mono">Ctrl+Shift+A</kbd> or add <span className="font-mono text-amber-400">#admin</span> to the URL
           </div>
         </form>
       </div>

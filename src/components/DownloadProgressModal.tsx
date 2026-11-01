@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Download,
   CheckCircle2,
@@ -8,9 +8,17 @@ import {
   ShieldCheck,
   RefreshCw,
   FolderDown,
+  Trash2,
+  Zap,
   Sparkles
 } from 'lucide-react';
 import { DownloadProgressState } from '../types';
+import {
+  triggerAndroidInstall,
+  triggerAndroidUninstall,
+  recordAppInstalled,
+  isAndroidDevice
+} from '../utils/androidBridge';
 
 interface DownloadProgressModalProps {
   progress: DownloadProgressState;
@@ -18,6 +26,8 @@ interface DownloadProgressModalProps {
   onCancel?: () => void;
   onRetry?: () => void;
   onSaveAgain?: () => void;
+  onOpenCompanionModal?: () => void;
+  onTriggerUninstall?: (packageId: string) => void;
 }
 
 export const DownloadProgressModal: React.FC<DownloadProgressModalProps> = ({
@@ -26,7 +36,11 @@ export const DownloadProgressModal: React.FC<DownloadProgressModalProps> = ({
   onCancel,
   onRetry,
   onSaveAgain,
+  onOpenCompanionModal,
+  onTriggerUninstall,
 }) => {
+  const [uninstallNotice, setUninstallNotice] = useState<string | null>(null);
+
   if (!progress.isOpen) return null;
 
   const isCompleted = progress.status === 'completed';
@@ -34,6 +48,26 @@ export const DownloadProgressModal: React.FC<DownloadProgressModalProps> = ({
   const isConnecting = progress.status === 'connecting';
   const isVerifying = progress.status === 'verifying';
   const isDownloading = progress.status === 'downloading';
+
+  const handleLaunchInstall = () => {
+    if (progress.blobUrl) {
+      triggerAndroidInstall(progress.blobUrl, progress.fileName);
+      if (progress.packageId) {
+        recordAppInstalled(progress.packageId, progress.appName, progress.version, progress.fileName);
+      }
+    } else if (onSaveAgain) {
+      onSaveAgain();
+    }
+  };
+
+  const handleUninstall = () => {
+    if (!progress.packageId) return;
+    const res = triggerAndroidUninstall(progress.packageId, progress.appName);
+    setUninstallNotice(res.message);
+    if (onTriggerUninstall) {
+      onTriggerUninstall(progress.packageId);
+    }
+  };
 
   return (
     <div
@@ -96,27 +130,27 @@ export const DownloadProgressModal: React.FC<DownloadProgressModalProps> = ({
           <div className="flex items-baseline justify-between">
             <div className="flex items-center gap-2 text-xs font-semibold">
               {isConnecting && (
-                <span className="text-cyan-400 flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
+                <span className="text-amber-400 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
                   Connecting to download server...
                 </span>
               )}
               {isDownloading && (
-                <span className="text-cyan-300 flex items-center gap-1.5">
-                  <Download className="w-4 h-4 text-cyan-400 animate-bounce" />
+                <span className="text-amber-300 flex items-center gap-1.5">
+                  <Download className="w-4 h-4 text-amber-400 animate-bounce" />
                   Downloading APK directly...
                 </span>
               )}
               {isVerifying && (
-                <span className="text-indigo-300 flex items-center gap-1.5">
-                  <ShieldCheck className="w-4 h-4 text-indigo-400 animate-pulse" />
-                  Finalizing package & preparing download...
+                <span className="text-red-400 flex items-center gap-1.5">
+                  <ShieldCheck className="w-4 h-4 text-red-400 animate-pulse" />
+                  Finalizing package &amp; preparing installer...
                 </span>
               )}
               {isCompleted && (
                 <span className="text-emerald-400 flex items-center gap-1.5 font-bold">
                   <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                  Download Completed Successfully!
+                  Download Complete • Ready to Install
                 </span>
               )}
               {isError && (
@@ -142,7 +176,7 @@ export const DownloadProgressModal: React.FC<DownloadProgressModalProps> = ({
                   ? 'bg-gradient-to-r from-emerald-500 to-teal-400'
                   : isError
                   ? 'bg-rose-500'
-                  : 'bg-gradient-to-r from-cyan-500 via-sky-400 to-indigo-500 animate-pulse'
+                  : 'bg-gradient-to-r from-amber-500 via-amber-400 to-red-600 animate-pulse'
               }`}
               style={{ width: `${Math.max(4, Math.min(100, progress.percent))}%` }}
             />
@@ -180,19 +214,70 @@ export const DownloadProgressModal: React.FC<DownloadProgressModalProps> = ({
           </div>
         </div>
 
-        {/* Success Guidance Screen */}
+        {/* Success Guidance & 1-Tap OS Actions */}
         {isCompleted && (
-          <div className="p-4 rounded-2xl bg-emerald-950/30 border border-emerald-800/50 space-y-3 animate-fade-in">
-            <div className="flex items-center gap-2 text-emerald-300 text-xs font-bold">
-              <Smartphone className="w-4 h-4 text-emerald-400 shrink-0" />
-              <span>Ready for Immediate Android Installation</span>
+          <div className="space-y-3 animate-fade-in">
+            <div className="p-4 rounded-2xl bg-emerald-950/30 border border-emerald-800/50 space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 text-emerald-300 text-xs font-bold">
+                  <Smartphone className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span>Immediate Android System Handshake</span>
+                </div>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-900/60 border border-emerald-700/60 text-emerald-200">
+                  Ready
+                </span>
+              </div>
+
+              <p className="text-xs text-neutral-300 leading-relaxed">
+                Tap <strong>"Launch Installer"</strong> below to open Android's native system prompt directly on your phone.
+              </p>
+
+              {/* 1-Tap Action Pills */}
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                <button
+                  onClick={handleLaunchInstall}
+                  className="px-4 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 active:scale-95 rounded-xl shadow-md transition-all flex items-center gap-2 cursor-pointer"
+                >
+                  <Smartphone className="w-3.5 h-3.5" />
+                  <span>Launch Installer Now</span>
+                </button>
+
+                {progress.packageId && (
+                  <button
+                    onClick={handleUninstall}
+                    className="px-3.5 py-2 text-xs font-semibold text-rose-300 hover:text-white bg-rose-950/60 hover:bg-rose-900 border border-rose-800/50 rounded-xl transition-colors flex items-center gap-1.5 cursor-pointer"
+                    title="Trigger Android system uninstaller dialog"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Uninstall App</span>
+                  </button>
+                )}
+              </div>
             </div>
-            <ol className="text-xs text-neutral-300 space-y-1.5 list-decimal list-inside leading-relaxed">
-              <li>Open your phone's notification bar or <strong>Files / Downloads</strong> folder.</li>
-              <li>Tap <strong className="text-white font-mono">{progress.fileName}</strong>.</li>
-              <li>If asked to allow unknown apps, tap <strong>Settings &gt; Allow from this source</strong>.</li>
-              <li>Tap <strong>Install</strong> to enjoy {progress.appName}!</li>
-            </ol>
+
+            {/* Uninstall notice display */}
+            {uninstallNotice && (
+              <div className="p-3 bg-amber-950/30 border border-amber-800/50 rounded-xl text-xs text-amber-200 flex items-center gap-2 animate-fade-in">
+                <Trash2 className="w-4 h-4 text-amber-400 shrink-0" />
+                <span>{uninstallNotice}</span>
+              </div>
+            )}
+
+            {/* Companion Promo Strip */}
+            {onOpenCompanionModal && (
+              <div className="p-3 bg-neutral-950/80 border border-neutral-800 rounded-xl flex items-center justify-between gap-3 text-xs">
+                <div className="flex items-center gap-2 text-neutral-300 min-w-0">
+                  <Zap className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                  <span className="truncate">Want fully automatic installs with zero taps?</span>
+                </div>
+                <button
+                  onClick={onOpenCompanionModal}
+                  className="text-cyan-400 hover:text-cyan-300 font-bold shrink-0 underline text-[11px] cursor-pointer"
+                >
+                  Get Zuzu Client
+                </button>
+              </div>
+            )}
           </div>
         )}
 
@@ -225,7 +310,7 @@ export const DownloadProgressModal: React.FC<DownloadProgressModalProps> = ({
             <button
               onClick={onSaveAgain}
               className="px-4 py-2.5 text-xs font-semibold text-neutral-200 bg-neutral-800 hover:bg-neutral-700 rounded-xl transition-colors flex items-center gap-1.5 cursor-pointer"
-              title="Save another copy to downloads"
+              title="Save another copy to downloads folder"
             >
               <FolderDown className="w-3.5 h-3.5 text-cyan-400" />
               <span>Save Again</span>
@@ -236,7 +321,7 @@ export const DownloadProgressModal: React.FC<DownloadProgressModalProps> = ({
             onClick={isCompleted || isError ? onClose : onCancel || onClose}
             className={`px-5 py-2.5 text-xs font-bold rounded-xl transition-all cursor-pointer ${
               isCompleted
-                ? 'bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white shadow-lg shadow-cyan-950/40'
+                ? 'bg-neutral-800 hover:bg-neutral-700 text-neutral-200'
                 : 'bg-neutral-800 hover:bg-neutral-700 text-neutral-300'
             }`}
           >
@@ -247,3 +332,4 @@ export const DownloadProgressModal: React.FC<DownloadProgressModalProps> = ({
     </div>
   );
 };
+

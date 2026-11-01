@@ -1,9 +1,9 @@
 import React from 'react';
-import { ShieldCheck, Smartphone, Lock, UploadCloud, Layers } from 'lucide-react';
+import { ShieldCheck, Smartphone, Lock, UploadCloud, Layers, Tv } from 'lucide-react';
 import { AdminUser } from '../types';
 
 interface FooterProps {
-  onNavigate: (view: 'store' | 'upload') => void;
+  onNavigate: (view: 'store' | 'upload' | 'tv') => void;
   onOpenGuide: () => void;
   appsCount: number;
   admin?: AdminUser | null;
@@ -25,16 +25,20 @@ export const Footer: React.FC<FooterProps> = ({
           <div className="space-y-3 md:col-span-1">
             <div className="flex items-center gap-2.5">
               <img
-                src="/zuzustore-logo.png"
+                src="/public/assets/aistudio/file_00000000212c8208b64f5bd04e8c4ee8_95799501.png"
                 alt="ZuzuStore"
-                className="w-7 h-7 rounded-lg object-contain shadow-sm border border-cyan-400/40"
+                className="w-8 h-8 rounded-lg object-contain shadow-sm border border-amber-400/50"
+                onError={(e) => {
+                  e.currentTarget.onerror = null;
+                  e.currentTarget.src = '/zuzustore-logo.png';
+                }}
               />
-              <span className="font-black text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 via-sky-300 to-blue-400 text-sm tracking-tight">
+              <span className="font-black text-transparent bg-clip-text bg-gradient-to-r from-amber-400 via-amber-300 to-red-500 text-sm tracking-tight">
                 ZuzuStore
               </span>
             </div>
             <p className="text-neutral-400 leading-relaxed text-[11px]">
-              Direct Android APK distribution portal. Fast, clean, direct package downloads with zero accounts or registrations required.
+              Direct Android &amp; Smart TV APK distribution portal. Fast, clean, direct package downloads with zero accounts or registrations required.
             </p>
           </div>
 
@@ -43,7 +47,16 @@ export const Footer: React.FC<FooterProps> = ({
             <h4 className="text-white font-semibold uppercase tracking-wider text-[11px]">Navigation</h4>
             <ul className="space-y-1.5 text-[11px]">
               <li>
-                <a href="#catalog" className="hover:text-cyan-400 transition-colors">
+                <button
+                  onClick={() => onNavigate('tv')}
+                  className="hover:text-amber-400 transition-colors text-left flex items-center gap-1.5 text-neutral-200 cursor-pointer"
+                >
+                  <Tv className="w-3 h-3 text-red-500" />
+                  <span>Smart TV Page</span>
+                </button>
+              </li>
+              <li>
+                <a href="#catalog" onClick={() => onNavigate('store')} className="hover:text-cyan-400 transition-colors">
                   Browse Catalog ({appsCount} {appsCount === 1 ? 'app' : 'apps'})
                 </a>
               </li>

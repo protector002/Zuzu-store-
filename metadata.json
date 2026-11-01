@@ -1,6 +1,6 @@
 {
   "name": "ZuzuStore - Official App & APK Hub",
-  "description": "ZuzuStore - Official mobile application and APK distribution portal with direct downloads and publisher management.",
+  "description": "ZuzuStore - Official Android App and Smart TV APK distribution portal with direct in-browser downloads, Leanback TV sideloading, and publisher management.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

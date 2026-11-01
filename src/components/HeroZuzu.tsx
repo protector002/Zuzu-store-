@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Download, QrCode, ShieldCheck, CheckCircle2, Smartphone, Laptop, HelpCircle, Sparkles } from 'lucide-react';
+import { Download, QrCode, ShieldCheck, CheckCircle2, Smartphone, Laptop, HelpCircle, Sparkles, Tv, ArrowRight } from 'lucide-react';
 import { StoreApp, Platform } from '../types';
 
 interface HeroZuzuProps {
@@ -9,6 +9,7 @@ interface HeroZuzuProps {
   onOpenGuide: (platform: Platform) => void;
   onViewDetails: (app: StoreApp) => void;
   onPreviewScreenshot: (index: number) => void;
+  onNavigateToTv?: () => void;
 }
 
 export const HeroZuzu: React.FC<HeroZuzuProps> = ({
@@ -18,6 +19,7 @@ export const HeroZuzu: React.FC<HeroZuzuProps> = ({
   onOpenGuide,
   onViewDetails,
   onPreviewScreenshot,
+  onNavigateToTv,
 }) => {
   const [selectedPlatform, setSelectedPlatform] = useState<Platform>('Android');
   const [isDownloading, setIsDownloading] = useState(false);
@@ -41,8 +43,8 @@ export const HeroZuzu: React.FC<HeroZuzuProps> = ({
 
   return (
     <section id="featured-app" className="relative pt-6 sm:pt-10 pb-14 sm:pb-16 border-b border-neutral-800/60 overflow-hidden">
-      {/* Background glow effect */}
-      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[350px] bg-gradient-to-b from-indigo-900/25 via-cyan-900/15 to-transparent blur-3xl pointer-events-none -z-10" />
+      {/* Background glow effect matching brand colors */}
+      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[350px] bg-gradient-to-b from-amber-900/25 via-red-900/15 to-transparent blur-3xl pointer-events-none -z-10" />
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-center">
@@ -50,8 +52,8 @@ export const HeroZuzu: React.FC<HeroZuzuProps> = ({
           <div className="lg:col-span-7 space-y-5">
             {/* Tagline pill */}
             <div className="flex flex-wrap items-center gap-2 text-xs">
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-cyan-950/70 border border-cyan-800/60 text-cyan-300 font-semibold text-[11px]">
-                <Sparkles className="w-3 h-3 text-cyan-400" />
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-950/70 border border-amber-700/60 text-amber-300 font-semibold text-[11px]">
+                <Sparkles className="w-3 h-3 text-amber-400" />
                 <span>Featured Application</span>
               </span>
               <span className="text-neutral-500">•</span>
@@ -91,8 +93,8 @@ export const HeroZuzu: React.FC<HeroZuzuProps> = ({
               <span className="text-neutral-600">•</span>
               <span>{matchingRelease?.minOS || 'Android 8.0+'}</span>
               <span className="text-neutral-600">•</span>
-              <span className="tabular-nums font-mono text-cyan-300 font-semibold flex items-center gap-1.5">
-                <Download className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+              <span className="tabular-nums font-mono text-amber-300 font-semibold flex items-center gap-1.5">
+                <Download className="w-3.5 h-3.5 text-amber-400 shrink-0" />
                 <span>{app.downloadsTotal.toLocaleString()} People Downloaded</span>
               </span>
               {app.ratingCount > 0 && (
@@ -124,15 +126,35 @@ export const HeroZuzu: React.FC<HeroZuzuProps> = ({
                         }`}
                       >
                         {platform === 'Android' ? (
-                          <Smartphone className="w-3.5 h-3.5 text-cyan-400" />
+                          <Smartphone className="w-3.5 h-3.5 text-amber-400" />
+                        ) : platform === 'Android TV' || platform === 'Fire TV' ? (
+                          <Tv className="w-3.5 h-3.5 text-red-400" />
                         ) : (
                           <Laptop className="w-3.5 h-3.5 text-neutral-400" />
                         )}
-                        <span>{platform === 'Android' ? 'Android APK' : platform}</span>
+                        <span>{platform === 'Android' ? 'Android Phone' : platform}</span>
                       </button>
                     );
                   })}
                 </div>
+              </div>
+            )}
+
+            {/* TV Version Quick Banner */}
+            {onNavigateToTv && (
+              <div className="pt-1">
+                <button
+                  type="button"
+                  onClick={onNavigateToTv}
+                  className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-neutral-900/90 hover:bg-neutral-800 border border-amber-500/30 text-xs text-neutral-300 hover:text-white transition-all cursor-pointer group shadow-sm"
+                >
+                  <Tv className="w-4 h-4 text-red-500" />
+                  <span>Now also on <strong className="text-white">Smart TV &amp; Fire TV</strong></span>
+                  <span className="text-amber-400 font-semibold group-hover:translate-x-1 transition-transform flex items-center gap-0.5">
+                    <span>Open Smart TV Page</span>
+                    <ArrowRight className="w-3 h-3" />
+                  </span>
+                </button>
               </div>
             )}
 
@@ -141,7 +163,7 @@ export const HeroZuzu: React.FC<HeroZuzuProps> = ({
               <button
                 onClick={handleDownloadClick}
                 disabled={isDownloading}
-                className="px-6 py-3.5 text-xs sm:text-sm font-bold text-white bg-gradient-to-r from-cyan-500 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 rounded-xl shadow-lg shadow-cyan-950/40 transition-all flex items-center gap-2.5 active:scale-95 disabled:opacity-75"
+                className="px-6 py-3.5 text-xs sm:text-sm font-extrabold text-white bg-gradient-to-r from-amber-500 via-amber-600 to-red-600 hover:from-amber-400 hover:to-red-500 rounded-xl shadow-lg shadow-red-950/40 transition-all flex items-center gap-2.5 active:scale-95 disabled:opacity-75 cursor-pointer"
               >
                 {downloadSuccess ? (
                   <>
@@ -163,10 +185,10 @@ export const HeroZuzu: React.FC<HeroZuzuProps> = ({
 
               <button
                 onClick={() => onOpenQR(app)}
-                className="px-4 py-3.5 text-xs sm:text-sm font-medium text-neutral-200 bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 rounded-xl transition-colors flex items-center gap-2"
+                className="px-4 py-3.5 text-xs sm:text-sm font-medium text-neutral-200 bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 rounded-xl transition-colors flex items-center gap-2 cursor-pointer"
                 title="Scan QR code with phone camera to download directly to your mobile"
               >
-                <QrCode className="w-4 h-4 text-cyan-400" />
+                <QrCode className="w-4 h-4 text-amber-400" />
                 <span>Scan for Phone</span>
               </button>
 
