@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Download, UploadCloud, Smartphone, ShieldCheck, LogIn, LogOut, Tv } from 'lucide-react';
+import { Download, UploadCloud, Smartphone, ShieldCheck, LogIn, LogOut, Tv, Check, Sparkles, Flame } from 'lucide-react';
 import { AdminUser } from '../types';
 
 interface HeaderProps {
@@ -87,25 +87,56 @@ export const Header: React.FC<HeaderProps> = ({
         <nav className="hidden lg:flex items-center gap-5 text-xs sm:text-sm font-medium text-neutral-300">
           <button
             onClick={() => onNavigate('store')}
-            className={`transition-colors whitespace-nowrap flex items-center gap-1.5 cursor-pointer py-1 ${
-              currentView === 'store' ? 'text-amber-400 font-bold border-b-2 border-amber-400' : 'text-neutral-400 hover:text-white'
+            className={`group relative px-3 py-1.5 rounded-xl font-bold transition-all duration-300 whitespace-nowrap flex items-center gap-2 cursor-pointer ${
+              currentView === 'store'
+                ? 'bg-amber-500/15 text-amber-300 border border-amber-500/50 shadow-sm shadow-amber-500/20'
+                : 'text-neutral-400 hover:text-white hover:bg-neutral-900 border border-transparent'
             }`}
           >
-            <Smartphone className="w-3.5 h-3.5 text-amber-400" />
-            <span>Android App</span>
+            {currentView === 'store' ? (
+              <span className="w-4 h-4 rounded-full bg-amber-400 text-neutral-950 flex items-center justify-center shrink-0 shadow-xs animate-fade-in">
+                <Check className="w-2.5 h-2.5 stroke-[3]" />
+              </span>
+            ) : (
+              <Smartphone className="w-4 h-4 text-amber-400 shrink-0 group-hover:scale-110 transition-transform" />
+            )}
+            <span>Android Phone</span>
+            {currentView === 'store' && (
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
+            )}
           </button>
 
           <button
             onClick={() => onNavigate('tv')}
-            className={`transition-colors whitespace-nowrap flex items-center gap-1.5 cursor-pointer py-1 ${
-              currentView === 'tv' ? 'text-red-400 font-bold border-b-2 border-red-500' : 'text-neutral-400 hover:text-white'
+            className={`group relative px-3 py-1.5 rounded-xl font-bold transition-all duration-300 whitespace-nowrap flex items-center gap-2 cursor-pointer ${
+              currentView === 'tv'
+                ? 'bg-red-500/20 text-red-300 border border-red-500/60 shadow-sm shadow-red-500/25'
+                : 'text-neutral-400 hover:text-white hover:bg-neutral-900 border border-transparent animate-eyecatch-wiggle'
             }`}
           >
-            <Tv className="w-3.5 h-3.5 text-red-500" />
+            {currentView === 'tv' ? (
+              <span className="w-4 h-4 rounded-full bg-red-500 text-white flex items-center justify-center shrink-0 shadow-xs animate-fade-in">
+                <Check className="w-2.5 h-2.5 stroke-[3]" />
+              </span>
+            ) : (
+              <div className="relative shrink-0 flex items-center">
+                <Tv className="w-4 h-4 text-red-500 group-hover:scale-110 transition-transform" />
+                <span className="absolute -top-1 -right-1 flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-80" />
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500" />
+                </span>
+              </div>
+            )}
             <span>Smart TV</span>
-            <span className="text-[10px] bg-red-950/80 border border-red-700/60 text-red-300 px-1.5 py-0.2 rounded font-semibold">
-              TV App
-            </span>
+            {currentView === 'tv' ? (
+              <span className="text-[10px] bg-red-500/30 border border-red-500/50 text-red-200 px-1.5 py-0.5 rounded-full font-semibold">
+                Checked
+              </span>
+            ) : (
+              <span className="text-[10px] bg-gradient-to-r from-red-600 to-amber-500 text-white px-2 py-0.5 rounded-full font-extrabold shadow-xs animate-pulse">
+                HOT
+              </span>
+            )}
           </button>
 
           {hasApps && (
@@ -165,33 +196,82 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Right Action Zone */}
         <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-          {/* Dual Platform Switcher: Android App vs Smart TV */}
-          <div className="flex items-center bg-neutral-900 border border-neutral-800 rounded-xl p-1 text-xs shadow-inner">
+          {/* Dual Platform Switcher: Android Phone vs Smart TV with Eye-Catching Check Animation */}
+          <div className="relative flex items-center bg-neutral-900/90 border border-neutral-700/80 rounded-2xl p-1 text-xs shadow-xl shadow-black/40 backdrop-blur-md">
+            {/* Phone Button */}
             <button
               onClick={() => onNavigate('store')}
-              className={`px-2.5 sm:px-3 py-1 rounded-lg font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+              className={`group relative px-2.5 sm:px-3.5 py-1.5 rounded-xl font-black flex items-center gap-1.5 sm:gap-2 transition-all duration-300 cursor-pointer overflow-hidden ${
                 currentView === 'store'
-                  ? 'bg-gradient-to-r from-amber-500 to-red-600 text-white shadow-sm'
-                  : 'text-neutral-400 hover:text-white'
+                  ? 'bg-gradient-to-r from-amber-400 via-amber-500 to-orange-500 text-neutral-950 shadow-md shadow-amber-500/30 ring-2 ring-amber-300/80 scale-100 animate-glow-amber'
+                  : 'text-neutral-300 hover:text-white hover:bg-neutral-800/80 hover:scale-105 active:scale-95'
               }`}
-              title="View Android Phone & Tablet App storefront"
+              title="View Android Phone Storefront"
             >
-              <Smartphone className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Android App</span>
-              <span className="sm:hidden">Phone</span>
+              {/* Shimmer sweep on active/hover */}
+              <span className="absolute inset-0 w-1/2 h-full bg-gradient-to-r from-transparent via-white/30 to-transparent pointer-events-none -translate-x-full group-hover:translate-x-[300%] transition-transform duration-700" />
+
+              {currentView === 'store' ? (
+                <span className="flex items-center justify-center w-4 h-4 rounded-full bg-neutral-950 text-amber-400 shadow-xs animate-fade-in shrink-0">
+                  <Check className="w-2.5 h-2.5 stroke-[3] animate-bounce" />
+                </span>
+              ) : (
+                <Smartphone className="w-3.5 h-3.5 text-amber-400 shrink-0 group-hover:rotate-12 transition-transform duration-300" />
+              )}
+
+              <span className="tracking-tight font-extrabold">
+                <span className="hidden sm:inline">Phone</span>
+                <span className="sm:hidden">Phone</span>
+              </span>
+
+              {currentView === 'store' ? (
+                <span className="hidden md:inline-flex text-[9px] font-black uppercase tracking-wider bg-neutral-950/25 px-1.5 py-0.5 rounded text-neutral-950">
+                  ✓ Active
+                </span>
+              ) : null}
             </button>
+
+            {/* TV Button with eye-catching check and attract animation */}
             <button
               onClick={() => onNavigate('tv')}
-              className={`px-2.5 sm:px-3 py-1 rounded-lg font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+              className={`group relative px-2.5 sm:px-3.5 py-1.5 rounded-xl font-black flex items-center gap-1.5 sm:gap-2 transition-all duration-300 cursor-pointer overflow-hidden ${
                 currentView === 'tv'
-                  ? 'bg-gradient-to-r from-red-600 to-amber-500 text-white shadow-sm'
-                  : 'text-neutral-400 hover:text-white'
+                  ? 'bg-gradient-to-r from-red-600 via-rose-600 to-amber-500 text-white shadow-md shadow-red-600/35 ring-2 ring-red-400/80 scale-100 animate-glow-red'
+                  : 'text-neutral-300 hover:text-white hover:bg-neutral-800/80 hover:scale-105 active:scale-95 border border-red-500/40 bg-red-950/30 animate-eyecatch-wiggle'
               }`}
-              title="View Smart TV & Fire TV App page"
+              title="View Smart TV & Fire TV Page"
             >
-              <Tv className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Smart TV</span>
-              <span className="sm:hidden">TV</span>
+              {/* Shimmer beam sweeps across TV button continuously to attract clicks */}
+              <span className="absolute inset-0 w-2/3 h-full bg-gradient-to-r from-transparent via-white/35 to-transparent pointer-events-none animate-shimmer-sweep" />
+
+              {currentView === 'tv' ? (
+                <span className="flex items-center justify-center w-4 h-4 rounded-full bg-white text-red-600 shadow-xs animate-fade-in shrink-0">
+                  <Check className="w-2.5 h-2.5 stroke-[3] animate-bounce" />
+                </span>
+              ) : (
+                <div className="relative shrink-0 flex items-center">
+                  <Tv className="w-3.5 h-3.5 text-red-500 group-hover:scale-110 transition-transform duration-300" />
+                  <span className="absolute -top-1 -right-1 flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-80" />
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500" />
+                  </span>
+                </div>
+              )}
+
+              <span className="tracking-tight font-extrabold">
+                <span className="hidden sm:inline">Smart TV</span>
+                <span className="sm:hidden">TV</span>
+              </span>
+
+              {currentView === 'tv' ? (
+                <span className="hidden md:inline-flex text-[9px] font-black uppercase tracking-wider bg-white/20 px-1.5 py-0.5 rounded text-white">
+                  ✓ Active
+                </span>
+              ) : (
+                <span className="text-[9px] font-black uppercase tracking-wider bg-gradient-to-r from-red-500 to-amber-500 text-white px-1.5 py-0.5 rounded-full shadow-xs animate-pulse">
+                  HOT
+                </span>
+              )}
             </button>
           </div>
 

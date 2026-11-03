@@ -35,6 +35,54 @@
   }
 }
 
+@keyframes shimmerLight {
+  0% {
+    transform: translateX(-150%) skewX(-20deg);
+  }
+  20%, 100% {
+    transform: translateX(250%) skewX(-20deg);
+  }
+}
+
+@keyframes eyeCatchWiggle {
+  0%, 100% {
+    transform: rotate(0deg) scale(1);
+  }
+  2% {
+    transform: rotate(-4deg) scale(1.05);
+  }
+  4% {
+    transform: rotate(4deg) scale(1.05);
+  }
+  6% {
+    transform: rotate(-3deg) scale(1.04);
+  }
+  8% {
+    transform: rotate(2deg) scale(1.02);
+  }
+  10% {
+    transform: rotate(0deg) scale(1);
+  }
+}
+
+@keyframes pulseGlowRed {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4), 0 4px 14px rgba(220, 38, 38, 0.3);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(239, 68, 68, 0), 0 6px 20px rgba(239, 68, 68, 0.5);
+  }
+}
+
+@keyframes pulseGlowAmber {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.4), 0 4px 14px rgba(217, 119, 6, 0.3);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(245, 158, 11, 0), 0 6px 20px rgba(245, 158, 11, 0.5);
+  }
+}
+
 .animate-fade-in {
   animation: fadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
@@ -42,3 +90,20 @@
 .animate-slide-up {
   animation: slideUp 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
+
+.animate-shimmer-sweep {
+  animation: shimmerLight 4.5s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+.animate-eyecatch-wiggle {
+  animation: eyeCatchWiggle 5s ease-in-out infinite;
+}
+
+.animate-glow-amber {
+  animation: pulseGlowAmber 2.8s ease-in-out infinite;
+}
+
+.animate-glow-red {
+  animation: pulseGlowRed 2.8s ease-in-out infinite;
+}
+
