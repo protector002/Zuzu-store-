@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Download, UploadCloud, Smartphone, ShieldCheck, LogIn, LogOut, Zap, Tv } from 'lucide-react';
+import { Download, UploadCloud, Smartphone, ShieldCheck, LogIn, LogOut, Tv } from 'lucide-react';
 import { AdminUser } from '../types';
 
 interface HeaderProps {
@@ -13,7 +13,6 @@ interface HeaderProps {
   onOpenLoginModal: () => void;
   onLogout: () => void;
   onSecretAdminTrigger?: () => void;
-  onOpenCompanionModal?: () => void;
 }
 
 
@@ -28,7 +27,6 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenLoginModal,
   onLogout,
   onSecretAdminTrigger,
-  onOpenCompanionModal,
 }) => {
 
   // Discreet secret logo multi-tap (3 taps within 2 seconds unlocks admin login modal)
@@ -208,19 +206,6 @@ export const Header: React.FC<HeaderProps> = ({
             </span>
             <span className="text-[11px] text-neutral-400 hidden sm:inline">downloads</span>
           </div>
-
-          {/* Play Store Mode / Companion Client Quick Link */}
-          {onOpenCompanionModal && (
-            <button
-              onClick={onOpenCompanionModal}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-amber-300 bg-amber-950/60 hover:bg-amber-900/60 border border-amber-800/60 rounded-lg transition-colors whitespace-nowrap shadow-sm cursor-pointer"
-              title="Automate installs & uninstalls with Zuzu Store Companion client"
-            >
-              <Zap className="w-3.5 h-3.5 text-amber-400" />
-              <span className="hidden sm:inline">Play Store Mode</span>
-              <span className="sm:hidden">Auto Install</span>
-            </button>
-          )}
 
           {/* Quick Direct Download Button if apps exist - public for all visitors */}
           {hasApps && onQuickDownload && (

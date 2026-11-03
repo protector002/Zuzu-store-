@@ -114,12 +114,4 @@ export interface DownloadProgressState {
   packageId?: string;
 }
 
-export interface InstalledAppRecord {
-  packageId: string;
-  name: string;
-  version: string;
-  installedAt: string;
-  fileName?: string;
-}
-
 

@@ -1,7 +1,6 @@
-import React, { useState, useEffect } from 'react';
-import { Search, Download, Star, QrCode, Smartphone, Laptop, Check, TrendingUp, CheckCircle2 } from 'lucide-react';
+import React, { useState } from 'react';
+import { Search, Download, Star, QrCode, Smartphone, Laptop, Check, TrendingUp } from 'lucide-react';
 import { StoreApp, AppCategory, Platform, AdminUser } from '../types';
-import { getInstalledApps } from '../utils/androidBridge';
 
 interface AppCatalogProps {
   apps: StoreApp[];
@@ -36,34 +35,6 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
   const [selectedPlatform, setSelectedPlatform] = useState<'All' | Platform>('All');
   const [sortBy, setSortBy] = useState<'downloads' | 'latest' | 'rating'>('downloads');
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
-
-  // Track apps currently installed on this device
-  const [installedMap, setInstalledMap] = useState<Record<string, string>>(() => {
-    const records = getInstalledApps();
-    const map: Record<string, string> = {};
-    Object.values(records).forEach((item) => {
-      map[item.packageId.toLowerCase()] = item.version;
-    });
-    return map;
-  });
-
-  useEffect(() => {
-    const refreshInstalled = () => {
-      const records = getInstalledApps();
-      const map: Record<string, string> = {};
-      Object.values(records).forEach((item) => {
-        map[item.packageId.toLowerCase()] = item.version;
-      });
-      setInstalledMap(map);
-    };
-
-    window.addEventListener('zuzu_installed_apps_changed', refreshInstalled);
-    window.addEventListener('storage', refreshInstalled);
-    return () => {
-      window.removeEventListener('zuzu_installed_apps_changed', refreshInstalled);
-      window.removeEventListener('storage', refreshInstalled);
-    };
-  }, []);
 
   // Filter apps
   const filteredApps = apps
@@ -254,21 +225,15 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
             const isCurrentlyDownloading = downloadingId === app.id;
             const latestRelease = app.releases[0];
             const fileSize = latestRelease?.fileSize || '32 MB';
-            const pkgKey = (app.packageId || '').toLowerCase();
-            const isInstalled = Boolean(pkgKey && installedMap[pkgKey]);
-            const installedVer = pkgKey ? installedMap[pkgKey] : undefined;
-            const hasUpdate = isInstalled && installedVer && installedVer !== app.currentVersion;
 
             return (
               <div
                 key={app.id}
                 onClick={() => onSelectApp(app)}
-                className={`group relative bg-neutral-900/70 hover:bg-neutral-900 border rounded-2xl p-5 transition-all cursor-pointer flex flex-col justify-between shadow-sm hover:shadow-xl hover:-translate-y-0.5 duration-200 ${
-                  isInstalled ? 'border-emerald-500/30' : 'border-neutral-800 hover:border-neutral-700/80'
-                }`}
+                className="group relative bg-neutral-900/70 hover:bg-neutral-900 border border-neutral-800 hover:border-neutral-700/80 rounded-2xl p-5 transition-all cursor-pointer flex flex-col justify-between shadow-sm hover:shadow-xl hover:-translate-y-0.5 duration-200"
               >
                 <div>
-                  {/* Top line: Icon + Title + Version + Installed Badge */}
+                  {/* Top line: Icon + Title + Version */}
                   <div className="flex items-start gap-4">
                     <img
                       src={app.iconUrl || '/zuzustore-logo.png'}
@@ -285,13 +250,7 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
                         <h3 className="text-base font-bold text-white truncate group-hover:text-cyan-400 transition-colors">
                           {app.name}
                         </h3>
-                        {isInstalled && (
-                          <span className="text-[10px] text-emerald-300 font-semibold bg-emerald-950/70 px-1.5 py-0.5 rounded-md border border-emerald-500/40 shrink-0 flex items-center gap-0.5">
-                            <CheckCircle2 className="w-2.5 h-2.5 text-emerald-400 shrink-0" />
-                            <span>{hasUpdate ? `Update` : `Installed`}</span>
-                          </span>
-                        )}
-                        {app.isOfficial && !isInstalled && (
+                        {app.isOfficial && (
                           <span className="text-[10px] text-cyan-400 font-semibold bg-cyan-950/60 px-1.5 py-0.2 rounded border border-cyan-800/50 shrink-0">
                             Official
                           </span>
@@ -354,10 +313,6 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
                       className={`px-3.5 py-1.5 text-xs font-bold text-white active:scale-95 rounded-lg transition-colors flex items-center gap-1.5 shadow-sm cursor-pointer ${
                         isCurrentlyDownloading
                           ? 'bg-neutral-700'
-                          : isInstalled
-                          ? hasUpdate
-                            ? 'bg-amber-600 hover:bg-amber-500'
-                            : 'bg-emerald-700 hover:bg-emerald-600'
                           : 'bg-gradient-to-r from-amber-500 to-red-600 hover:from-amber-400 hover:to-red-500'
                       }`}
                     >
@@ -366,18 +321,6 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
                           <Check className="w-3.5 h-3.5 text-emerald-300" />
                           <span>Downloading...</span>
                         </>
-                      ) : isInstalled ? (
-                        hasUpdate ? (
-                          <>
-                            <Download className="w-3.5 h-3.5" />
-                            <span>Update APK</span>
-                          </>
-                        ) : (
-                          <>
-                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-300" />
-                            <span>Installed</span>
-                          </>
-                        )
                       ) : (
                         <>
                           <Download className="w-3.5 h-3.5" />

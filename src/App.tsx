@@ -11,7 +11,6 @@ import { QRModal } from './components/QRModal';
 import { InstallGuideModal } from './components/InstallGuideModal';
 import { ScreenshotModal } from './components/ScreenshotModal';
 import { DownloadProgressModal } from './components/DownloadProgressModal';
-import { CompanionStoreModal } from './components/CompanionStoreModal';
 import { TvPage } from './components/TvPage';
 import { Footer } from './components/Footer';
 import {
@@ -33,12 +32,6 @@ import {
 } from './services/api';
 import { StoreApp, AppRelease, Platform, AdminUser, DownloadProgressState } from './types';
 import { getApkBlob, deleteApkBlob } from './utils/fileStorage';
-import {
-  recordAppInstalled,
-  recordAppUninstalled,
-  triggerAndroidInstall,
-  triggerAndroidUninstall
-} from './utils/androidBridge';
 import { CheckCircle2, ArrowRight } from 'lucide-react';
 
 
@@ -67,9 +60,6 @@ export default function App() {
   const [isScreenshotOpen, setIsScreenshotOpen] = useState(false);
   const [activeScreenshotIndex, setActiveScreenshotIndex] = useState(0);
   const [screenshotTargetApp, setScreenshotTargetApp] = useState<StoreApp | null>(null);
-
-  // Zuzu Store Companion Client Modal (Play Store mode)
-  const [isCompanionModalOpen, setIsCompanionModalOpen] = useState(false);
 
   // Toast Notification
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -361,11 +351,13 @@ export default function App() {
         controller.signal
       );
 
-      // Trigger standard browser download & Android package installer prompt directly
-      triggerAndroidInstall(blobUrl, fileName);
-
-      // Record as installed in local device registry
-      recordAppInstalled(targetApp.packageId, targetApp.name, targetRelease?.version || '1.0.0', fileName);
+      // Automatically start saving downloaded APK to the user's device
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
 
       setDownloadProgress((prev) => ({
         ...prev,
@@ -377,7 +369,7 @@ export default function App() {
         timeRemainingFormatted: '0s',
         blobUrl
       }));
-      showToast(`Downloaded ${fileName} successfully! Launching installer...`);
+      showToast(`Downloaded ${fileName} successfully!`);
     } catch (err: any) {
       if (err.name === 'AbortError') {
         setDownloadProgress((prev) => ({ ...prev, isOpen: false, status: 'idle' }));
@@ -398,8 +390,12 @@ export default function App() {
             cleanUrl = `https://drive.usercontent.google.com/download?id=${gdMatch[1]}&export=download&confirm=t`;
           }
 
-          triggerAndroidInstall(cleanUrl, fileName);
-          recordAppInstalled(targetApp.packageId, targetApp.name, targetRelease?.version || '1.0.0', fileName);
+          const mirrorLink = document.createElement('a');
+          mirrorLink.href = cleanUrl;
+          mirrorLink.download = fileName;
+          document.body.appendChild(mirrorLink);
+          mirrorLink.click();
+          document.body.removeChild(mirrorLink);
 
           setDownloadProgress((prev) => ({
             ...prev,
@@ -446,19 +442,14 @@ export default function App() {
 
   const handleSaveAgain = () => {
     if (downloadProgress.blobUrl) {
-      triggerAndroidInstall(downloadProgress.blobUrl, downloadProgress.fileName);
-      showToast(`Launching installer for ${downloadProgress.fileName}!`);
+      const link = document.createElement('a');
+      link.href = downloadProgress.blobUrl;
+      link.download = downloadProgress.fileName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      showToast(`Saved another copy of ${downloadProgress.fileName}!`);
     }
-  };
-
-  const handleDownloadCompanionClient = () => {
-    const link = document.createElement('a');
-    link.href = '/api/zuzu-store-app/download';
-    link.download = 'ZuzuStore-Client-v2.4.0.apk';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    showToast('Downloading Zuzu Store Companion Client APK...');
   };
 
 
@@ -586,7 +577,6 @@ export default function App() {
         onOpenLoginModal={() => setIsLoginModalOpen(true)}
         onLogout={handleLogout}
         onSecretAdminTrigger={handleOpenSecretAdmin}
-        onOpenCompanionModal={() => setIsCompanionModalOpen(true)}
       />
 
 
@@ -716,11 +706,6 @@ export default function App() {
                 onPreviewScreenshot={(idx) => openScreenshotPreview(selectedApp, idx)}
                 onDeleteRelease={(releaseId) => handleDeleteRelease(selectedApp.id, releaseId)}
                 onDeleteApp={() => handleDeleteApp(selectedApp.id)}
-                onOpenCompanionModal={() => setIsCompanionModalOpen(true)}
-                onTriggerUninstall={(pkg) => {
-                  recordAppUninstalled(pkg);
-                  showToast('Triggering Android uninstaller...');
-                }}
               />
 
             )}
@@ -826,18 +811,6 @@ export default function App() {
         onCancel={handleCancelDownload}
         onRetry={handleRetryDownload}
         onSaveAgain={handleSaveAgain}
-        onOpenCompanionModal={() => setIsCompanionModalOpen(true)}
-        onTriggerUninstall={(pkg) => {
-          recordAppUninstalled(pkg);
-          showToast('Triggering Android uninstaller...');
-        }}
-      />
-
-      {/* Zuzu Store Companion Client Modal (Play Store background mode) */}
-      <CompanionStoreModal
-        isOpen={isCompanionModalOpen}
-        onClose={() => setIsCompanionModalOpen(false)}
-        onDownloadClient={handleDownloadCompanionClient}
       />
 
 

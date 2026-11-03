@@ -19,16 +19,9 @@ import {
   Trash2,
   AlertTriangle,
   Smartphone,
-  Zap,
-  CheckCircle2,
   Tv
 } from 'lucide-react';
 import { StoreApp, AppRelease, Platform, AdminUser } from '../types';
-import {
-  isAppInstalled,
-  getInstalledVersion,
-  triggerAndroidUninstall
-} from '../utils/androidBridge';
 
 interface AppDetailViewProps {
   app: StoreApp;
@@ -41,8 +34,6 @@ interface AppDetailViewProps {
   onPreviewScreenshot: (index: number) => void;
   onDeleteRelease?: (releaseId: string) => Promise<any>;
   onDeleteApp?: () => Promise<void>;
-  onOpenCompanionModal?: () => void;
-  onTriggerUninstall?: (packageId: string) => void;
 }
 
 export const AppDetailView: React.FC<AppDetailViewProps> = ({
@@ -56,35 +47,11 @@ export const AppDetailView: React.FC<AppDetailViewProps> = ({
   onPreviewScreenshot,
   onDeleteRelease,
   onDeleteApp,
-  onOpenCompanionModal,
-  onTriggerUninstall,
 }) => {
-
   const [downloadingRelId, setDownloadingRelId] = useState<string | null>(null);
   const [showAllVersions, setShowAllVersions] = useState(false);
   const [showReviewForm, setShowReviewForm] = useState(false);
   const [copiedChecksum, setCopiedChecksum] = useState(false);
-  const [deviceInstalledVer, setDeviceInstalledVer] = useState<string | null>(() => getInstalledVersion(app.packageId));
-  const [uninstallNotice, setUninstallNotice] = useState<string | null>(null);
-
-  useEffect(() => {
-    const handler = () => {
-      setDeviceInstalledVer(getInstalledVersion(app.packageId));
-    };
-    window.addEventListener('zuzu_installed_apps_changed', handler);
-    return () => window.removeEventListener('zuzu_installed_apps_changed', handler);
-  }, [app.packageId]);
-
-  const handleDeviceUninstall = () => {
-    if (!app.packageId) return;
-    const res = triggerAndroidUninstall(app.packageId, app.name);
-    setUninstallNotice(res.message);
-    setDeviceInstalledVer(null);
-    if (onTriggerUninstall) {
-      onTriggerUninstall(app.packageId);
-    }
-    setTimeout(() => setUninstallNotice(null), 7000);
-  };
 
 
   // Deletion modal states
@@ -240,16 +207,6 @@ export const AppDetailView: React.FC<AppDetailViewProps> = ({
                 <span className="text-neutral-500 font-normal">({app.ratingCount} reviews)</span>
               </span>
 
-              {deviceInstalledVer && (
-                <>
-                  <span>•</span>
-                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-950 border border-emerald-800 text-emerald-300 font-semibold text-[11px]">
-                    <CheckCircle2 className="w-3 h-3 text-emerald-400" />
-                    <span>Installed on Device (v{deviceInstalledVer})</span>
-                  </span>
-                </>
-              )}
-
               {(app.supportedPlatforms.includes('Android TV') || app.isTvCompatible || primaryRelease?.platform === 'Android TV') && (
                 <>
                   <span>•</span>
@@ -276,40 +233,10 @@ export const AppDetailView: React.FC<AppDetailViewProps> = ({
                 ) : (
                   <>
                     <Download className="w-4 h-4" />
-                    <span>
-                      {deviceInstalledVer
-                        ? deviceInstalledVer !== primaryRelease?.version
-                          ? `Update to v${primaryRelease?.version}`
-                          : 'Re-install APK'
-                        : `Download APK (${primaryRelease?.fileSize || '34 MB'})`}
-                    </span>
+                    <span>Download APK ({primaryRelease?.fileSize || '34 MB'})</span>
                   </>
                 )}
               </button>
-
-              {/* Native Android Uninstall Trigger if installed */}
-              {deviceInstalledVer && (
-                <button
-                  onClick={handleDeviceUninstall}
-                  className="px-4 py-3.5 text-xs sm:text-sm font-semibold text-rose-300 hover:text-white bg-rose-950/60 hover:bg-rose-900 border border-rose-800/60 rounded-xl transition-all flex items-center gap-2 cursor-pointer shadow-sm"
-                  title="Trigger native Android uninstaller dialog"
-                >
-                  <Trash2 className="w-4 h-4 text-rose-400" />
-                  <span>Uninstall from Device</span>
-                </button>
-              )}
-
-              {/* Zuzu Companion Client Auto-Install Promotion */}
-              {onOpenCompanionModal && (
-                <button
-                  onClick={onOpenCompanionModal}
-                  className="px-4 py-3.5 text-xs sm:text-sm font-semibold text-amber-300 hover:text-white bg-amber-950/50 hover:bg-amber-900/70 border border-amber-800/60 rounded-xl transition-all flex items-center gap-2 cursor-pointer"
-                  title="Enable 100% automated background installs & uninstalls"
-                >
-                  <Zap className="w-4 h-4 text-amber-400" />
-                  <span>Automate Installs</span>
-                </button>
-              )}
 
               <button
                 onClick={() => onOpenQR(app, primaryRelease)}
@@ -333,14 +260,6 @@ export const AppDetailView: React.FC<AppDetailViewProps> = ({
                 </a>
               )}
             </div>
-
-            {/* Uninstall notice display */}
-            {uninstallNotice && (
-              <div className="p-3 bg-amber-950/30 border border-amber-800/50 rounded-xl text-xs text-amber-200 flex items-center gap-2 animate-fade-in mt-3">
-                <Trash2 className="w-4 h-4 text-amber-400 shrink-0" />
-                <span>{uninstallNotice}</span>
-              </div>
-            )}
 
             {/* Secondary actions & metrics row */}
             <div className="flex flex-wrap items-center gap-3 mt-4 pt-4 border-t border-neutral-800/60">

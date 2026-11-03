@@ -875,37 +875,6 @@ HOW TO INSTALL ON ANDROID:
   return res.send(buffer);
 });
 
-// ZUZU STORE COMPANION CLIENT APK DOWNLOAD ENDPOINT (PLAY STORE AUTOMATION AGENT)
-app.get('/api/zuzu-store-app/download', (req, res) => {
-  const fileName = 'ZuzuStore-Client-v2.4.0.apk';
-  const manifestContent = `==================================================================
-           ZUZU STORE - COMPANION CLIENT PACKAGE (v2.4.0)
-==================================================================
-APPLICATION:       Zuzu Store Companion Client
-PACKAGE ID:        com.zuzu.store.client
-VERSION:           2.4.0 (Build 240)
-PLATFORM:          Android (Android 8.0+)
-PERMISSIONS:       android.permission.REQUEST_INSTALL_PACKAGES
-                   android.permission.REQUEST_DELETE_PACKAGES
-                   android.permission.INTERNET
-SECURITY STATUS:   Verified Official Core Distribution
-DEVELOPER:         John Sseruwagi (Zuzu Store Lead)
-FEATURE:           Enables 100% automated background installation &
-                   uninstallation of verified packages directly to
-                   your Android device without manual file manager tapping.
-==================================================================
-HOW TO ACTIVATE PLAY STORE AUTOMATION:
-1. Tap "Install" when Android prompts to install ZuzuStore-Client.
-2. Open Zuzu Store Companion and allow "Install Unknown Apps".
-3. Return to the Zuzu Store web catalog—all apps now install automatically!
-==================================================================`;
-  const buffer = Buffer.from(manifestContent, 'utf-8');
-  res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
-  res.setHeader('Content-Type', 'application/vnd.android.package-archive');
-  res.setHeader('Content-Length', buffer.length);
-  return res.send(buffer);
-});
-
 // ZUZU TV EDITION APK DOWNLOAD ENDPOINT (FOR ANDROID TV, GOOGLE TV, FIRE TV & DOWNLOADER APP)
 app.get('/api/zuzu-tv-app/download', (req, res) => {
   const fileName = 'Zuzu-TV-Edition-v1.0.0.apk';

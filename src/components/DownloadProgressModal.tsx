@@ -1,24 +1,14 @@
-import React, { useState } from 'react';
+import React from 'react';
 import {
   Download,
   CheckCircle2,
   AlertCircle,
   X,
-  Smartphone,
   ShieldCheck,
   RefreshCw,
   FolderDown,
-  Trash2,
-  Zap,
-  Sparkles
 } from 'lucide-react';
 import { DownloadProgressState } from '../types';
-import {
-  triggerAndroidInstall,
-  triggerAndroidUninstall,
-  recordAppInstalled,
-  isAndroidDevice
-} from '../utils/androidBridge';
 
 interface DownloadProgressModalProps {
   progress: DownloadProgressState;
@@ -26,8 +16,6 @@ interface DownloadProgressModalProps {
   onCancel?: () => void;
   onRetry?: () => void;
   onSaveAgain?: () => void;
-  onOpenCompanionModal?: () => void;
-  onTriggerUninstall?: (packageId: string) => void;
 }
 
 export const DownloadProgressModal: React.FC<DownloadProgressModalProps> = ({
@@ -36,11 +24,7 @@ export const DownloadProgressModal: React.FC<DownloadProgressModalProps> = ({
   onCancel,
   onRetry,
   onSaveAgain,
-  onOpenCompanionModal,
-  onTriggerUninstall,
 }) => {
-  const [uninstallNotice, setUninstallNotice] = useState<string | null>(null);
-
   if (!progress.isOpen) return null;
 
   const isCompleted = progress.status === 'completed';
@@ -48,26 +32,6 @@ export const DownloadProgressModal: React.FC<DownloadProgressModalProps> = ({
   const isConnecting = progress.status === 'connecting';
   const isVerifying = progress.status === 'verifying';
   const isDownloading = progress.status === 'downloading';
-
-  const handleLaunchInstall = () => {
-    if (progress.blobUrl) {
-      triggerAndroidInstall(progress.blobUrl, progress.fileName);
-      if (progress.packageId) {
-        recordAppInstalled(progress.packageId, progress.appName, progress.version, progress.fileName);
-      }
-    } else if (onSaveAgain) {
-      onSaveAgain();
-    }
-  };
-
-  const handleUninstall = () => {
-    if (!progress.packageId) return;
-    const res = triggerAndroidUninstall(progress.packageId, progress.appName);
-    setUninstallNotice(res.message);
-    if (onTriggerUninstall) {
-      onTriggerUninstall(progress.packageId);
-    }
-  };
 
   return (
     <div
@@ -214,14 +178,14 @@ export const DownloadProgressModal: React.FC<DownloadProgressModalProps> = ({
           </div>
         </div>
 
-        {/* Success Guidance & 1-Tap OS Actions */}
+        {/* Success Guidance */}
         {isCompleted && (
           <div className="space-y-3 animate-fade-in">
-            <div className="p-4 rounded-2xl bg-emerald-950/30 border border-emerald-800/50 space-y-3">
+            <div className="p-4 rounded-2xl bg-emerald-950/30 border border-emerald-800/50 space-y-2">
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2 text-emerald-300 text-xs font-bold">
-                  <Smartphone className="w-4 h-4 text-emerald-400 shrink-0" />
-                  <span>Immediate Android System Handshake</span>
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span>APK Downloaded Successfully</span>
                 </div>
                 <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-900/60 border border-emerald-700/60 text-emerald-200">
                   Ready
@@ -229,55 +193,9 @@ export const DownloadProgressModal: React.FC<DownloadProgressModalProps> = ({
               </div>
 
               <p className="text-xs text-neutral-300 leading-relaxed">
-                Tap <strong>"Launch Installer"</strong> below to open Android's native system prompt directly on your phone.
+                The APK package has been saved to your downloads folder. Tap on the downloaded file or notification to install <strong>{progress.appName}</strong> on your device.
               </p>
-
-              {/* 1-Tap Action Pills */}
-              <div className="flex flex-wrap items-center gap-2 pt-1">
-                <button
-                  onClick={handleLaunchInstall}
-                  className="px-4 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 active:scale-95 rounded-xl shadow-md transition-all flex items-center gap-2 cursor-pointer"
-                >
-                  <Smartphone className="w-3.5 h-3.5" />
-                  <span>Launch Installer Now</span>
-                </button>
-
-                {progress.packageId && (
-                  <button
-                    onClick={handleUninstall}
-                    className="px-3.5 py-2 text-xs font-semibold text-rose-300 hover:text-white bg-rose-950/60 hover:bg-rose-900 border border-rose-800/50 rounded-xl transition-colors flex items-center gap-1.5 cursor-pointer"
-                    title="Trigger Android system uninstaller dialog"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    <span>Uninstall App</span>
-                  </button>
-                )}
-              </div>
             </div>
-
-            {/* Uninstall notice display */}
-            {uninstallNotice && (
-              <div className="p-3 bg-amber-950/30 border border-amber-800/50 rounded-xl text-xs text-amber-200 flex items-center gap-2 animate-fade-in">
-                <Trash2 className="w-4 h-4 text-amber-400 shrink-0" />
-                <span>{uninstallNotice}</span>
-              </div>
-            )}
-
-            {/* Companion Promo Strip */}
-            {onOpenCompanionModal && (
-              <div className="p-3 bg-neutral-950/80 border border-neutral-800 rounded-xl flex items-center justify-between gap-3 text-xs">
-                <div className="flex items-center gap-2 text-neutral-300 min-w-0">
-                  <Zap className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
-                  <span className="truncate">Want fully automatic installs with zero taps?</span>
-                </div>
-                <button
-                  onClick={onOpenCompanionModal}
-                  className="text-cyan-400 hover:text-cyan-300 font-bold shrink-0 underline text-[11px] cursor-pointer"
-                >
-                  Get Zuzu Client
-                </button>
-              </div>
-            )}
           </div>
         )}
 

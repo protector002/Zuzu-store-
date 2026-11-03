@@ -12,7 +12,6 @@ import {
   ArrowRight
 } from 'lucide-react';
 import { StoreApp, AdminUser, Platform } from '../types';
-import { isAppInstalled } from '../utils/androidBridge';
 
 interface TvPageProps {
   apps: StoreApp[];
