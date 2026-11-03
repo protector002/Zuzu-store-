@@ -22,10 +22,12 @@ import {
   Tv
 } from 'lucide-react';
 import { StoreApp, AppRelease, Platform, AdminUser } from '../types';
+import { getPhoneRelease, getTvRelease, isTvApp, isPhoneApp } from '../utils/editionHelper';
 
 interface AppDetailViewProps {
   app: StoreApp;
   admin?: AdminUser | null;
+  initialPlatformPreference?: 'phone' | 'tv';
   onBack: () => void;
   onDownloadRelease: (appId: string, releaseId?: string) => Promise<void>;
   onOpenQR: (app: StoreApp, release?: AppRelease) => void;
@@ -39,6 +41,7 @@ interface AppDetailViewProps {
 export const AppDetailView: React.FC<AppDetailViewProps> = ({
   app,
   admin,
+  initialPlatformPreference = 'phone',
   onBack,
   onDownloadRelease,
   onOpenQR,
@@ -94,7 +97,26 @@ export const AppDetailView: React.FC<AppDetailViewProps> = ({
   const [isSubmittingReview, setIsSubmittingReview] = useState(false);
   const [reviewSubmitted, setReviewSubmitted] = useState(false);
 
-  const primaryRelease = app.releases[0];
+  const phoneRel = getPhoneRelease(app);
+  const tvRel = getTvRelease(app);
+  const hasBothEditions = Boolean(phoneRel && tvRel && phoneRel.id !== tvRel.id);
+
+  const initialTargetRelease = (initialPlatformPreference === 'tv' && tvRel)
+    ? tvRel
+    : (phoneRel || app.releases[0]);
+
+  const [selectedReleaseId, setSelectedReleaseId] = useState<string>(initialTargetRelease?.id || '');
+
+  useEffect(() => {
+    const target = (initialPlatformPreference === 'tv' && tvRel)
+      ? tvRel
+      : (phoneRel || app.releases[0]);
+    if (target?.id) {
+      setSelectedReleaseId(target.id);
+    }
+  }, [app.id, initialPlatformPreference]);
+
+  const primaryRelease = app.releases.find(r => r.id === selectedReleaseId) || initialTargetRelease || app.releases[0];
   const gdMatch = primaryRelease?.directDownloadUrl?.match(/\/file\/d\/([a-zA-Z0-9_-]+)/) || primaryRelease?.directDownloadUrl?.match(/[?&]id=([a-zA-Z0-9_-]+)/);
   const gdWebUrl = gdMatch ? `https://drive.google.com/file/d/${gdMatch[1]}/view?usp=sharing` : null;
 
@@ -218,6 +240,36 @@ export const AppDetailView: React.FC<AppDetailViewProps> = ({
               )}
             </div>
 
+            {/* Multi-Edition Switcher if app has both Phone and Smart TV packages */}
+            {hasBothEditions && (
+              <div className="mt-5 p-1 bg-neutral-950 border border-neutral-800 rounded-xl inline-flex flex-wrap items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => phoneRel && setSelectedReleaseId(phoneRel.id)}
+                  className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                    primaryRelease?.id === phoneRel?.id
+                      ? 'bg-gradient-to-r from-amber-500 to-amber-600 text-white shadow-sm'
+                      : 'text-neutral-400 hover:text-white'
+                  }`}
+                >
+                  <Smartphone className="w-3.5 h-3.5 text-amber-300" />
+                  <span>Android Phone Build (v{phoneRel?.version})</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => tvRel && setSelectedReleaseId(tvRel.id)}
+                  className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                    primaryRelease?.id === tvRel?.id
+                      ? 'bg-gradient-to-r from-cyan-600 to-blue-600 text-white shadow-sm'
+                      : 'text-neutral-400 hover:text-white'
+                  }`}
+                >
+                  <Tv className="w-3.5 h-3.5 text-cyan-300" />
+                  <span>Smart TV Build (v{tvRel?.version})</span>
+                </button>
+              </div>
+            )}
+
             {/* Download CTA Bar - 100% public, anyone can click! */}
             <div className="flex flex-wrap items-center gap-3 mt-6">
               <button
@@ -233,7 +285,7 @@ export const AppDetailView: React.FC<AppDetailViewProps> = ({
                 ) : (
                   <>
                     <Download className="w-4 h-4" />
-                    <span>Download APK ({primaryRelease?.fileSize || '34 MB'})</span>
+                    <span>Download {primaryRelease?.platform === 'Android TV' ? 'Smart TV' : 'Phone'} APK ({primaryRelease?.fileSize || '34 MB'})</span>
                   </>
                 )}
               </button>

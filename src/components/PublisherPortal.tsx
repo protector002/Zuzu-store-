@@ -29,6 +29,7 @@ import {
 import { StoreApp, Platform, AppCategory, AdminUser } from '../types';
 import { saveApkBlob } from '../utils/fileStorage';
 import { verifyDirectUrl } from '../services/api';
+import { isTvApp, isPhoneApp, filterPhoneApps, filterTvApps } from '../utils/editionHelper';
 
 interface PublisherPortalProps {
   apps: StoreApp[];
@@ -1811,15 +1812,8 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
 
       {/* TAB 3: MANAGE LIVE CATALOG */}
       {activeTab === 'manage' && (() => {
-        const phoneApps = apps.filter((a) => {
-          const isTvOnly = (a.appEdition === 'tv' || a.supportedPlatforms?.includes('Smart TV') || a.supportedPlatforms?.includes('Android TV') || a.supportedPlatforms?.includes('Fire TV') || a.category === 'Smart TV') && a.appEdition !== 'phone' && a.appEdition !== 'both';
-          return !isTvOnly;
-        });
-
-        const smartTvApps = apps.filter((a) => {
-          return a.appEdition === 'tv' || a.appEdition === 'both' || a.isTvCompatible || a.supportedPlatforms?.includes('Android TV') || a.supportedPlatforms?.includes('Smart TV') || a.supportedPlatforms?.includes('Fire TV') || a.category === 'Smart TV';
-        });
-
+        const phoneApps = filterPhoneApps(apps);
+        const smartTvApps = filterTvApps(apps);
         const displayedApps = catalogFilter === 'phone' ? phoneApps : catalogFilter === 'tv' ? smartTvApps : apps;
 
         return (
@@ -1916,7 +1910,8 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
             ) : (
               <div className="grid grid-cols-1 gap-4">
                 {displayedApps.map((app) => {
-                  const isAppTv = app.appEdition === 'tv' || app.appEdition === 'both' || app.isTvCompatible || app.supportedPlatforms?.includes('Android TV') || app.supportedPlatforms?.includes('Smart TV') || app.supportedPlatforms?.includes('Fire TV') || app.category === 'Smart TV';
+                  const isTv = isTvApp(app);
+                  const isPhone = isPhoneApp(app);
 
                   return (
                     <React.Fragment key={app.id}>
@@ -1936,15 +1931,22 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
                         <div>
                           <div className="flex flex-wrap items-center gap-2">
                             <h4 className="text-base font-bold text-white">{app.name}</h4>
-                            {isAppTv ? (
+                            {isTv && isPhone ? (
+                              <span className="text-[10px] text-amber-300 font-semibold bg-amber-950/80 px-2 py-0.5 rounded border border-amber-700/60 flex items-center gap-1.5">
+                                <Smartphone className="w-3 h-3 text-indigo-400" />
+                                <span className="text-neutral-500">•</span>
+                                <Tv className="w-3 h-3 text-cyan-400" />
+                                <span>Phone &amp; Smart TV Pages</span>
+                              </span>
+                            ) : isTv ? (
                               <span className="text-[10px] text-cyan-300 font-semibold bg-cyan-950/80 px-2 py-0.5 rounded border border-cyan-700/60 flex items-center gap-1">
                                 <Tv className="w-3 h-3 text-cyan-400" />
-                                <span>Smart TV App</span>
+                                <span>Smart TV Page Only</span>
                               </span>
                             ) : (
                               <span className="text-[10px] text-indigo-300 font-semibold bg-indigo-950/80 px-2 py-0.5 rounded border border-indigo-700/60 flex items-center gap-1">
                                 <Smartphone className="w-3 h-3 text-indigo-400" />
-                                <span>Android Phone App</span>
+                                <span>Android Phone Store Only</span>
                               </span>
                             )}
                             {app.isOfficial && (

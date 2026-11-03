@@ -12,6 +12,7 @@ import {
   ArrowRight
 } from 'lucide-react';
 import { StoreApp, AdminUser, Platform } from '../types';
+import { filterTvApps, getTvRelease } from '../utils/editionHelper';
 
 interface TvPageProps {
   apps: StoreApp[];
@@ -35,29 +36,16 @@ export const TvPage: React.FC<TvPageProps> = ({
 }) => {
   const [downloadingTvId, setDownloadingTvId] = useState<string | null>(null);
 
-  // Filter apps for Smart TV / Android TV / Fire TV
-  const tvApps = apps.filter((app) => {
-    const plats = (app.supportedPlatforms || []).map((p) => p.toLowerCase());
-    return (
-      plats.includes('smart tv') ||
-      plats.includes('android tv') ||
-      plats.includes('fire tv') ||
-      app.appEdition === 'tv' ||
-      app.appEdition === 'both' ||
-      app.isTvCompatible === true ||
-      app.category?.toLowerCase() === 'smart tv' ||
-      app.category?.toLowerCase() === 'tv & movies' ||
-      app.name.toLowerCase().includes('tv') ||
-      app.tagline?.toLowerCase().includes('tv')
-    );
-  });
-
+  // Strictly filter apps for Smart TV edition
+  const tvApps = filterTvApps(apps);
   const featuredTvApp = tvApps[0] || null;
+  const featuredTvRelease = featuredTvApp ? getTvRelease(featuredTvApp) : undefined;
 
   const handleDownload = async (app: StoreApp) => {
     setDownloadingTvId(app.id);
+    const rel = getTvRelease(app);
     try {
-      await onDownloadApp(app.id, app.releases[0]?.id);
+      await onDownloadApp(app.id, rel?.id);
     } finally {
       setTimeout(() => setDownloadingTvId(null), 2500);
     }
@@ -160,13 +148,13 @@ export const TvPage: React.FC<TvPageProps> = ({
                   {/* Metadata Chips */}
                   <div className="flex flex-wrap items-center gap-3 text-xs text-neutral-400 pt-1">
                     <span className="px-2.5 py-1 rounded-lg bg-neutral-950 border border-neutral-800 font-mono text-neutral-200">
-                      v{featuredTvApp.currentVersion}
+                      v{featuredTvRelease?.version || featuredTvApp.currentVersion}
                     </span>
                     <span className="px-2.5 py-1 rounded-lg bg-neutral-950 border border-neutral-800">
-                      {featuredTvApp.releases[0]?.fileSize || '32 MB'}
+                      {featuredTvRelease?.fileSize || '32 MB'}
                     </span>
                     <span className="px-2.5 py-1 rounded-lg bg-neutral-950 border border-neutral-800 text-neutral-300">
-                      {featuredTvApp.releases[0]?.minOS || 'Android TV 8.0+ / Fire OS'}
+                      {featuredTvRelease?.minOS || 'Android TV 8.0+ / Fire OS'}
                     </span>
                     <span className="flex items-center gap-1 text-amber-400 font-semibold">
                       <Star className="w-3.5 h-3.5 fill-amber-400" />
@@ -253,49 +241,55 @@ export const TvPage: React.FC<TvPageProps> = ({
               </h3>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {tvApps.slice(1).map((app) => (
-                  <div
-                    key={app.id}
-                    onClick={() => onSelectApp(app)}
-                    className="p-5 rounded-2xl bg-neutral-900/60 hover:bg-neutral-900 border border-neutral-800 hover:border-amber-500/40 transition-all cursor-pointer flex flex-col justify-between space-y-4 shadow-md"
-                  >
-                    <div className="flex items-start gap-3.5">
-                      <img
-                        src={app.iconUrl || '/zuzustore-logo.png'}
-                        alt={app.name}
-                        className="w-12 h-12 rounded-xl object-contain bg-neutral-950 border border-neutral-800 p-1 shrink-0"
-                      />
-                      <div className="min-w-0 flex-1">
-                        <h4 className="text-base font-bold text-white truncate">{app.name}</h4>
-                        <p className="text-xs text-neutral-400 line-clamp-1 mt-0.5">{app.tagline}</p>
-                        <div className="text-[11px] text-neutral-500 mt-1 font-mono">v{app.currentVersion}</div>
+                {tvApps.slice(1).map((app) => {
+                  const tvRel = getTvRelease(app);
+                  return (
+                    <div
+                      key={app.id}
+                      onClick={() => onSelectApp(app)}
+                      className="p-5 rounded-2xl bg-neutral-900/60 hover:bg-neutral-900 border border-neutral-800 hover:border-amber-500/40 transition-all cursor-pointer flex flex-col justify-between space-y-4 shadow-md"
+                    >
+                      <div className="flex items-start gap-3.5">
+                        <img
+                          src={app.iconUrl || '/zuzustore-logo.png'}
+                          alt={app.name}
+                          className="w-12 h-12 rounded-xl object-contain bg-neutral-950 border border-neutral-800 p-1 shrink-0"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <h4 className="text-base font-bold text-white truncate">{app.name}</h4>
+                          <p className="text-xs text-neutral-400 line-clamp-1 mt-0.5">{app.tagline}</p>
+                          <div className="text-[11px] text-neutral-400 mt-1 font-mono">
+                            v{tvRel?.version || app.currentVersion} • {tvRel?.fileSize || '32 MB'}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between pt-3 border-t border-neutral-800/80">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onOpenQR(app);
+                          }}
+                          className="p-1.5 text-neutral-400 hover:text-white bg-neutral-800 rounded-lg cursor-pointer"
+                          title="Show TV QR"
+                        >
+                          <QrCode className="w-3.5 h-3.5 text-amber-400" />
+                        </button>
+
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDownload(app);
+                          }}
+                          className="px-3 py-1.5 rounded-lg bg-neutral-800 hover:bg-red-600 text-xs font-semibold text-white transition-colors flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <Download className="w-3 h-3" />
+                          <span>Download TV APK</span>
+                        </button>
                       </div>
                     </div>
-
-                    <div className="flex items-center justify-between pt-3 border-t border-neutral-800/80">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onOpenQR(app);
-                        }}
-                        className="p-1.5 text-neutral-400 hover:text-white bg-neutral-800 rounded-lg"
-                      >
-                        <QrCode className="w-3.5 h-3.5 text-amber-400" />
-                      </button>
-
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDownload(app);
-                        }}
-                        className="px-3 py-1.5 rounded-lg bg-neutral-800 hover:bg-red-600 text-xs font-semibold text-white transition-colors flex items-center gap-1.5"
-                      >
-                        <Download className="w-3 h-3" />
-                        <span>Download</span>
-                      </button>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}

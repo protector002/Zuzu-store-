@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
 import { Search, Download, Star, QrCode, Smartphone, Laptop, Check, TrendingUp } from 'lucide-react';
 import { StoreApp, AppCategory, Platform, AdminUser } from '../types';
+import { filterPhoneApps, getPhoneRelease } from '../utils/editionHelper';
 
 interface AppCatalogProps {
   apps: StoreApp[];
   onSelectApp: (app: StoreApp) => void;
-  onQuickDownload: (app: StoreApp) => void;
+  onQuickDownload: (app: StoreApp, releaseId?: string) => void;
   onOpenQR: (app: StoreApp) => void;
   onOpenUpload: () => void;
   admin?: AdminUser | null;
@@ -13,7 +14,6 @@ interface AppCatalogProps {
 
 const CATEGORIES: ('All' | AppCategory | string)[] = [
   'All',
-  'TV & Movies',
   'Productivity',
   'Entertainment',
   'Utilities',
@@ -36,8 +36,11 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
   const [sortBy, setSortBy] = useState<'downloads' | 'latest' | 'rating'>('downloads');
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
 
+  // Strictly filter for Android Phone apps (TV-only apps belong strictly to the Smart TV page)
+  const phoneApps = filterPhoneApps(apps);
+
   // Filter apps
-  const filteredApps = apps
+  const filteredApps = phoneApps
     .filter((app) => {
       const matchesSearch =
         app.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -50,11 +53,7 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
 
       const matchesPlatform =
         selectedPlatform === 'All' ||
-        app.supportedPlatforms.includes(selectedPlatform) ||
-        (selectedPlatform === 'Android TV' &&
-          (app.isTvCompatible ||
-            app.supportedPlatforms.includes('Fire TV') ||
-            app.category?.toLowerCase() === 'tv & movies'));
+        app.supportedPlatforms.includes(selectedPlatform);
 
       return matchesSearch && matchesCategory && matchesPlatform;
     })
@@ -71,7 +70,8 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
   const handleDownloadClick = async (e: React.MouseEvent, app: StoreApp) => {
     e.stopPropagation();
     setDownloadingId(app.id);
-    await onQuickDownload(app);
+    const phoneRel = getPhoneRelease(app);
+    await onQuickDownload(app, phoneRel?.id);
     setTimeout(() => setDownloadingId(null), 3000);
   };
 
@@ -223,8 +223,8 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {filteredApps.map((app) => {
             const isCurrentlyDownloading = downloadingId === app.id;
-            const latestRelease = app.releases[0];
-            const fileSize = latestRelease?.fileSize || '32 MB';
+            const phoneRel = getPhoneRelease(app);
+            const fileSize = phoneRel?.fileSize || '32 MB';
 
             return (
               <div
@@ -264,7 +264,7 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
 
                   {/* Metadata strip */}
                   <div className="flex items-center gap-2 text-[11px] text-neutral-400 mt-3.5 pt-3 border-t border-neutral-800/60">
-                    <span className="font-mono font-medium text-neutral-200">v{app.currentVersion}</span>
+                    <span className="font-mono font-medium text-neutral-200">v{phoneRel?.version || app.currentVersion}</span>
                     <span className="text-neutral-600">•</span>
                     <span>{fileSize}</span>
                     <span className="text-neutral-600">•</span>

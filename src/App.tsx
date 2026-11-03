@@ -32,6 +32,7 @@ import {
 } from './services/api';
 import { StoreApp, AppRelease, Platform, AdminUser, DownloadProgressState } from './types';
 import { getApkBlob, deleteApkBlob } from './utils/fileStorage';
+import { filterPhoneApps, filterTvApps, getPhoneRelease, getTvRelease } from './utils/editionHelper';
 import { CheckCircle2, ArrowRight } from 'lucide-react';
 
 
@@ -40,6 +41,7 @@ export default function App() {
   const [apps, setApps] = useState<StoreApp[]>([]);
   const [loading, setLoading] = useState(true);
   const [currentView, setCurrentView] = useState<'store' | 'upload' | 'detail' | 'tv'>('store');
+  const [detailSourceView, setDetailSourceView] = useState<'store' | 'tv'>('store');
   const [selectedApp, setSelectedApp] = useState<StoreApp | null>(null);
 
   // Opening Logo Splash Screen
@@ -544,7 +546,9 @@ export default function App() {
     setIsScreenshotOpen(true);
   };
 
-  const featuredApp = apps[0] || null;
+  const phoneApps = filterPhoneApps(apps);
+  const tvApps = filterTvApps(apps);
+  const featuredPhoneApp = phoneApps[0] || null;
   const totalDownloads = apps.reduce((sum, a) => sum + (a.downloadsTotal || 0), 0);
 
   return (
@@ -567,8 +571,8 @@ export default function App() {
         }}
         onOpenInstallGuide={() => openGuideModal('Android')}
         onQuickDownload={
-          featuredApp
-            ? () => handleDownload(featuredApp.id, featuredApp.releases[0]?.id)
+          featuredPhoneApp
+            ? () => handleDownload(featuredPhoneApp.id, getPhoneRelease(featuredPhoneApp)?.id)
             : undefined
         }
         hasApps={apps.length > 0}
@@ -631,26 +635,27 @@ export default function App() {
           <>
             {currentView === 'store' && (
               <>
-                {/* If real apps exist, show the featured app hero */}
-                {featuredApp ? (
+                {/* If real phone apps exist, show the featured phone app hero */}
+                {featuredPhoneApp ? (
                   <HeroZuzu
-                    app={featuredApp}
-                    onDownload={handleDownload}
-                    onOpenQR={(app) => openQRModal(app)}
+                    app={featuredPhoneApp}
+                    onDownload={(appId, relId) => handleDownload(appId, relId || getPhoneRelease(featuredPhoneApp)?.id)}
+                    onOpenQR={(app) => openQRModal(app, getPhoneRelease(app))}
                     onOpenGuide={(plat) => openGuideModal(plat)}
                     onViewDetails={(app) => {
                       setSelectedApp(app);
+                      setDetailSourceView('store');
                       setCurrentView('detail');
                       window.scrollTo({ top: 0, behavior: 'smooth' });
                     }}
-                    onPreviewScreenshot={(idx) => openScreenshotPreview(featuredApp, idx)}
+                    onPreviewScreenshot={(idx) => openScreenshotPreview(featuredPhoneApp, idx)}
                     onNavigateToTv={() => {
                       setCurrentView('tv');
                       window.scrollTo({ top: 0, behavior: 'smooth' });
                     }}
                   />
                 ) : (
-                  /* If no apps published yet, show clean ZuzuStore welcome banner with logo */
+                  /* If no phone apps published yet, show clean ZuzuStore welcome banner with logo */
                   <StoreWelcomeBanner
                     admin={admin}
                     onOpenLoginModal={() => setIsLoginModalOpen(true)}
@@ -661,24 +666,25 @@ export default function App() {
                       window.scrollTo({ top: 0, behavior: 'smooth' });
                     }}
                     totalDownloads={totalDownloads}
-                    totalApps={apps.length}
+                    totalApps={phoneApps.length}
                   />
                 )}
 
-                {/* App Catalog & Browse Grid */}
+                {/* Android Phone App Catalog & Browse Grid */}
                 <AppCatalog
-                  apps={apps}
+                  apps={phoneApps}
                   admin={admin}
                   onSelectApp={(app) => {
                     setSelectedApp(app);
+                    setDetailSourceView('store');
                     setCurrentView('detail');
                     window.scrollTo({ top: 0, behavior: 'smooth' });
                   }}
-                  onQuickDownload={(app) => {
-                    const rel = app.releases[0];
+                  onQuickDownload={(app, relId) => {
+                    const rel = relId ? { id: relId } : getPhoneRelease(app);
                     handleDownload(app.id, rel?.id);
                   }}
-                  onOpenQR={(app) => openQRModal(app)}
+                  onOpenQR={(app) => openQRModal(app, getPhoneRelease(app))}
                   onOpenUpload={() => {
                     if (!admin) {
                       handleOpenSecretAdmin();
@@ -695,8 +701,9 @@ export default function App() {
               <AppDetailView
                 app={selectedApp}
                 admin={admin}
+                initialPlatformPreference={detailSourceView === 'tv' ? 'tv' : 'phone'}
                 onBack={() => {
-                  setCurrentView('store');
+                  setCurrentView(detailSourceView);
                   window.scrollTo({ top: 0, behavior: 'smooth' });
                 }}
                 onDownloadRelease={handleDownload}
@@ -712,15 +719,16 @@ export default function App() {
 
             {currentView === 'tv' && (
               <TvPage
-                apps={apps}
+                apps={tvApps}
                 admin={admin}
                 onDownloadApp={handleDownload}
                 onSelectApp={(app) => {
                   setSelectedApp(app);
+                  setDetailSourceView('tv');
                   setCurrentView('detail');
                   window.scrollTo({ top: 0, behavior: 'smooth' });
                 }}
-                onOpenQR={(app) => openQRModal(app)}
+                onOpenQR={(app) => openQRModal(app, getTvRelease(app))}
                 onNavigateToUpload={() => {
                   if (!admin) {
                     handleOpenSecretAdmin();

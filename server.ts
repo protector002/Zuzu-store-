@@ -1264,6 +1264,16 @@ app.post(
         targetApp.supportedPlatforms.push(targetPlatform);
       }
 
+      const isTvPlat = targetPlatform === 'Android TV' || targetPlatform === 'Fire TV' || targetPlatform === 'Smart TV';
+      if (isTvPlat) {
+        targetApp.isTvCompatible = true;
+        if (targetApp.appEdition === 'phone') {
+          targetApp.appEdition = 'both';
+        }
+      } else if (targetPlatform === 'Android' && targetApp.appEdition === 'tv') {
+        targetApp.appEdition = 'both';
+      }
+
       saveApps(apps);
 
       return res.json({
