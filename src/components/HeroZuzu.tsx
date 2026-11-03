@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Download, QrCode, ShieldCheck, CheckCircle2, Smartphone, Laptop, HelpCircle, Sparkles, Tv, ArrowRight } from 'lucide-react';
+import { Download, QrCode, ShieldCheck, CheckCircle2, Smartphone, Laptop, HelpCircle, Tv, ArrowRight } from 'lucide-react';
 import { StoreApp, Platform } from '../types';
 
 interface HeroZuzuProps {
@@ -50,19 +50,6 @@ export const HeroZuzu: React.FC<HeroZuzuProps> = ({
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-center">
           {/* Left Column: Information, metadata, CTAs */}
           <div className="lg:col-span-7 space-y-5">
-            {/* Tagline pill */}
-            <div className="flex flex-wrap items-center gap-2 text-xs">
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-950/70 border border-amber-700/60 text-amber-300 font-semibold text-[11px]">
-                <Sparkles className="w-3 h-3 text-amber-400" />
-                <span>Featured Application</span>
-              </span>
-              <span className="text-neutral-500">•</span>
-              <span className="text-emerald-400 font-medium flex items-center gap-1">
-                <ShieldCheck className="w-3.5 h-3.5" />
-                Free Direct Download (No Account Required)
-              </span>
-            </div>
-
             {/* App Header Lockup */}
             <div className="flex items-start gap-4 sm:gap-5">
               <img
