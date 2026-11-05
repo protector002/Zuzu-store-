@@ -23,6 +23,8 @@ interface TvPageProps {
   onNavigateToUpload: () => void;
   onOpenGuide: (platform?: Platform) => void;
   onNavigateToPhoneStore?: () => void;
+  searchQuery?: string;
+  onClearSearch?: () => void;
 }
 
 export const TvPage: React.FC<TvPageProps> = ({
@@ -33,6 +35,8 @@ export const TvPage: React.FC<TvPageProps> = ({
   onOpenQR,
   onNavigateToUpload,
   onNavigateToPhoneStore,
+  searchQuery,
+  onClearSearch,
 }) => {
   const [downloadingTvId, setDownloadingTvId] = useState<string | null>(null);
 
@@ -295,7 +299,7 @@ export const TvPage: React.FC<TvPageProps> = ({
           )}
         </div>
       ) : (
-        /* When no TV apps published yet */
+        /* When no TV apps published yet or search has no matches */
         <div className="p-8 sm:p-14 rounded-3xl bg-neutral-900/40 border border-neutral-800 text-center space-y-6 max-w-2xl mx-auto shadow-2xl">
           <div className="relative inline-block">
             <div className="w-20 h-20 rounded-2xl bg-gradient-to-tr from-amber-500/20 via-red-500/20 to-amber-500/20 border-2 border-amber-500/40 flex items-center justify-center text-amber-400 mx-auto shadow-xl">
@@ -304,30 +308,45 @@ export const TvPage: React.FC<TvPageProps> = ({
           </div>
 
           <div className="space-y-2">
-            <h2 className="text-2xl font-black text-white">Smart TV App Ready</h2>
+            <h2 className="text-2xl font-black text-white">
+              {searchQuery?.trim() ? `No TV Apps Matching "${searchQuery}"` : 'Smart TV App Ready'}
+            </h2>
             <p className="text-xs sm:text-sm text-neutral-400 max-w-md mx-auto leading-relaxed">
-              This page displays your Smart TV application. You can publish your official TV APK build now from the Publisher Portal, or download the TV package below.
+              {searchQuery?.trim()
+                ? 'No Smart TV packages match this name or package ID. Try a different search keyword or clear the search filter.'
+                : 'This page displays your Smart TV application. You can publish your official TV APK build now from the Publisher Portal, or download the TV package below.'}
             </p>
           </div>
 
           <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
-            <button
-              onClick={handleDownloadDefaultTv}
-              className="px-6 py-3 text-xs sm:text-sm font-bold text-white bg-gradient-to-r from-amber-500 via-amber-600 to-red-600 hover:from-amber-400 hover:to-red-500 rounded-xl transition-all shadow-lg active:scale-95 flex items-center gap-2 cursor-pointer"
-            >
-              <Download className="w-4 h-4" />
-              <span>Download Smart TV APK</span>
-            </button>
-
-            {admin ? (
+            {searchQuery?.trim() ? (
               <button
-                onClick={onNavigateToUpload}
-                className="px-5 py-3 text-xs sm:text-sm font-bold text-white bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 rounded-xl transition-colors flex items-center gap-2 cursor-pointer"
+                onClick={onClearSearch}
+                className="px-5 py-2.5 text-xs font-bold text-neutral-900 bg-amber-400 hover:bg-amber-300 rounded-xl transition-all cursor-pointer shadow-sm"
               >
-                <UploadCloud className="w-4 h-4 text-amber-400" />
-                <span>Publish Your TV App Now</span>
+                Clear Search Filter
               </button>
-            ) : null}
+            ) : (
+              <>
+                <button
+                  onClick={handleDownloadDefaultTv}
+                  className="px-6 py-3 text-xs sm:text-sm font-bold text-white bg-gradient-to-r from-amber-500 via-amber-600 to-red-600 hover:from-amber-400 hover:to-red-500 rounded-xl transition-all shadow-lg active:scale-95 flex items-center gap-2 cursor-pointer"
+                >
+                  <Download className="w-4 h-4" />
+                  <span>Download Smart TV APK</span>
+                </button>
+
+                {admin ? (
+                  <button
+                    onClick={onNavigateToUpload}
+                    className="px-5 py-3 text-xs sm:text-sm font-bold text-white bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 rounded-xl transition-colors flex items-center gap-2 cursor-pointer"
+                  >
+                    <UploadCloud className="w-4 h-4 text-amber-400" />
+                    <span>Publish Your TV App Now</span>
+                  </button>
+                ) : null}
+              </>
+            )}
           </div>
         </div>
       )}

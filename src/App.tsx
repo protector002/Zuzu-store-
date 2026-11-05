@@ -43,6 +43,7 @@ export default function App() {
   const [currentView, setCurrentView] = useState<'store' | 'upload' | 'detail' | 'tv'>('store');
   const [detailSourceView, setDetailSourceView] = useState<'store' | 'tv'>('store');
   const [selectedApp, setSelectedApp] = useState<StoreApp | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
 
   // Opening Logo Splash Screen
   const [showSplash, setShowSplash] = useState(true);
@@ -546,8 +547,21 @@ export default function App() {
     setIsScreenshotOpen(true);
   };
 
-  const phoneApps = filterPhoneApps(apps);
-  const tvApps = filterTvApps(apps);
+  const normalizedSearch = searchQuery.toLowerCase().trim();
+
+  // Real-time filter across all apps by name or package ID
+  const filteredApps = apps.filter((app) => {
+    if (!normalizedSearch) return true;
+    return (
+      app.name.toLowerCase().includes(normalizedSearch) ||
+      app.packageId.toLowerCase().includes(normalizedSearch) ||
+      (app.tagline && app.tagline.toLowerCase().includes(normalizedSearch)) ||
+      (app.category && app.category.toLowerCase().includes(normalizedSearch))
+    );
+  });
+
+  const phoneApps = filterPhoneApps(filteredApps);
+  const tvApps = filterTvApps(filteredApps);
   const featuredPhoneApp = phoneApps[0] || null;
   const totalDownloads = apps.reduce((sum, a) => sum + (a.downloadsTotal || 0), 0);
 
@@ -581,6 +595,20 @@ export default function App() {
         onOpenLoginModal={() => setIsLoginModalOpen(true)}
         onLogout={handleLogout}
         onSecretAdminTrigger={handleOpenSecretAdmin}
+        searchQuery={searchQuery}
+        onSearchChange={(q) => {
+          setSearchQuery(q);
+          if (q && currentView !== 'store' && currentView !== 'tv') {
+            setCurrentView('store');
+          }
+        }}
+        apps={apps}
+        onSelectApp={(app) => {
+          setSelectedApp(app);
+          setDetailSourceView(currentView === 'tv' ? 'tv' : 'store');
+          setCurrentView('detail');
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }}
       />
 
 
@@ -674,6 +702,8 @@ export default function App() {
                 <AppCatalog
                   apps={phoneApps}
                   admin={admin}
+                  searchQuery={searchQuery}
+                  onSearchChange={setSearchQuery}
                   onSelectApp={(app) => {
                     setSelectedApp(app);
                     setDetailSourceView('store');
@@ -721,6 +751,8 @@ export default function App() {
               <TvPage
                 apps={tvApps}
                 admin={admin}
+                searchQuery={searchQuery}
+                onClearSearch={() => setSearchQuery('')}
                 onDownloadApp={handleDownload}
                 onSelectApp={(app) => {
                   setSelectedApp(app);
