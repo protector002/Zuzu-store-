@@ -3,7 +3,7 @@ import { ShieldCheck, Smartphone, Lock, UploadCloud, Layers, Tv } from 'lucide-r
 import { AdminUser } from '../types';
 
 interface FooterProps {
-  onNavigate: (view: 'store' | 'upload' | 'tv') => void;
+  onNavigate: (view: 'store' | 'upload' | 'tv' | 'developer_console') => void;
   onOpenGuide: () => void;
   appsCount: number;
   admin?: AdminUser | null;

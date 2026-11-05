@@ -78,6 +78,16 @@ export interface StoreApp {
   isTvCompatible?: boolean;
   tvBannerUrl?: string;
   downloaderCode?: string;
+  approvalStatus?: 'approved' | 'pending_approval' | 'rejected';
+  submittedBy?: {
+    id: string;
+    name: string;
+    email: string;
+  };
+  submittedAt?: string;
+  reviewedAt?: string;
+  reviewedBy?: string;
+  rejectionReason?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -86,6 +96,20 @@ export interface AdminUser {
   email: string;
   name: string;
   role: string;
+}
+
+export interface DeveloperUser {
+  id: string;
+  name: string;
+  email: string;
+  companyName?: string;
+  createdAt: string;
+}
+
+export interface DeveloperSessionState {
+  isAuthenticated: boolean;
+  developer: DeveloperUser | null;
+  token: string | null;
 }
 
 export interface AdminSessionState {

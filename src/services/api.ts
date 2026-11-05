@@ -1,4 +1,4 @@
-import { StoreApp, AdminUser } from '../types';
+import { StoreApp, AdminUser, DeveloperUser } from '../types';
 import {
   getAppsFromFirestore,
   saveAppToFirestore,
@@ -11,6 +11,7 @@ import {
 import { deleteApkBlob } from '../utils/fileStorage';
 
 const TOKEN_KEY = 'zuzu_admin_token';
+const DEV_TOKEN_KEY = 'zuzu_developer_token';
 
 export function getStoredToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
@@ -26,6 +27,23 @@ export function clearStoredToken(): void {
 
 function getAuthHeaders(): HeadersInit {
   const token = getStoredToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+export function getDeveloperToken(): string | null {
+  return localStorage.getItem(DEV_TOKEN_KEY);
+}
+
+export function setDeveloperToken(token: string): void {
+  localStorage.setItem(DEV_TOKEN_KEY, token);
+}
+
+export function clearDeveloperToken(): void {
+  localStorage.removeItem(DEV_TOKEN_KEY);
+}
+
+function getDeveloperAuthHeaders(): HeadersInit {
+  const token = getDeveloperToken();
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
@@ -785,5 +803,253 @@ export async function downloadWithProgress(
   }
 
   return { blob, blobUrl };
+}
+
+// =====================================
+// Developer Authentication Calls
+// =====================================
+
+export async function developerRegister(payload: {
+  name: string;
+  email: string;
+  password: string;
+  companyName?: string;
+}): Promise<{ success: boolean; token: string; developer: DeveloperUser }> {
+  const res = await fetch('/api/developer/auth/register', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+
+  const data = await res.json();
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || 'Failed to register developer account.');
+  }
+
+  setDeveloperToken(data.token);
+  return data;
+}
+
+export async function developerLogin(
+  email: string,
+  password: string
+): Promise<{ success: boolean; token: string; developer: DeveloperUser }> {
+  const res = await fetch('/api/developer/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password })
+  });
+
+  const data = await res.json();
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || 'Failed to sign in as developer.');
+  }
+
+  setDeveloperToken(data.token);
+  return data;
+}
+
+export async function checkDeveloperSession(): Promise<{
+  authenticated: boolean;
+  developer?: DeveloperUser;
+}> {
+  const token = getDeveloperToken();
+  if (!token) return { authenticated: false };
+
+  try {
+    const res = await fetch('/api/developer/auth/session', {
+      headers: {
+        Authorization: `Bearer ${token}`
+      }
+    });
+    if (!res.ok) return { authenticated: false };
+    return res.json();
+  } catch (_) {
+    return { authenticated: false };
+  }
+}
+
+export async function developerLogout(): Promise<void> {
+  clearDeveloperToken();
+}
+
+// =====================================
+// Developer App Submission & Management
+// =====================================
+
+export async function submitDeveloperApp(
+  payload: FormData | Record<string, any>
+): Promise<{ success: boolean; app: StoreApp; message: string }> {
+  const isFormData = typeof FormData !== 'undefined' && payload instanceof FormData;
+
+  let res: Response | null = null;
+  let uploadFailed = false;
+
+  try {
+    const headers: HeadersInit = {
+      ...getDeveloperAuthHeaders(),
+      ...(isFormData ? {} : { 'Content-Type': 'application/json' })
+    };
+    const body = isFormData ? payload : JSON.stringify(payload);
+
+    res = await fetch('/api/developer/apps', {
+      method: 'POST',
+      headers,
+      body
+    });
+
+    if (!res.ok && res.status === 413) {
+      uploadFailed = true;
+    }
+  } catch (_) {
+    uploadFailed = true;
+  }
+
+  // Fallback to JSON payload if server capped multipart upload
+  if ((uploadFailed || (res && !res.ok && res.status === 413)) && isFormData) {
+    try {
+      const fallbackJson: Record<string, any> = {};
+      payload.forEach((value, key) => {
+        if (typeof value === 'string') {
+          fallbackJson[key] = value;
+        }
+      });
+
+      res = await fetch('/api/developer/apps', {
+        method: 'POST',
+        headers: {
+          ...getDeveloperAuthHeaders(),
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(fallbackJson)
+      });
+    } catch (_) {}
+  }
+
+  if (!res) {
+    throw new Error('Network error submitting application. Please try again.');
+  }
+
+  const data = await res.json();
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || 'Failed to submit application.');
+  }
+
+  // Also save to Firestore cloud database so admin sees it everywhere
+  if (data.app) {
+    saveAppToFirestore(data.app).catch((e) => console.warn('Cloud draft sync notice:', e));
+  }
+
+  return data;
+}
+
+export async function fetchDeveloperMyApps(): Promise<StoreApp[]> {
+  try {
+    const res = await fetch('/api/developer/my-apps', {
+      headers: {
+        ...getDeveloperAuthHeaders()
+      }
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data.apps)) {
+        return data.apps;
+      }
+    }
+  } catch (err) {
+    console.warn('Developer my-apps fetch error:', err);
+  }
+  return [];
+}
+
+export async function deleteDeveloperApp(appId: string): Promise<boolean> {
+  try {
+    const res = await fetch(`/api/developer/apps/${encodeURIComponent(appId)}`, {
+      method: 'DELETE',
+      headers: {
+        ...getDeveloperAuthHeaders()
+      }
+    });
+    return res.ok;
+  } catch (_) {
+    return false;
+  }
+}
+
+// =====================================
+// Super Admin Review Queue & Moderation
+// =====================================
+
+export async function fetchPendingSubmissions(): Promise<StoreApp[]> {
+  // 1. Try backend server pending submissions
+  try {
+    const res = await fetch('/api/admin/submissions/pending', {
+      headers: {
+        ...getAuthHeaders()
+      }
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data.pending)) {
+        return data.pending;
+      }
+    }
+  } catch (_) {}
+
+  // 2. Fallback: check Firestore cloud database for pending apps
+  try {
+    const all = await getAppsFromFirestore(true);
+    return all.filter((a) => a.approvalStatus === 'pending_approval');
+  } catch (_) {}
+
+  return [];
+}
+
+export async function approveAppSubmission(appId: string): Promise<{ success: boolean; app: StoreApp; message: string }> {
+  const res = await fetch(`/api/admin/submissions/${encodeURIComponent(appId)}/approve`, {
+    method: 'POST',
+    headers: {
+      ...getAuthHeaders(),
+      'Content-Type': 'application/json'
+    }
+  });
+
+  const data = await res.json();
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || 'Failed to approve application.');
+  }
+
+  // Update Firestore so public store receives the approved app immediately
+  if (data.app) {
+    saveAppToFirestore(data.app).catch((e) => console.warn('Approved app firestore save notice:', e));
+  }
+
+  return data;
+}
+
+export async function rejectAppSubmission(
+  appId: string,
+  reason?: string
+): Promise<{ success: boolean; app: StoreApp; message: string }> {
+  const res = await fetch(`/api/admin/submissions/${encodeURIComponent(appId)}/reject`, {
+    method: 'POST',
+    headers: {
+      ...getAuthHeaders(),
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ reason })
+  });
+
+  const data = await res.json();
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || 'Failed to reject application.');
+  }
+
+  // Update Firestore
+  if (data.app) {
+    saveAppToFirestore(data.app).catch((e) => console.warn('Rejected app firestore update notice:', e));
+  }
+
+  return data;
 }
 

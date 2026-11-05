@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   UploadCloud,
   FileText,
@@ -24,11 +24,16 @@ import {
   ArrowRight,
   Eye,
   X,
-  Tv
+  Tv,
+  Clock,
+  Check,
+  XCircle,
+  User,
+  ShieldAlert
 } from 'lucide-react';
 import { StoreApp, Platform, AppCategory, AdminUser } from '../types';
 import { saveApkBlob } from '../utils/fileStorage';
-import { verifyDirectUrl } from '../services/api';
+import { verifyDirectUrl, approveAppSubmission, rejectAppSubmission, fetchPendingSubmissions } from '../services/api';
 import { isTvApp, isPhoneApp, filterPhoneApps, filterTvApps } from '../utils/editionHelper';
 
 interface PublisherPortalProps {
@@ -43,6 +48,7 @@ interface PublisherPortalProps {
   onResetCatalog: () => Promise<void>;
   onViewAppInStore: (app: StoreApp) => void;
   onDownloadTest: (appId: string, releaseId?: string) => Promise<void>;
+  onAppApproved?: (app: StoreApp) => void;
 }
 
 // Sample mobile screenshots for testing/previewing
@@ -176,12 +182,70 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
   onResetCatalog,
   onViewAppInStore,
   onDownloadTest,
+  onAppApproved,
 }) => {
-  const [activeTab, setActiveTab] = useState<'upload-new' | 'update-existing' | 'manage'>('upload-new');
+  const [activeTab, setActiveTab] = useState<'upload-new' | 'update-existing' | 'manage' | 'submissions'>('upload-new');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // Developer Submissions Review State
+  const [pendingSubmissions, setPendingSubmissions] = useState<StoreApp[]>([]);
+  const [isLoadingSubmissions, setIsLoadingSubmissions] = useState(false);
+  const [rejectModalApp, setRejectModalApp] = useState<StoreApp | null>(null);
+  const [rejectReasonText, setRejectReasonText] = useState('');
+  const [reviewingAppId, setReviewingAppId] = useState<string | null>(null);
+
+  const loadPending = async () => {
+    setIsLoadingSubmissions(true);
+    try {
+      const list = await fetchPendingSubmissions();
+      setPendingSubmissions(list);
+    } catch (e) {
+      console.warn('Failed to load pending submissions:', e);
+    } finally {
+      setIsLoadingSubmissions(false);
+    }
+  };
+
+  useEffect(() => {
+    if (admin) {
+      loadPending();
+    }
+  }, [admin]);
+
+  const handleApprove = async (appId: string) => {
+    setReviewingAppId(appId);
+    try {
+      const res = await approveAppSubmission(appId);
+      setSuccessMessage(`Application "${res.app.name}" approved and published to live store!`);
+      setPendingSubmissions((prev) => prev.filter((a) => a.id !== appId));
+      if (onAppApproved) {
+        onAppApproved(res.app);
+      }
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Failed to approve application.');
+    } finally {
+      setReviewingAppId(null);
+    }
+  };
+
+  const handleReject = async () => {
+    if (!rejectModalApp) return;
+    setReviewingAppId(rejectModalApp.id);
+    try {
+      await rejectAppSubmission(rejectModalApp.id, rejectReasonText.trim());
+      setSuccessMessage(`Application "${rejectModalApp.name}" rejected. Feedback sent to developer.`);
+      setPendingSubmissions((prev) => prev.filter((a) => a.id !== rejectModalApp.id));
+      setRejectModalApp(null);
+      setRejectReasonText('');
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Failed to reject application.');
+    } finally {
+      setReviewingAppId(null);
+    }
+  };
 
   // Target edition selector: Phone vs Smart TV
   const [targetEdition, setTargetEdition] = useState<'phone' | 'tv'>('phone');
@@ -783,6 +847,25 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
             }`}
           >
             <span>Live Catalog ({apps.length})</span>
+          </button>
+          <button
+            onClick={() => {
+              setActiveTab('submissions');
+              loadPending();
+            }}
+            className={`px-3.5 py-2 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 ${
+              activeTab === 'submissions'
+                ? 'bg-gradient-to-r from-amber-500 to-amber-600 text-neutral-950 shadow-md'
+                : 'text-neutral-400 hover:text-white'
+            }`}
+          >
+            <Clock className="w-3.5 h-3.5" />
+            <span>Review Queue</span>
+            {pendingSubmissions.length > 0 && (
+              <span className="ml-0.5 px-1.5 py-0.2 bg-red-600 text-white font-black text-[10px] rounded-full animate-pulse shadow">
+                {pendingSubmissions.length}
+              </span>
+            )}
           </button>
         </div>
       </div>
@@ -2096,6 +2179,294 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
         </div>
       );
     })()}
+
+      {/* TAB 4: DEVELOPER SUBMISSIONS REVIEW QUEUE */}
+      {activeTab === 'submissions' && (
+        <div className="space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-base font-extrabold text-white">Developer Submissions Review Queue</h3>
+                {pendingSubmissions.length > 0 && (
+                  <span className="px-2 py-0.5 rounded-full bg-red-600 text-white text-xs font-black animate-pulse">
+                    {pendingSubmissions.length} Pending
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-neutral-400 mt-0.5">
+                Review APK packages submitted by developers. Test APKs, verify details, and approve to publish them live on the public storefront.
+              </p>
+            </div>
+            <button
+              onClick={loadPending}
+              disabled={isLoadingSubmissions}
+              className="px-3.5 py-1.5 text-xs text-neutral-300 hover:text-white bg-neutral-900 border border-neutral-800 rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer self-start sm:self-auto"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isLoadingSubmissions ? 'animate-spin' : ''}`} />
+              <span>Refresh Queue</span>
+            </button>
+          </div>
+
+          {isLoadingSubmissions ? (
+            <div className="py-20 text-center">
+              <div className="w-8 h-8 border-2 border-amber-400 border-t-transparent rounded-full animate-spin mx-auto" />
+              <p className="text-xs text-neutral-400 mt-3">Loading developer submissions...</p>
+            </div>
+          ) : pendingSubmissions.length === 0 ? (
+            <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-10 text-center space-y-3">
+              <div className="w-12 h-12 rounded-2xl bg-neutral-950 border border-neutral-800 flex items-center justify-center mx-auto text-emerald-400">
+                <Check className="w-6 h-6" />
+              </div>
+              <h4 className="text-sm font-bold text-white">Review Queue is Clear!</h4>
+              <p className="text-xs text-neutral-400 max-w-sm mx-auto">
+                There are no pending developer submissions awaiting review. When third-party developers submit apps, they will appear here for your approval.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-6">
+              {pendingSubmissions.map((subApp) => {
+                const release = subApp.releases?.[0];
+                const isReviewingThis = reviewingAppId === subApp.id;
+
+                return (
+                  <div
+                    key={subApp.id}
+                    className="bg-neutral-900 border-2 border-amber-500/30 rounded-3xl p-6 sm:p-7 shadow-xl space-y-5 relative overflow-hidden"
+                  >
+                    {/* Top Accent Ribbon */}
+                    <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-amber-500 via-orange-500 to-red-500" />
+
+                    {/* Developer Info Bar */}
+                    <div className="flex flex-wrap items-center justify-between gap-2 p-3 bg-neutral-950 rounded-xl border border-neutral-800/80 text-xs">
+                      <div className="flex items-center gap-2">
+                        <div className="w-6 h-6 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center font-bold text-[10px]">
+                          DEV
+                        </div>
+                        <span className="text-neutral-400">Submitted by:</span>
+                        <strong className="text-white">
+                          {subApp.submittedBy?.name || subApp.developer.name}
+                        </strong>
+                        <span className="text-neutral-500 font-mono text-[11px]">
+                          ({subApp.submittedBy?.email || subApp.developer.email})
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 text-neutral-400 text-[11px]">
+                        <Clock className="w-3.5 h-3.5 text-amber-400" />
+                        <span>
+                          {subApp.submittedAt
+                            ? new Date(subApp.submittedAt).toLocaleDateString(undefined, {
+                                month: 'short',
+                                day: 'numeric',
+                                year: 'numeric',
+                                hour: '2-digit',
+                                minute: '2-digit'
+                              })
+                            : 'Pending'}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* App Overview */}
+                    <div className="flex flex-col sm:flex-row items-start gap-4">
+                      <img
+                        src={subApp.iconUrl || '/zuzustore-logo.png'}
+                        alt={subApp.name}
+                        className="w-16 h-16 rounded-2xl object-cover bg-neutral-950 border border-neutral-800 p-1 shrink-0 shadow-md"
+                        onError={(e) => {
+                          e.currentTarget.onerror = null;
+                          e.currentTarget.src = '/zuzustore-logo.png';
+                        }}
+                      />
+                      <div className="flex-1 space-y-1.5">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h4 className="text-lg font-black text-white">{subApp.name}</h4>
+                          <span className="px-2 py-0.5 rounded-md bg-neutral-950 text-neutral-300 border border-neutral-800 font-mono text-xs">
+                            v{subApp.currentVersion}
+                          </span>
+                          <span className="px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-400 border border-amber-500/30 text-xs font-bold">
+                            {subApp.appEdition === 'tv' ? 'Smart TV Edition' : 'Phone Edition'}
+                          </span>
+                          <span className="px-2 py-0.5 rounded-md bg-neutral-800 text-neutral-300 text-xs">
+                            {subApp.category}
+                          </span>
+                        </div>
+
+                        {/* Brief Info */}
+                        <div className="p-3 bg-neutral-950/60 rounded-xl border border-neutral-800/60 text-xs">
+                          <span className="text-amber-400 font-bold">Brief Info: </span>
+                          <span className="text-neutral-200">{subApp.tagline}</span>
+                        </div>
+
+                        {subApp.description && subApp.description !== subApp.tagline && (
+                          <p className="text-xs text-neutral-400 leading-relaxed pt-1">
+                            {subApp.description}
+                          </p>
+                        )}
+
+                        <div className="flex flex-wrap items-center gap-3 text-[11px] text-neutral-500 font-mono pt-1">
+                          <span>Package: {subApp.packageId}</span>
+                          <span>•</span>
+                          <span>OS: {subApp.minRequirements?.Android || 'Android 8.0+'}</span>
+                          {release?.fileSize && (
+                            <>
+                              <span>•</span>
+                              <span>Size: {release.fileSize}</span>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Screenshots Gallery */}
+                    {subApp.screenshots && subApp.screenshots.length > 0 && (
+                      <div className="space-y-1.5 pt-1">
+                        <label className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider">
+                          Submitted Screenshots ({subApp.screenshots.length}):
+                        </label>
+                        <div className="flex gap-2.5 overflow-x-auto pb-2">
+                          {subApp.screenshots.map((s, idx) => (
+                            <img
+                              key={idx}
+                              src={s}
+                              alt={`Screenshot ${idx + 1}`}
+                              onClick={() => setPublisherLightboxUrl(s)}
+                              className="h-28 w-auto rounded-xl border border-neutral-800 object-cover cursor-pointer hover:opacity-80 transition-opacity shrink-0"
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Action Buttons: Test APK, Approve, Reject */}
+                    <div className="pt-3 border-t border-neutral-800 flex flex-wrap items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => onDownloadTest(subApp.id, release?.id)}
+                          className="py-2 px-3.5 bg-neutral-950 hover:bg-neutral-800 border border-neutral-800 hover:border-neutral-700 text-neutral-200 text-xs font-semibold rounded-xl flex items-center gap-2 transition-colors cursor-pointer"
+                        >
+                          <Download className="w-3.5 h-3.5 text-amber-400" />
+                          <span>Test Download APK</span>
+                        </button>
+                        {release?.directDownloadUrl && (
+                          <a
+                            href={release.directDownloadUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="py-2 px-3 text-neutral-400 hover:text-cyan-400 text-xs flex items-center gap-1.5"
+                          >
+                            <ExternalLink className="w-3 h-3" />
+                            <span>External Link</span>
+                          </a>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-3">
+                        <button
+                          type="button"
+                          disabled={isReviewingThis}
+                          onClick={() => {
+                            setRejectModalApp(subApp);
+                            setRejectReasonText('');
+                          }}
+                          className="py-2.5 px-4 bg-neutral-950 hover:bg-rose-950/60 text-rose-400 hover:text-rose-300 border border-rose-900/60 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+                        >
+                          <XCircle className="w-4 h-4" />
+                          <span>Reject with Notes</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          disabled={isReviewingThis}
+                          onClick={() => handleApprove(subApp.id)}
+                          className="py-2.5 px-6 bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white rounded-xl text-xs font-black shadow-lg shadow-emerald-950/40 flex items-center gap-2 transition-transform active:scale-95 cursor-pointer disabled:opacity-50"
+                        >
+                          {isReviewingThis ? (
+                            <RefreshCw className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <Check className="w-4 h-4" />
+                          )}
+                          <span>Approve & Publish to Store</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* SUPER ADMIN REJECTION REASON MODAL */}
+      {rejectModalApp && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-fade-in">
+          <div
+            className="w-full max-w-md bg-neutral-900 border border-neutral-800 rounded-3xl p-6 shadow-2xl text-neutral-100 space-y-4"
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className="flex items-center justify-between border-b border-neutral-800 pb-3">
+              <div className="flex items-center gap-2.5 text-rose-400">
+                <ShieldAlert className="w-5 h-5" />
+                <h3 className="text-base font-bold text-white">Reject Application</h3>
+              </div>
+              <button
+                onClick={() => setRejectModalApp(null)}
+                className="p-1 text-neutral-400 hover:text-white rounded-lg"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="text-xs text-neutral-300 space-y-1">
+              <p>
+                Rejecting submission for <strong className="text-white font-bold">{rejectModalApp.name}</strong>.
+              </p>
+              <p className="text-neutral-400 text-[11px]">
+                Please explain why this application was rejected so the developer can make the necessary corrections.
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-neutral-300 mb-1.5">
+                Feedback / Rejection Reason
+              </label>
+              <textarea
+                rows={3}
+                required
+                value={rejectReasonText}
+                onChange={(e) => setRejectReasonText(e.target.value)}
+                placeholder="e.g. Please provide high-resolution screenshots and verify the APK runs properly on Android TV..."
+                className="w-full bg-neutral-950 border border-neutral-800 focus:border-rose-500 rounded-xl py-2 px-3 text-xs text-white placeholder-neutral-500 outline-none"
+              />
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setRejectModalApp(null)}
+                className="px-4 py-2 text-xs font-semibold text-neutral-400 hover:text-white bg-neutral-800 rounded-xl"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={reviewingAppId === rejectModalApp.id}
+                onClick={handleReject}
+                className="px-5 py-2 text-xs font-bold text-white bg-rose-600 hover:bg-rose-500 rounded-xl transition-colors flex items-center gap-1.5 shadow-lg shadow-rose-950/40 disabled:opacity-50"
+              >
+                {reviewingAppId === rejectModalApp.id ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <XCircle className="w-3.5 h-3.5" />
+                )}
+                <span>Send Rejection & Feedback</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* In-App Delete App Confirmation Modal */}
       {appToDelete && (

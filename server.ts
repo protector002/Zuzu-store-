@@ -24,6 +24,7 @@ try {
 
 const APPS_FILE = path.join(DATA_DIR, 'apps.json');
 const SESSIONS_FILE = path.join(DATA_DIR, 'sessions.json');
+const DEVELOPERS_FILE = path.join(DATA_DIR, 'developers.json');
 
 // Admin credentials specified by the user
 const ADMIN_EMAIL = 'sseruwagijohn452@gmail.com';
@@ -94,6 +95,16 @@ export interface StoreApp {
   isOfficial: boolean;
   appEdition?: 'phone' | 'tv' | 'both';
   isTvCompatible?: boolean;
+  approvalStatus?: 'approved' | 'pending_approval' | 'rejected';
+  submittedBy?: {
+    id: string;
+    name: string;
+    email: string;
+  };
+  submittedAt?: string;
+  reviewedAt?: string;
+  reviewedBy?: string;
+  rejectionReason?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -277,6 +288,61 @@ function saveSessions(sessions: Record<string, Session>) {
   }
 }
 
+// ==========================================
+// DEVELOPER STORAGE & AUTH HELPERS
+// ==========================================
+export interface DeveloperAccount {
+  id: string;
+  name: string;
+  email: string;
+  passwordHash: string;
+  companyName?: string;
+  createdAt: string;
+}
+
+function getDevelopers(): Record<string, DeveloperAccount> {
+  try {
+    if (!fs.existsSync(DEVELOPERS_FILE)) {
+      fs.writeFileSync(DEVELOPERS_FILE, '{}', 'utf-8');
+      return {};
+    }
+    const data = fs.readFileSync(DEVELOPERS_FILE, 'utf-8');
+    return JSON.parse(data);
+  } catch (err) {
+    return {};
+  }
+}
+
+function saveDevelopers(devs: Record<string, DeveloperAccount>) {
+  try {
+    fs.writeFileSync(DEVELOPERS_FILE, JSON.stringify(devs, null, 2), 'utf-8');
+  } catch (err) {
+    console.error('Error saving developers:', err);
+  }
+}
+
+function createDeveloperToken(devId: string, email: string): string {
+  const expiresAt = Date.now() + 30 * 24 * 60 * 60 * 1000;
+  const data = JSON.stringify({ devId, email: email.toLowerCase(), expiresAt });
+  const b64 = Buffer.from(data).toString('base64url');
+  const sig = crypto.createHmac('sha256', TOKEN_SECRET).update(b64).digest('hex');
+  return `${b64}.${sig}`;
+}
+
+function verifyDeveloperToken(token: string): { id: string; email: string } | null {
+  try {
+    const [b64, sig] = token.split('.');
+    if (!b64 || !sig) return null;
+    const expectedSig = crypto.createHmac('sha256', TOKEN_SECRET).update(b64).digest('hex');
+    if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expectedSig))) return null;
+    const parsed = JSON.parse(Buffer.from(b64, 'base64url').toString('utf-8'));
+    if (!parsed || parsed.expiresAt < Date.now()) return null;
+    return { id: parsed.devId, email: parsed.email };
+  } catch (_) {
+    return null;
+  }
+}
+
 // Multer storage for APK and Image uploads
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -397,8 +463,31 @@ const requireAdmin = (req: express.Request, res: express.Response, next: express
   next();
 };
 
+// Developer authentication middleware
+const requireDeveloper = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Developer authentication required. Please sign in.' });
+  }
+
+  const token = authHeader.split(' ')[1];
+  const payload = verifyDeveloperToken(token);
+  if (!payload) {
+    return res.status(401).json({ error: 'Session expired or invalid developer credentials.' });
+  }
+
+  const devs = getDevelopers();
+  const dev = Object.values(devs).find((d) => d.id === payload.id || d.email.toLowerCase() === payload.email.toLowerCase());
+  if (!dev) {
+    return res.status(401).json({ error: 'Developer account not found.' });
+  }
+
+  (req as any).developer = dev;
+  next();
+};
+
 // ==========================================
-// AUTH ROUTES
+// AUTH ROUTES (ADMIN & DEVELOPER)
 // ==========================================
 
 // Login endpoint for admin
@@ -443,7 +532,102 @@ app.post('/api/auth/login', (req, res) => {
   });
 });
 
-// Check active session
+// Developer registration endpoint
+app.post('/api/developer/auth/register', (req, res) => {
+  const { name, email, password, companyName } = req.body;
+
+  if (!name || !name.trim()) {
+    return res.status(400).json({ error: 'Developer or studio name is required.' });
+  }
+
+  if (!email || !email.trim() || !email.includes('@')) {
+    return res.status(400).json({ error: 'Valid email address is required.' });
+  }
+
+  if (!password || password.length < 6) {
+    return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+  }
+
+  const normalizedEmail = email.trim().toLowerCase();
+
+  // Protect Super Admin email from developer collisions
+  if (normalizedEmail === ADMIN_EMAIL.toLowerCase()) {
+    return res.status(400).json({ error: 'This email is reserved for platform Super Admin.' });
+  }
+
+  const devs = getDevelopers();
+  const existing = Object.values(devs).find((d) => d.email.toLowerCase() === normalizedEmail);
+  if (existing) {
+    return res.status(400).json({ error: 'A developer account already exists with this email. Please sign in.' });
+  }
+
+  const devId = `dev-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+  const passwordHash = crypto.createHash('sha256').update(password + 'zuzu_dev_salt_2026').digest('hex');
+
+  const newDev: DeveloperAccount = {
+    id: devId,
+    name: name.trim(),
+    email: normalizedEmail,
+    passwordHash,
+    companyName: companyName ? companyName.trim() : undefined,
+    createdAt: new Date().toISOString()
+  };
+
+  devs[devId] = newDev;
+  saveDevelopers(devs);
+
+  const token = createDeveloperToken(devId, normalizedEmail);
+
+  return res.status(201).json({
+    success: true,
+    token,
+    developer: {
+      id: newDev.id,
+      name: newDev.name,
+      email: newDev.email,
+      companyName: newDev.companyName,
+      createdAt: newDev.createdAt
+    }
+  });
+});
+
+// Developer login endpoint
+app.post('/api/developer/auth/login', (req, res) => {
+  const { email, password } = req.body;
+
+  if (!email || !password) {
+    return res.status(400).json({ error: 'Email and password are required.' });
+  }
+
+  const normalizedEmail = email.trim().toLowerCase();
+  const devs = getDevelopers();
+  const dev = Object.values(devs).find((d) => d.email.toLowerCase() === normalizedEmail);
+
+  if (!dev) {
+    return res.status(401).json({ error: 'No developer account found with this email. Please create an account.' });
+  }
+
+  const passwordHash = crypto.createHash('sha256').update(password + 'zuzu_dev_salt_2026').digest('hex');
+  if (dev.passwordHash !== passwordHash) {
+    return res.status(401).json({ error: 'Incorrect developer password. Please try again.' });
+  }
+
+  const token = createDeveloperToken(dev.id, dev.email);
+
+  return res.json({
+    success: true,
+    token,
+    developer: {
+      id: dev.id,
+      name: dev.name,
+      email: dev.email,
+      companyName: dev.companyName,
+      createdAt: dev.createdAt
+    }
+  });
+});
+
+// Check active session (Unified for Super Admin & Developer)
 app.get('/api/auth/session', (req, res) => {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -451,16 +635,70 @@ app.get('/api/auth/session', (req, res) => {
   }
 
   const token = authHeader.split(' ')[1];
-  if (!verifyAdminToken(token)) {
+
+  // 1. Check if Super Admin
+  if (verifyAdminToken(token)) {
+    return res.json({
+      authenticated: true,
+      role: 'admin',
+      admin: {
+        email: ADMIN_EMAIL,
+        name: 'John Sseruwagi',
+        role: 'Admin Publisher'
+      }
+    });
+  }
+
+  // 2. Check if Developer
+  const devPayload = verifyDeveloperToken(token);
+  if (devPayload) {
+    const devs = getDevelopers();
+    const dev = Object.values(devs).find((d) => d.id === devPayload.id || d.email.toLowerCase() === devPayload.email.toLowerCase());
+    if (dev) {
+      return res.json({
+        authenticated: true,
+        role: 'developer',
+        developer: {
+          id: dev.id,
+          name: dev.name,
+          email: dev.email,
+          companyName: dev.companyName,
+          createdAt: dev.createdAt
+        }
+      });
+    }
+  }
+
+  return res.json({ authenticated: false });
+});
+
+// Check developer session specifically
+app.get('/api/developer/auth/session', (req, res) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.json({ authenticated: false });
+  }
+
+  const token = authHeader.split(' ')[1];
+  const devPayload = verifyDeveloperToken(token);
+  if (!devPayload) {
+    return res.json({ authenticated: false });
+  }
+
+  const devs = getDevelopers();
+  const dev = Object.values(devs).find((d) => d.id === devPayload.id || d.email.toLowerCase() === devPayload.email.toLowerCase());
+  if (!dev) {
     return res.json({ authenticated: false });
   }
 
   return res.json({
     authenticated: true,
-    admin: {
-      email: ADMIN_EMAIL,
-      name: 'John Sseruwagi',
-      role: 'Admin Publisher'
+    developer: {
+      id: dev.id,
+      name: dev.name,
+      email: dev.email,
+      companyName: dev.companyName,
+      createdAt: dev.createdAt
     }
   });
 });
@@ -481,12 +719,20 @@ app.post('/api/auth/logout', (req, res) => {
 // PUBLIC APP STORE ROUTES (NO ACCOUNT REQUIRED)
 // ==========================================
 
-// Get all apps (Public)
+// Get all apps (Public - Strictly approved apps only)
 app.get('/api/apps', (req, res) => {
   const apps = getApps();
   const { category, search, platform } = req.query;
 
-  let filtered = apps;
+  const authHeader = req.headers.authorization;
+  const token = authHeader?.startsWith('Bearer ') ? authHeader.split(' ')[1] : '';
+  const isAdmin = token ? verifyAdminToken(token) : false;
+  const isSuperAdminView = isAdmin && req.headers['x-admin-view'] === 'true';
+
+  // Public visitors only see approved apps
+  let filtered = isSuperAdminView
+    ? apps
+    : apps.filter((a) => a.approvalStatus === 'approved' || !a.approvalStatus);
 
   if (category && category !== 'All') {
     filtered = filtered.filter((a) => a.category.toLowerCase() === String(category).toLowerCase());
@@ -518,6 +764,22 @@ app.get('/api/apps/:id', (req, res) => {
 
   if (!appItem) {
     return res.status(404).json({ error: 'App not found in store.' });
+  }
+
+  // If pending or rejected, only allow Super Admin or the submitter developer to view it
+  if (appItem.approvalStatus && appItem.approvalStatus !== 'approved') {
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.startsWith('Bearer ') ? authHeader.split(' ')[1] : '';
+    const isAdmin = token ? verifyAdminToken(token) : false;
+    const devPayload = token ? verifyDeveloperToken(token) : null;
+    const isOwner =
+      devPayload &&
+      (appItem.submittedBy?.id === devPayload.id ||
+        appItem.submittedBy?.email?.toLowerCase() === devPayload.email.toLowerCase());
+
+    if (!isAdmin && !isOwner) {
+      return res.status(403).json({ error: 'This app is pending approval by Super Admin.' });
+    }
   }
 
   return res.json(appItem);
@@ -1468,6 +1730,295 @@ app.post('/api/admin/verify-url', requireAdmin, async (req, res) => {
     isGoogleDrive: false,
     status: 200,
     message: 'Direct link verified. Ready for public distribution.'
+  });
+});
+
+// ==========================================
+// DEVELOPER APP SUBMISSION & MANAGEMENT
+// ==========================================
+
+// Developer: Submit a new app (Enters Pending Approval state)
+app.post(
+  '/api/developer/apps',
+  requireDeveloper,
+  conditionalUpload,
+  (req, res) => {
+    try {
+      const dev = (req as any).developer;
+      const {
+        name,
+        tagline,
+        category,
+        description,
+        packageId,
+        version,
+        platform,
+        minOS,
+        changelog,
+        architecture,
+        permissions,
+        iconUrl,
+        iconUrlFallback,
+        heroUrlFallback,
+        directDownloadUrl,
+        fileName: customFileName,
+        fileSize: customFileSize
+      } = req.body;
+
+      if (!name || !name.trim()) {
+        return res.status(400).json({ error: 'Application name is required.' });
+      }
+
+      const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
+      const apk = files?.apkFile?.[0];
+      const icon = files?.iconFile?.[0];
+      const screenshots = files?.screenshotFiles || [];
+
+      const slug =
+        name
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/^-|-$/g, '') || `app-${Date.now()}`;
+
+      const appId = `devapp-${Date.now()}`;
+      const releaseId = `rel-${Date.now()}`;
+
+      let fileSize = customFileSize || '30.0 MB';
+      let fileName = customFileName || `${slug}-v${version || '1.0.0'}.apk`;
+      let sha256Checksum = crypto.randomBytes(32).toString('hex');
+      let apkFilePath: string | undefined = undefined;
+
+      if (apk) {
+        fileSize = `${(apk.size / (1024 * 1024)).toFixed(1)} MB`;
+        fileName = apk.originalname;
+        apkFilePath = apk.path;
+
+        try {
+          const fileBuffer = fs.readFileSync(apk.path);
+          sha256Checksum = crypto.createHash('sha256').update(fileBuffer).digest('hex');
+        } catch (_) {}
+      }
+
+      const formattedDirectUrl = normalizeDownloadUrl(directDownloadUrl);
+
+      const finalIconUrl =
+        iconUrl ||
+        (icon ? `/uploads/images/${path.basename(icon.path)}` : null) ||
+        iconUrlFallback ||
+        '/zuzustore-logo.png';
+
+      let screenshotUrls: string[] = [];
+      if (req.body.screenshots) {
+        if (Array.isArray(req.body.screenshots)) {
+          screenshotUrls = req.body.screenshots.filter(Boolean);
+        } else if (typeof req.body.screenshots === 'string') {
+          try {
+            const parsed = JSON.parse(req.body.screenshots);
+            if (Array.isArray(parsed)) screenshotUrls = parsed.filter(Boolean);
+          } catch (_) {
+            if (req.body.screenshots.trim()) screenshotUrls = [req.body.screenshots.trim()];
+          }
+        }
+      }
+
+      if (screenshots.length > 0) {
+        const uploadedUrls = screenshots.map((s) => `/uploads/images/${path.basename(s.path)}`);
+        screenshotUrls = [...screenshotUrls, ...uploadedUrls];
+      }
+
+      if (screenshotUrls.length === 0) {
+        screenshotUrls = [finalIconUrl];
+      }
+
+      const changelogList = (changelog || 'Initial developer submission.')
+        .split('\n')
+        .map((l: string) => l.trim().replace(/^[-* ]\s*/, ''))
+        .filter(Boolean);
+
+      const targetPlatform = platform || 'Android';
+
+      const newRelease: AppRelease = {
+        id: releaseId,
+        version: version || '1.0.0',
+        buildNumber: 1,
+        releaseDate: new Intl.DateTimeFormat('en-US', { month: 'long', day: 'numeric', year: 'numeric' }).format(new Date()),
+        fileSize,
+        fileName,
+        platform: targetPlatform,
+        minOS: minOS || 'Android 8.0+',
+        changelog: changelogList,
+        downloadCount: 0,
+        sha256Checksum,
+        isLatest: true,
+        filePath: apkFilePath,
+        directDownloadUrl: formattedDirectUrl
+      };
+
+      const newApp: StoreApp = {
+        id: appId,
+        slug,
+        name: name.trim(),
+        tagline: tagline || `${name} for ${targetPlatform}`,
+        description: description || `Submitted by ${dev.name}`,
+        iconUrl: finalIconUrl,
+        heroImageUrl: heroUrlFallback || finalIconUrl,
+        screenshots: screenshotUrls,
+        category: category || 'General',
+        developer: {
+          name: dev.companyName ? `${dev.name} (${dev.companyName})` : dev.name,
+          email: dev.email,
+          verified: false
+        },
+        rating: 0,
+        ratingCount: 0,
+        downloadsTotal: 0,
+        supportedPlatforms: [targetPlatform],
+        currentVersion: version || '1.0.0',
+        packageId: packageId || `com.${dev.id}.${slug.replace(/-/g, '.')}`,
+        architecture: architecture || 'Universal (arm64-v8a)',
+        minRequirements: {
+          [targetPlatform]: minOS || 'Android 8.0+'
+        },
+        permissions: permissions
+          ? (Array.isArray(permissions) ? permissions : String(permissions).split('\n')).filter(Boolean)
+          : ['android.permission.INTERNET', 'android.permission.ACCESS_NETWORK_STATE'],
+        features: [
+          {
+            title: 'Developer Release',
+            description: `Submitted by developer ${dev.name} for store review.`
+          }
+        ],
+        releases: [newRelease],
+        reviews: [],
+        isOfficial: false,
+        appEdition: (req.body.appEdition as any) || (targetPlatform === 'Android TV' || targetPlatform === 'Fire TV' || targetPlatform === 'Smart TV' ? 'tv' : 'phone'),
+        isTvCompatible: req.body.isTvCompatible === true || req.body.isTvCompatible === 'true' || targetPlatform === 'Android TV' || targetPlatform === 'Fire TV' || targetPlatform === 'Smart TV',
+        approvalStatus: 'pending_approval',
+        submittedBy: {
+          id: dev.id,
+          name: dev.name,
+          email: dev.email
+        },
+        submittedAt: new Date().toISOString(),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+
+      const apps = getApps();
+      apps.unshift(newApp);
+      saveApps(apps);
+
+      return res.status(201).json({
+        success: true,
+        message: 'Application submitted successfully! It is now pending review by Super Admin.',
+        app: newApp
+      });
+    } catch (err: any) {
+      console.error('Error submitting developer app:', err);
+      return res.status(500).json({ error: err.message || 'Failed to submit application.' });
+    }
+  }
+);
+
+// Developer: List own submitted apps
+app.get('/api/developer/my-apps', requireDeveloper, (req, res) => {
+  const dev = (req as any).developer;
+  const apps = getApps();
+  const myApps = apps.filter(
+    (a) =>
+      a.submittedBy?.id === dev.id ||
+      a.submittedBy?.email?.toLowerCase() === dev.email.toLowerCase() ||
+      a.developer?.email?.toLowerCase() === dev.email.toLowerCase()
+  );
+  return res.json({ success: true, apps: myApps });
+});
+
+// Developer: Delete or withdraw own pending/rejected submission
+app.delete('/api/developer/apps/:id', requireDeveloper, (req, res) => {
+  const dev = (req as any).developer;
+  const { id } = req.params;
+  const apps = getApps();
+  const index = apps.findIndex((a) => a.id === id || a.slug === id);
+
+  if (index === -1) {
+    return res.status(404).json({ error: 'Application not found.' });
+  }
+
+  const appItem = apps[index];
+  const isOwner =
+    appItem.submittedBy?.id === dev.id ||
+    appItem.submittedBy?.email?.toLowerCase() === dev.email.toLowerCase() ||
+    appItem.developer?.email?.toLowerCase() === dev.email.toLowerCase();
+
+  if (!isOwner) {
+    return res.status(403).json({ error: 'You do not have permission to delete this application.' });
+  }
+
+  apps.splice(index, 1);
+  saveApps(apps);
+
+  return res.json({ success: true, message: `Submission for "${appItem.name}" has been removed.` });
+});
+
+// ==========================================
+// SUPER ADMIN REVIEW QUEUE & APPROVAL
+// ==========================================
+
+// Super Admin: Get all pending applications
+app.get('/api/admin/submissions/pending', requireAdmin, (req, res) => {
+  const apps = getApps();
+  const pending = apps.filter((a) => a.approvalStatus === 'pending_approval');
+  return res.json({ success: true, pending, count: pending.length });
+});
+
+// Super Admin: Approve submission (Publishes to live storefront)
+app.post('/api/admin/submissions/:id/approve', requireAdmin, (req, res) => {
+  const { id } = req.params;
+  const apps = getApps();
+  const appItem = apps.find((a) => a.id === id || a.slug === id);
+
+  if (!appItem) {
+    return res.status(404).json({ error: 'Application not found.' });
+  }
+
+  appItem.approvalStatus = 'approved';
+  appItem.reviewedAt = new Date().toISOString();
+  appItem.reviewedBy = ADMIN_EMAIL;
+  appItem.rejectionReason = undefined;
+  appItem.updatedAt = new Date().toISOString();
+
+  saveApps(apps);
+
+  return res.json({
+    success: true,
+    message: `Application "${appItem.name}" approved! It is now live on Zuzu Store.`,
+    app: appItem
+  });
+});
+
+// Super Admin: Reject submission (Provides feedback to developer)
+app.post('/api/admin/submissions/:id/reject', requireAdmin, (req, res) => {
+  const { id } = req.params;
+  const { reason } = req.body;
+  const apps = getApps();
+  const appItem = apps.find((a) => a.id === id || a.slug === id);
+
+  if (!appItem) {
+    return res.status(404).json({ error: 'Application not found.' });
+  }
+
+  appItem.approvalStatus = 'rejected';
+  appItem.rejectionReason = reason ? String(reason).trim() : 'Does not meet store security or content guidelines.';
+  appItem.reviewedAt = new Date().toISOString();
+  appItem.reviewedBy = ADMIN_EMAIL;
+  appItem.updatedAt = new Date().toISOString();
+
+  saveApps(apps);
+
+  return res.json({
+    success: true,
+    message: `Application "${appItem.name}" rejected. Feedback sent to developer.`,
+    app: appItem
   });
 });
 

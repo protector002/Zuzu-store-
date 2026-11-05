@@ -11,19 +11,22 @@ import {
   X,
   Package,
   ArrowRight,
-  ExternalLink
+  ExternalLink,
+  Code2
 } from 'lucide-react';
-import { StoreApp, AdminUser } from '../types';
+import { StoreApp, AdminUser, DeveloperUser } from '../types';
 import { getPhoneRelease, getTvRelease } from '../utils/editionHelper';
 
 interface HeaderProps {
-  currentView: 'store' | 'upload' | 'detail' | 'tv';
-  onNavigate: (view: 'store' | 'upload' | 'tv') => void;
+  currentView: 'store' | 'upload' | 'detail' | 'tv' | 'developer_console';
+  onNavigate: (view: 'store' | 'upload' | 'tv' | 'developer_console') => void;
   onOpenInstallGuide: () => void;
   onQuickDownload?: () => void;
   hasApps: boolean;
   totalDownloads?: number;
   admin: AdminUser | null;
+  developer?: DeveloperUser | null;
+  onOpenDeveloperPortal?: () => void;
   onOpenLoginModal: () => void;
   onLogout: () => void;
   onSecretAdminTrigger?: () => void;
@@ -42,6 +45,8 @@ export const Header: React.FC<HeaderProps> = ({
   hasApps,
   totalDownloads = 0,
   admin,
+  developer,
+  onOpenDeveloperPortal,
   onOpenLoginModal: _onOpenLoginModal,
   onLogout,
   onSecretAdminTrigger,
@@ -338,6 +343,18 @@ export const Header: React.FC<HeaderProps> = ({
             Installation Guide
           </button>
 
+          {/* Developer Portal Tab */}
+          <button
+            onClick={onOpenDeveloperPortal}
+            className={`transition-colors whitespace-nowrap flex items-center gap-1.5 cursor-pointer py-1 ${
+              currentView === 'developer_console' ? 'text-amber-400 font-semibold' : 'text-neutral-400 hover:text-white'
+            }`}
+            title="Publish your apps on ZuzuStore"
+          >
+            <Code2 className="w-3.5 h-3.5 text-amber-400" />
+            <span>{developer ? 'Dev Console' : 'Developers'}</span>
+          </button>
+
           {/* Publisher Portal Tab: ONLY visible to logged-in administrator */}
           {admin && (
             <button
@@ -354,6 +371,21 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Right Action Zone */}
         <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
+          {/* Mobile Developer Portal Button */}
+          <button
+            type="button"
+            onClick={onOpenDeveloperPortal}
+            className={`md:hidden p-2 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+              currentView === 'developer_console'
+                ? 'bg-amber-500/20 border-amber-500/60 text-amber-300'
+                : 'bg-neutral-900/90 border-neutral-800 text-neutral-400 hover:text-white'
+            }`}
+            title="Developer Portal"
+            aria-label="Developer Portal"
+          >
+            <Code2 className="w-4 h-4" />
+          </button>
+
           {/* Mobile Search Toggle Button (visible on mobile screens < md) */}
           <button
             type="button"

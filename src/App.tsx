@@ -7,6 +7,8 @@ import { AppCatalog } from './components/AppCatalog';
 import { AppDetailView } from './components/AppDetailView';
 import { PublisherPortal } from './components/PublisherPortal';
 import { AdminLoginModal } from './components/AdminLoginModal';
+import { DeveloperAuthModal } from './components/DeveloperAuthModal';
+import { DeveloperConsole } from './components/DeveloperConsole';
 import { QRModal } from './components/QRModal';
 import { InstallGuideModal } from './components/InstallGuideModal';
 import { ScreenshotModal } from './components/ScreenshotModal';
@@ -18,6 +20,7 @@ import {
   getDownloadUrl,
   recordDownload,
   checkAdminSession,
+  checkDeveloperSession,
   adminLogout,
   adminUploadApp,
   adminUpdateApp,
@@ -30,7 +33,7 @@ import {
   parseFileSizeToBytes,
   formatBytes
 } from './services/api';
-import { StoreApp, AppRelease, Platform, AdminUser, DownloadProgressState } from './types';
+import { StoreApp, AppRelease, Platform, AdminUser, DeveloperUser, DownloadProgressState } from './types';
 import { getApkBlob, deleteApkBlob } from './utils/fileStorage';
 import { filterPhoneApps, filterTvApps, getPhoneRelease, getTvRelease } from './utils/editionHelper';
 import { CheckCircle2, ArrowRight } from 'lucide-react';
@@ -40,7 +43,7 @@ import { CheckCircle2, ArrowRight } from 'lucide-react';
 export default function App() {
   const [apps, setApps] = useState<StoreApp[]>([]);
   const [loading, setLoading] = useState(true);
-  const [currentView, setCurrentView] = useState<'store' | 'upload' | 'detail' | 'tv'>('store');
+  const [currentView, setCurrentView] = useState<'store' | 'upload' | 'detail' | 'tv' | 'developer_console'>('store');
   const [detailSourceView, setDetailSourceView] = useState<'store' | 'tv'>('store');
   const [selectedApp, setSelectedApp] = useState<StoreApp | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -51,6 +54,10 @@ export default function App() {
   // Admin state
   const [admin, setAdmin] = useState<AdminUser | null>(null);
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
+
+  // Developer state
+  const [developer, setDeveloper] = useState<DeveloperUser | null>(null);
+  const [isDevAuthModalOpen, setIsDevAuthModalOpen] = useState(false);
 
   // Modals
   const [isQrOpen, setIsQrOpen] = useState(false);
@@ -117,6 +124,13 @@ export default function App() {
     checkAdminSession().then((res) => {
       if (res.authenticated && res.admin) {
         setAdmin(res.admin);
+      }
+    });
+
+    // Check if developer is logged in
+    checkDeveloperSession().then((res) => {
+      if (res.authenticated && res.developer) {
+        setDeveloper(res.developer);
       }
     });
   }, []);
@@ -592,6 +606,15 @@ export default function App() {
         hasApps={apps.length > 0}
         totalDownloads={totalDownloads}
         admin={admin}
+        developer={developer}
+        onOpenDeveloperPortal={() => {
+          if (developer) {
+            setCurrentView('developer_console');
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          } else {
+            setIsDevAuthModalOpen(true);
+          }
+        }}
         onOpenLoginModal={() => setIsLoginModalOpen(true)}
         onLogout={handleLogout}
         onSecretAdminTrigger={handleOpenSecretAdmin}
@@ -794,6 +817,25 @@ export default function App() {
                   window.scrollTo({ top: 0, behavior: 'smooth' });
                 }}
                 onDownloadTest={(appId, relId) => handleDownload(appId, relId)}
+                onAppApproved={(app) => {
+                  loadApps();
+                  showToast(`App "${app.name}" approved and live on ZuzuStore!`);
+                }}
+              />
+            )}
+
+            {currentView === 'developer_console' && developer && (
+              <DeveloperConsole
+                developer={developer}
+                onLogout={() => {
+                  setDeveloper(null);
+                  setCurrentView('store');
+                  showToast('Signed out of Developer Console.');
+                }}
+                onBackToStore={() => {
+                  setCurrentView('store');
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
               />
             )}
           </>
@@ -824,6 +866,18 @@ export default function App() {
           setAdmin(newAdmin);
           setCurrentView('upload');
           showToast(`Welcome back, ${newAdmin.name}!`);
+        }}
+      />
+
+      {/* Developer Authentication Modal */}
+      <DeveloperAuthModal
+        isOpen={isDevAuthModalOpen}
+        onClose={() => setIsDevAuthModalOpen(false)}
+        onSuccess={(dev) => {
+          setDeveloper(dev);
+          setCurrentView('developer_console');
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+          showToast(`Welcome, ${dev.name}! Developer Console is ready.`);
         }}
       />
 

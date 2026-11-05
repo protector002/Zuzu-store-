@@ -152,7 +152,7 @@ export async function recordReleaseTombstone(releaseId: string): Promise<void> {
 /**
  * Fetch all applications from Firestore cloud database (strictly excluding any deleted apps or releases)
  */
-export async function getAppsFromFirestore(): Promise<StoreApp[]> {
+export async function getAppsFromFirestore(includeUnapproved = false): Promise<StoreApp[]> {
   try {
     const { deletedAppIds, deletedReleaseIds } = await getTombstonesFromFirestore();
     const appsRef = collection(db, APPS_COLLECTION);
@@ -173,6 +173,11 @@ export async function getAppsFromFirestore(): Promise<StoreApp[]> {
       // Filter out any deleted release/version from this app
       if (Array.isArray(data.releases)) {
         data.releases = data.releases.filter((r) => !deletedReleaseIds.has(r.id));
+      }
+
+      // Public visitors only see approved apps
+      if (!includeUnapproved && data.approvalStatus && data.approvalStatus !== 'approved') {
+        return;
       }
 
       apps.push(data);

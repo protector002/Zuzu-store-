@@ -186,5 +186,142 @@
     ],
     "category": "Entertainment",
     "description": "🚨🍿 THE WAIT IS OVER! ZUZU IS BACK! 🔥\n\nWe sincerely apologize for the recent downtime and thank you for your patience, understanding, and continued support. ❤️🙏\n\n🎬 NOW BACK WITH EXCITING NEW FEATURES!\n\n🍿 Movies & Entertainment\n📺 Exciting Series\n⚽ Football & Sports\n🇺🇬 Luganda-Translated Movies\n\n🚀 We're back, bringing you more entertainment to explore!\n\n📲 OPEN ZUZU NOW AND ENJOY THE NEW EXPERIENCE!\n\n💙 ZUZU MOVIES\nFrom Zuzu Technologies, powered by Protekta Technologies."
+  },
+  {
+    "downloadsTotal": 2,
+    "name": "Zuzu  📺",
+    "heroImageUrl": "/zuzustore-logo.png",
+    "architecture": "Universal (arm64-v8a)",
+    "iconUrl": "/zuzustore-logo.png",
+    "rating": 0,
+    "tagline": "Zuzu  📺 for Android",
+    "isOfficial": true,
+    "ratingCount": 0,
+    "category": "TV & Movies",
+    "features": [
+      {
+        "title": "Native APK Performance",
+        "description": "Direct distribution without 3rd-party ad libraries or telemetry."
+      },
+      {
+        "description": "Published and verified by sseruwagijohn452@gmail.com.",
+        "title": "Verified Publisher Build"
+      }
+    ],
+    "slug": "zuzu",
+    "description": "Zuzu  📺 official APK build.",
+    "reviews": [],
+    "developer": {
+      "name": "John Sseruwagi (Publisher)",
+      "email": "sseruwagijohn452@gmail.com",
+      "verified": true
+    },
+    "releases": [
+      {
+        "version": "1.0.0",
+        "platform": "Android TV",
+        "minOS": "Android TV 9.0+ / Fire OS 7+",
+        "id": "rel-1793689300408",
+        "releaseDate": "November 3, 2026",
+        "isLatest": true,
+        "fileSize": "31.86 MB",
+        "sha256Checksum": "d6216b4b055660fe02841601cfc7ca0d4b1614f97a3688149357359840164f41",
+        "downloadCount": 2,
+        "changelog": [
+          "Initial public APK release."
+        ],
+        "fileName": "zuzu.apk",
+        "buildNumber": 1
+      }
+    ],
+    "id": "app-1793689300408",
+    "appEdition": "tv",
+    "packageId": "com.zuzu.zuzu",
+    "createdAt": "2026-11-03T07:01:40.437Z",
+    "screenshots": [
+      "/zuzustore-logo.png"
+    ],
+    "permissions": [
+      "android.permission.INTERNET",
+      "android.permission.ACCESS_NETWORK_STATE"
+    ],
+    "currentVersion": "1.0.0",
+    "isTvCompatible": true,
+    "updatedAt": "2026-11-04T10:57:36.138Z",
+    "minRequirements": {
+      "Android TV": "Android TV 9.0+ / Fire OS 7+"
+    },
+    "supportedPlatforms": [
+      "Android TV"
+    ]
+  },
+  {
+    "screenshots": [
+      "/zuzustore-logo.png"
+    ],
+    "permissions": [
+      "android.permission.INTERNET",
+      "android.permission.ACCESS_NETWORK_STATE"
+    ],
+    "updatedAt": "2026-11-05T17:49:08.865Z",
+    "slug": "zuzu",
+    "downloadsTotal": 27,
+    "packageId": "com.zuzu.zuzu",
+    "createdAt": "2026-11-03T06:52:12.275Z",
+    "supportedPlatforms": [
+      "Android"
+    ],
+    "minRequirements": {
+      "Android": "Android 8.0+"
+    },
+    "appEdition": "phone",
+    "name": "Zuzu 📱",
+    "id": "app-1793688732274",
+    "developer": {
+      "name": "John Sseruwagi (Publisher)",
+      "email": "sseruwagijohn452@gmail.com",
+      "verified": true
+    },
+    "releases": [
+      {
+        "fileName": "zuzu.apk",
+        "changelog": [
+          "Initial public APK release."
+        ],
+        "downloadCount": 27,
+        "fileSize": "31.86 MB",
+        "isLatest": true,
+        "sha256Checksum": "988b5e69d4d93f33e3d8b095cb14475f9432dba3021332b133545e770f26c409",
+        "directDownloadUrl": "https://drive.usercontent.google.com/download?id=1_P-40n9apwPNm7OhUoD4SgfxPTbvBwBb&export=download&confirm=t",
+        "buildNumber": 1,
+        "id": "rel-1793688732274",
+        "version": "4",
+        "releaseDate": "November 3, 2026",
+        "minOS": "Android 8.0+",
+        "platform": "Android"
+      }
+    ],
+    "description": "Movies series entertainment and sports",
+    "features": [
+      {
+        "title": "Native APK Performance",
+        "description": "Direct distribution without 3rd-party ad libraries or telemetry."
+      },
+      {
+        "description": "Published and verified by sseruwagijohn452@gmail.com.",
+        "title": "Verified Publisher Build"
+      }
+    ],
+    "architecture": "Universal (arm64-v8a)",
+    "heroImageUrl": "/zuzustore-logo.png",
+    "reviews": [],
+    "rating": 0,
+    "isOfficial": true,
+    "currentVersion": "4",
+    "category": "Entertainment",
+    "iconUrl": "/zuzustore-logo.png",
+    "tagline": "Zuzu 📱 for Android",
+    "isTvCompatible": false,
+    "ratingCount": 0
   }
 ]
