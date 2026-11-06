@@ -1,4 +1,4 @@
-import { StoreApp, AdminUser, DeveloperUser } from '../types';
+import { StoreApp, AdminUser, DeveloperUser, DeveloperAccountAdminView, AdminBroadcast, DeveloperStatus } from '../types';
 import {
   getAppsFromFirestore,
   saveAppToFirestore,
@@ -1050,6 +1050,187 @@ export async function rejectAppSubmission(
     saveAppToFirestore(data.app).catch((e) => console.warn('Rejected app firestore update notice:', e));
   }
 
+  return data;
+}
+
+// =====================================
+// Super Admin God Mode & Control APIs
+// =====================================
+
+export async function fetchAdminDevelopers(): Promise<DeveloperAccountAdminView[]> {
+  try {
+    const res = await fetch('/api/admin/developers', {
+      headers: {
+        ...getAuthHeaders()
+      }
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data.developers)) {
+        return data.developers;
+      }
+    }
+  } catch (err) {
+    console.warn('Error fetching admin developers:', err);
+  }
+  return [];
+}
+
+export async function updateDeveloperStatus(
+  devId: string,
+  status: DeveloperStatus,
+  reason?: string
+): Promise<{ success: boolean; message: string; developer: any }> {
+  const res = await fetch(`/api/admin/developers/${encodeURIComponent(devId)}/status`, {
+    method: 'POST',
+    headers: {
+      ...getAuthHeaders(),
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ status, reason })
+  });
+
+  const data = await res.json();
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || 'Failed to update developer status.');
+  }
+  return data;
+}
+
+export async function deleteDeveloperAccount(devId: string): Promise<{ success: boolean; message: string }> {
+  const res = await fetch(`/api/admin/developers/${encodeURIComponent(devId)}`, {
+    method: 'DELETE',
+    headers: {
+      ...getAuthHeaders()
+    }
+  });
+
+  const data = await res.json();
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || 'Failed to delete developer account.');
+  }
+  return data;
+}
+
+export async function fetchDeveloperAppsAdmin(devId: string): Promise<StoreApp[]> {
+  try {
+    const res = await fetch(`/api/admin/developers/${encodeURIComponent(devId)}/apps`, {
+      headers: {
+        ...getAuthHeaders()
+      }
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data.apps)) {
+        return data.apps;
+      }
+    }
+  } catch (err) {
+    console.warn('Error fetching developer apps:', err);
+  }
+  return [];
+}
+
+export async function takedownApp(
+  appId: string,
+  reason?: string
+): Promise<{ success: boolean; app: StoreApp; message: string }> {
+  const res = await fetch(`/api/admin/apps/${encodeURIComponent(appId)}/takedown`, {
+    method: 'POST',
+    headers: {
+      ...getAuthHeaders(),
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ reason })
+  });
+
+  const data = await res.json();
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || 'Failed to take down application.');
+  }
+
+  if (data.app) {
+    saveAppToFirestore(data.app).catch((e) => console.warn('Takedown firestore update notice:', e));
+  }
+
+  return data;
+}
+
+export async function restoreApp(appId: string): Promise<{ success: boolean; app: StoreApp; message: string }> {
+  const res = await fetch(`/api/admin/apps/${encodeURIComponent(appId)}/restore`, {
+    method: 'POST',
+    headers: {
+      ...getAuthHeaders(),
+      'Content-Type': 'application/json'
+    }
+  });
+
+  const data = await res.json();
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || 'Failed to restore application.');
+  }
+
+  if (data.app) {
+    saveAppToFirestore(data.app).catch((e) => console.warn('Restore firestore update notice:', e));
+  }
+
+  return data;
+}
+
+export async function overrideAppMetadata(
+  appId: string,
+  overrides: Partial<StoreApp>
+): Promise<{ success: boolean; app: StoreApp; message: string }> {
+  const res = await fetch(`/api/admin/apps/${encodeURIComponent(appId)}/override`, {
+    method: 'PATCH',
+    headers: {
+      ...getAuthHeaders(),
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(overrides)
+  });
+
+  const data = await res.json();
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || 'Failed to override application metadata.');
+  }
+
+  if (data.app) {
+    saveAppToFirestore(data.app).catch((e) => console.warn('Override firestore update notice:', e));
+  }
+
+  return data;
+}
+
+export async function fetchBroadcast(): Promise<AdminBroadcast | null> {
+  try {
+    const res = await fetch('/api/broadcast');
+    if (res.ok) {
+      const data = await res.json();
+      return data.broadcast || null;
+    }
+  } catch (err) {
+    console.warn('Error fetching system broadcast:', err);
+  }
+  return null;
+}
+
+export async function saveAdminBroadcast(
+  broadcast: Partial<AdminBroadcast>
+): Promise<{ success: boolean; broadcast: AdminBroadcast; message: string }> {
+  const res = await fetch('/api/admin/broadcast', {
+    method: 'POST',
+    headers: {
+      ...getAuthHeaders(),
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(broadcast)
+  });
+
+  const data = await res.json();
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || 'Failed to publish broadcast banner.');
+  }
   return data;
 }
 

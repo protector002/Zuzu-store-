@@ -29,11 +29,36 @@ import {
   Check,
   XCircle,
   User,
-  ShieldAlert
+  ShieldAlert,
+  Crown,
+  Ban,
+  Snowflake,
+  Megaphone,
+  Search,
+  Sliders,
+  Edit3,
+  Radio,
+  EyeOff,
+  UserCheck,
+  UserX
 } from 'lucide-react';
-import { StoreApp, Platform, AppCategory, AdminUser } from '../types';
+import { StoreApp, Platform, AppCategory, AdminUser, DeveloperAccountAdminView, AdminBroadcast, DeveloperStatus } from '../types';
 import { saveApkBlob } from '../utils/fileStorage';
-import { verifyDirectUrl, approveAppSubmission, rejectAppSubmission, fetchPendingSubmissions } from '../services/api';
+import {
+  verifyDirectUrl,
+  approveAppSubmission,
+  rejectAppSubmission,
+  fetchPendingSubmissions,
+  fetchAdminDevelopers,
+  updateDeveloperStatus,
+  deleteDeveloperAccount,
+  fetchDeveloperAppsAdmin,
+  takedownApp,
+  restoreApp,
+  overrideAppMetadata,
+  fetchBroadcast,
+  saveAdminBroadcast
+} from '../services/api';
 import { isTvApp, isPhoneApp, filterPhoneApps, filterTvApps } from '../utils/editionHelper';
 
 interface PublisherPortalProps {
@@ -49,6 +74,7 @@ interface PublisherPortalProps {
   onViewAppInStore: (app: StoreApp) => void;
   onDownloadTest: (appId: string, releaseId?: string) => Promise<void>;
   onAppApproved?: (app: StoreApp) => void;
+  onRefreshCatalog?: () => void;
 }
 
 // Sample mobile screenshots for testing/previewing
@@ -183,8 +209,9 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
   onViewAppInStore,
   onDownloadTest,
   onAppApproved,
+  onRefreshCatalog,
 }) => {
-  const [activeTab, setActiveTab] = useState<'upload-new' | 'update-existing' | 'manage' | 'submissions'>('upload-new');
+  const [activeTab, setActiveTab] = useState<'upload-new' | 'update-existing' | 'manage' | 'submissions' | 'god-mode'>('upload-new');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -196,6 +223,80 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
   const [rejectModalApp, setRejectModalApp] = useState<StoreApp | null>(null);
   const [rejectReasonText, setRejectReasonText] = useState('');
   const [reviewingAppId, setReviewingAppId] = useState<string | null>(null);
+
+  // ==========================================
+  // SUPER ADMIN GOD MODE STATE
+  // ==========================================
+  const [developers, setDevelopers] = useState<DeveloperAccountAdminView[]>([]);
+  const [isLoadingDevelopers, setIsLoadingDevelopers] = useState(false);
+  const [devSearchTerm, setDevSearchTerm] = useState('');
+  const [devFilterStatus, setDevFilterStatus] = useState<'all' | 'active' | 'frozen' | 'banned'>('all');
+
+  // Inspect developer apps modal
+  const [inspectDev, setInspectDev] = useState<DeveloperAccountAdminView | null>(null);
+  const [inspectDevApps, setInspectDevApps] = useState<StoreApp[]>([]);
+  const [isLoadingDevApps, setIsLoadingDevApps] = useState(false);
+
+  // Status change modal (freeze / ban / unfreeze)
+  const [statusModalDev, setStatusModalDev] = useState<DeveloperAccountAdminView | null>(null);
+  const [newStatusChoice, setNewStatusChoice] = useState<DeveloperStatus>('frozen');
+  const [statusReasonInput, setStatusReasonInput] = useState('');
+  const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
+
+  // Delete developer modal
+  const [deleteDevModal, setDeleteDevModal] = useState<DeveloperAccountAdminView | null>(null);
+  const [isDeletingDev, setIsDeletingDev] = useState(false);
+
+  // Soft Takedown Modal
+  const [takedownAppModal, setTakedownAppModal] = useState<StoreApp | null>(null);
+  const [takedownReasonInput, setTakedownReasonInput] = useState('');
+  const [isTakedownSaving, setIsTakedownSaving] = useState(false);
+
+  // Super Admin Direct Metadata Override Modal
+  const [overrideAppModal, setOverrideAppModal] = useState<StoreApp | null>(null);
+  const [overrideFormData, setOverrideFormData] = useState({
+    name: '',
+    tagline: '',
+    description: '',
+    category: 'Utilities',
+    directDownloadUrl: '',
+    iconUrl: ''
+  });
+  const [isSavingOverride, setIsSavingOverride] = useState(false);
+
+  // Live System Broadcast Banner State
+  const [broadcast, setBroadcast] = useState<AdminBroadcast>({
+    message: '',
+    level: 'info',
+    active: false,
+    link: '',
+    linkText: ''
+  });
+  const [isSavingBroadcast, setIsSavingBroadcast] = useState(false);
+  const [broadcastToast, setBroadcastToast] = useState<string | null>(null);
+
+  const loadDevelopers = async () => {
+    setIsLoadingDevelopers(true);
+    try {
+      const list = await fetchAdminDevelopers();
+      setDevelopers(list);
+    } catch (e) {
+      console.warn('Failed to load developers:', e);
+    } finally {
+      setIsLoadingDevelopers(false);
+    }
+  };
+
+  const loadBroadcastData = async () => {
+    try {
+      const b = await fetchBroadcast();
+      if (b) {
+        setBroadcast(b);
+      }
+    } catch (e) {
+      console.warn('Failed to load broadcast:', e);
+    }
+  };
 
   const loadPending = async () => {
     setIsLoadingSubmissions(true);
@@ -212,8 +313,118 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
   useEffect(() => {
     if (admin) {
       loadPending();
+      loadDevelopers();
+      loadBroadcastData();
     }
   }, [admin]);
+
+  const handleUpdateDevStatus = async () => {
+    if (!statusModalDev) return;
+    setIsUpdatingStatus(true);
+    try {
+      const res = await updateDeveloperStatus(statusModalDev.id, newStatusChoice, statusReasonInput.trim());
+      setSuccessMessage(res.message);
+      setStatusModalDev(null);
+      setStatusReasonInput('');
+      await loadDevelopers();
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Failed to update developer status.');
+    } finally {
+      setIsUpdatingStatus(false);
+    }
+  };
+
+  const handleDeleteDeveloper = async () => {
+    if (!deleteDevModal) return;
+    setIsDeletingDev(true);
+    try {
+      const res = await deleteDeveloperAccount(deleteDevModal.id);
+      setSuccessMessage(res.message);
+      setDeleteDevModal(null);
+      await loadDevelopers();
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Failed to delete developer account.');
+    } finally {
+      setIsDeletingDev(false);
+    }
+  };
+
+  const handleOpenInspectDev = async (dev: DeveloperAccountAdminView) => {
+    setInspectDev(dev);
+    setIsLoadingDevApps(true);
+    try {
+      const devApps = await fetchDeveloperAppsAdmin(dev.id);
+      setInspectDevApps(devApps);
+    } catch (e) {
+      console.warn('Failed to load dev apps:', e);
+    } finally {
+      setIsLoadingDevApps(false);
+    }
+  };
+
+  const handleTakedownApp = async () => {
+    if (!takedownAppModal) return;
+    setIsTakedownSaving(true);
+    try {
+      const res = await takedownApp(takedownAppModal.id, takedownReasonInput.trim());
+      setSuccessMessage(res.message);
+      setTakedownAppModal(null);
+      setTakedownReasonInput('');
+      if (onRefreshCatalog) onRefreshCatalog();
+      await loadDevelopers();
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Failed to take down application.');
+    } finally {
+      setIsTakedownSaving(false);
+    }
+  };
+
+  const handleRestoreApp = async (appId: string) => {
+    try {
+      const res = await restoreApp(appId);
+      setSuccessMessage(res.message);
+      if (onRefreshCatalog) onRefreshCatalog();
+      await loadDevelopers();
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Failed to restore application.');
+    }
+  };
+
+  const handleSaveOverride = async () => {
+    if (!overrideAppModal) return;
+    setIsSavingOverride(true);
+    try {
+      const res = await overrideAppMetadata(overrideAppModal.id, {
+        name: overrideFormData.name.trim(),
+        tagline: overrideFormData.tagline.trim(),
+        description: overrideFormData.description.trim(),
+        category: overrideFormData.category,
+        iconUrl: overrideFormData.iconUrl.trim() || undefined
+      });
+      setSuccessMessage(res.message);
+      setOverrideAppModal(null);
+      if (onRefreshCatalog) onRefreshCatalog();
+      await loadDevelopers();
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Failed to override application metadata.');
+    } finally {
+      setIsSavingOverride(false);
+    }
+  };
+
+  const handleSaveBroadcast = async () => {
+    setIsSavingBroadcast(true);
+    try {
+      const res = await saveAdminBroadcast(broadcast);
+      setBroadcast(res.broadcast);
+      setBroadcastToast('Broadcast banner published successfully across the platform!');
+      setTimeout(() => setBroadcastToast(null), 3500);
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Failed to save broadcast.');
+    } finally {
+      setIsSavingBroadcast(false);
+    }
+  };
 
   const handleApprove = async (appId: string) => {
     setReviewingAppId(appId);
@@ -866,6 +1077,21 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
                 {pendingSubmissions.length}
               </span>
             )}
+          </button>
+          <button
+            onClick={() => {
+              setActiveTab('god-mode');
+              loadDevelopers();
+              loadBroadcastData();
+            }}
+            className={`px-3.5 py-2 text-xs font-black rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
+              activeTab === 'god-mode'
+                ? 'bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 text-neutral-950 shadow-lg shadow-amber-500/20'
+                : 'text-amber-400 hover:text-amber-300 hover:bg-neutral-800'
+            }`}
+          >
+            <Crown className="w-3.5 h-3.5 text-amber-500 shrink-0 fill-current" />
+            <span>God Mode &amp; Developers</span>
           </button>
         </div>
       </div>
@@ -2037,6 +2263,12 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
                                 Verified
                               </span>
                             )}
+                            {app.isTakenDown && (
+                              <span className="text-[10px] text-red-400 font-bold bg-red-950/90 px-2 py-0.5 rounded border border-red-800/80 flex items-center gap-1 animate-pulse">
+                                <EyeOff className="w-3 h-3 text-red-400" />
+                                <span>Taken Down from Store</span>
+                              </span>
+                            )}
                           </div>
                           <p className="text-xs text-neutral-400 line-clamp-1">{app.tagline}</p>
                           <div className="flex items-center gap-2 text-xs text-neutral-500 mt-1">
@@ -2085,6 +2317,53 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
                     >
                       <Download className="w-3.5 h-3.5 text-cyan-400" />
                       <span>Test Download</span>
+                    </button>
+
+                    {/* God Mode: Soft Takedown vs Restore */}
+                    {app.isTakenDown ? (
+                      <button
+                        type="button"
+                        onClick={() => handleRestoreApp(app.id)}
+                        className="px-3 py-1.5 text-xs font-bold text-emerald-400 hover:text-white bg-emerald-950/60 hover:bg-emerald-900/80 border border-emerald-700/80 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer shadow-sm"
+                        title="Restore app back to the public storefront"
+                      >
+                        <Eye className="w-3.5 h-3.5" />
+                        <span>Restore Live</span>
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setTakedownAppModal(app);
+                          setTakedownReasonInput('');
+                        }}
+                        className="px-3 py-1.5 text-xs font-semibold text-rose-300 hover:text-white bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/60 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
+                        title="Soft unpublish: remove from public store without deleting file"
+                      >
+                        <EyeOff className="w-3.5 h-3.5 text-rose-400" />
+                        <span>Take Down</span>
+                      </button>
+                    )}
+
+                    {/* God Mode: Super Admin Metadata Override */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setOverrideAppModal(app);
+                        setOverrideFormData({
+                          name: app.name,
+                          tagline: app.tagline || '',
+                          description: app.description || '',
+                          category: app.category || 'Utilities',
+                          directDownloadUrl: app.releases?.[0]?.directDownloadUrl || '',
+                          iconUrl: app.iconUrl || ''
+                        });
+                      }}
+                      className="px-3 py-1.5 text-xs font-semibold text-amber-300 hover:text-white bg-amber-950/40 hover:bg-amber-900/60 border border-amber-800/60 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
+                      title="Direct Super Admin metadata override"
+                    >
+                      <Edit3 className="w-3.5 h-3.5 text-amber-400" />
+                      <span>Override</span>
                     </button>
 
                     <button
@@ -2395,6 +2674,562 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
               })}
             </div>
           )}
+        </div>
+      )}
+
+      {/* TAB 5: SUPER ADMIN GOD MODE & DEVELOPER CONTROL */}
+      {activeTab === 'god-mode' && (
+        <div className="space-y-8 animate-fade-in">
+          {/* God Mode Authority Banner */}
+          <div className="p-6 rounded-3xl bg-gradient-to-r from-neutral-900 via-amber-950/20 to-neutral-900 border border-amber-500/30 shadow-2xl relative overflow-hidden">
+            <div className="absolute top-0 right-0 w-96 h-96 bg-amber-500/10 rounded-full blur-3xl pointer-events-none -mr-20 -mt-20" />
+            
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 relative z-10">
+              <div className="flex items-center gap-3.5">
+                <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center text-neutral-950 shadow-lg shadow-amber-500/30 shrink-0">
+                  <Crown className="w-6 h-6 fill-neutral-950" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight">
+                      Super Admin God Mode
+                    </h2>
+                    <span className="px-2 py-0.5 text-[10px] font-black uppercase tracking-wider bg-amber-500 text-neutral-950 rounded-full shadow">
+                      Master Control
+                    </span>
+                  </div>
+                  <p className="text-xs text-amber-200/80 mt-0.5">
+                    Authority over developer accounts, soft takedowns, metadata overrides, and live broadcast banners.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 self-start sm:self-auto">
+                <button
+                  type="button"
+                  onClick={() => {
+                    loadDevelopers();
+                    loadBroadcastData();
+                  }}
+                  disabled={isLoadingDevelopers}
+                  className="px-3.5 py-2 text-xs font-semibold text-neutral-300 hover:text-white bg-neutral-900/90 border border-neutral-700/80 rounded-xl hover:bg-neutral-800 transition-colors flex items-center gap-2 cursor-pointer shadow-sm"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isLoadingDevelopers ? 'animate-spin text-amber-400' : ''}`} />
+                  <span>Refresh Registry</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Platform Stats Row */}
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mt-6 pt-5 border-t border-neutral-800/80">
+              <div className="p-3 bg-neutral-950/70 border border-neutral-800 rounded-xl">
+                <div className="text-[11px] font-medium text-neutral-400">Total Developers</div>
+                <div className="text-xl font-black text-white mt-1 tabular-nums">
+                  {developers.length}
+                </div>
+              </div>
+
+              <div className="p-3 bg-emerald-950/30 border border-emerald-900/40 rounded-xl">
+                <div className="text-[11px] font-medium text-emerald-400">Active Developers</div>
+                <div className="text-xl font-black text-emerald-300 mt-1 tabular-nums">
+                  {developers.filter((d) => d.status === 'active' || !d.status).length}
+                </div>
+              </div>
+
+              <div className="p-3 bg-cyan-950/30 border border-cyan-900/40 rounded-xl">
+                <div className="text-[11px] font-medium text-cyan-400">Frozen Accounts</div>
+                <div className="text-xl font-black text-cyan-300 mt-1 tabular-nums">
+                  {developers.filter((d) => d.status === 'frozen').length}
+                </div>
+              </div>
+
+              <div className="p-3 bg-rose-950/30 border border-rose-900/40 rounded-xl">
+                <div className="text-[11px] font-medium text-rose-400">Banned Accounts</div>
+                <div className="text-xl font-black text-rose-300 mt-1 tabular-nums">
+                  {developers.filter((d) => d.status === 'banned').length}
+                </div>
+              </div>
+
+              <div className="p-3 bg-amber-950/30 border border-amber-900/40 rounded-xl col-span-2 sm:col-span-1">
+                <div className="text-[11px] font-medium text-amber-400">Store Takedowns</div>
+                <div className="text-xl font-black text-amber-300 mt-1 tabular-nums">
+                  {apps.filter((a) => a.isTakenDown).length}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Broadcast Banner Toast Notification */}
+          {broadcastToast && (
+            <div className="p-4 bg-amber-950/50 border border-amber-700/60 rounded-2xl text-xs text-amber-200 flex items-center justify-between shadow-lg animate-fade-in">
+              <div className="flex items-center gap-2.5">
+                <Megaphone className="w-4 h-4 text-amber-400 shrink-0" />
+                <span>{broadcastToast}</span>
+              </div>
+              <button onClick={() => setBroadcastToast(null)} className="text-amber-400 hover:underline">
+                Dismiss
+              </button>
+            </div>
+          )}
+
+          {/* SUB-PANEL 1: SYSTEM BROADCAST CONSOLE */}
+          <div className="p-6 bg-neutral-900/60 border border-neutral-800 rounded-3xl space-y-5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-neutral-800 pb-4">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-400">
+                  <Megaphone className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">Live System Broadcast Banner</h3>
+                  <p className="text-xs text-neutral-400">
+                    Send platform-wide announcements to all developer consoles and storefront visitors in real-time.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <label className="flex items-center gap-2 text-xs font-bold text-neutral-300 cursor-pointer">
+                  <span>Banner Active:</span>
+                  <input
+                    type="checkbox"
+                    checked={broadcast.active}
+                    onChange={(e) => setBroadcast((prev) => ({ ...prev, active: e.target.checked }))}
+                    className="w-4 h-4 accent-amber-500 rounded cursor-pointer"
+                  />
+                </label>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-5">
+              <div className="md:col-span-8 space-y-4">
+                <div>
+                  <label className="block text-xs font-semibold text-neutral-300 mb-1.5">
+                    Announcement Message
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={broadcast.message}
+                    onChange={(e) => setBroadcast((prev) => ({ ...prev, message: e.target.value }))}
+                    placeholder="e.g. Scheduled store maintenance tonight at 02:00 UTC. APK publishing will be paused."
+                    className="w-full bg-neutral-950 border border-neutral-800 focus:border-amber-500 rounded-xl py-2 px-3 text-xs text-white placeholder-neutral-500 outline-none"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-neutral-300 mb-1.5">
+                      Optional Action URL
+                    </label>
+                    <input
+                      type="text"
+                      value={broadcast.link || ''}
+                      onChange={(e) => setBroadcast((prev) => ({ ...prev, link: e.target.value }))}
+                      placeholder="e.g. /#faq or https://..."
+                      className="w-full bg-neutral-950 border border-neutral-800 focus:border-amber-500 rounded-xl py-2 px-3 text-xs text-white placeholder-neutral-500 outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-neutral-300 mb-1.5">
+                      Button / Link Label
+                    </label>
+                    <input
+                      type="text"
+                      value={broadcast.linkText || ''}
+                      onChange={(e) => setBroadcast((prev) => ({ ...prev, linkText: e.target.value }))}
+                      placeholder="e.g. Learn More"
+                      className="w-full bg-neutral-950 border border-neutral-800 focus:border-amber-500 rounded-xl py-2 px-3 text-xs text-white placeholder-neutral-500 outline-none"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-neutral-300 mb-1.5">
+                    Broadcast Severity Level
+                  </label>
+                  <div className="grid grid-cols-3 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setBroadcast((prev) => ({ ...prev, level: 'info' }))}
+                      className={`py-2 px-3 text-xs font-bold rounded-xl border transition-colors flex items-center justify-center gap-1.5 cursor-pointer ${
+                        broadcast.level === 'info'
+                          ? 'bg-cyan-950 text-cyan-300 border-cyan-600'
+                          : 'bg-neutral-950 text-neutral-400 border-neutral-800 hover:text-white'
+                      }`}
+                    >
+                      <span>Info (Cyan)</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setBroadcast((prev) => ({ ...prev, level: 'warning' }))}
+                      className={`py-2 px-3 text-xs font-bold rounded-xl border transition-colors flex items-center justify-center gap-1.5 cursor-pointer ${
+                        broadcast.level === 'warning'
+                          ? 'bg-amber-950 text-amber-300 border-amber-600'
+                          : 'bg-neutral-950 text-neutral-400 border-neutral-800 hover:text-white'
+                      }`}
+                    >
+                      <span>Warning (Amber)</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setBroadcast((prev) => ({ ...prev, level: 'alert' }))}
+                      className={`py-2 px-3 text-xs font-bold rounded-xl border transition-colors flex items-center justify-center gap-1.5 cursor-pointer ${
+                        broadcast.level === 'alert'
+                          ? 'bg-rose-950 text-rose-300 border-rose-600'
+                          : 'bg-neutral-950 text-neutral-400 border-neutral-800 hover:text-white'
+                      }`}
+                    >
+                      <span>Alert (Red)</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Live Preview Column */}
+              <div className="md:col-span-4 flex flex-col justify-between p-4 bg-neutral-950 rounded-2xl border border-neutral-800 space-y-3">
+                <div className="space-y-2">
+                  <div className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider">
+                    Live Banner Preview
+                  </div>
+                  {broadcast.active ? (
+                    <div
+                      className={`p-3 rounded-xl border text-xs flex flex-col gap-2 ${
+                        broadcast.level === 'alert'
+                          ? 'bg-rose-950/60 border-rose-800 text-rose-200'
+                          : broadcast.level === 'warning'
+                          ? 'bg-amber-950/60 border-amber-800 text-amber-200'
+                          : 'bg-cyan-950/60 border-cyan-800 text-cyan-200'
+                      }`}
+                    >
+                      <div className="flex items-start gap-2">
+                        <Megaphone className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                        <span className="leading-snug">{broadcast.message || 'No broadcast message written yet.'}</span>
+                      </div>
+                      {broadcast.linkText && (
+                        <span className="font-bold underline text-[11px] self-end cursor-pointer">
+                          {broadcast.linkText} →
+                        </span>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="p-3 rounded-xl border border-dashed border-neutral-800 text-neutral-500 text-xs text-center italic">
+                      Banner is currently turned OFF.
+                    </div>
+                  )}
+                </div>
+
+                <button
+                  type="button"
+                  disabled={isSavingBroadcast}
+                  onClick={handleSaveBroadcast}
+                  className="w-full py-2.5 px-4 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-neutral-950 rounded-xl text-xs font-black shadow-lg shadow-amber-500/20 flex items-center justify-center gap-2 cursor-pointer transition-transform active:scale-95 disabled:opacity-50"
+                >
+                  {isSavingBroadcast ? (
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Check className="w-3.5 h-3.5 stroke-[3]" />
+                  )}
+                  <span>Save &amp; Broadcast Announcement</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* SUB-PANEL 2: DEVELOPER MASTER ROSTER & CONTROLS */}
+          <div className="p-6 bg-neutral-900/60 border border-neutral-800 rounded-3xl space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-neutral-800 pb-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <UserCheck className="w-5 h-5 text-amber-400" />
+                  <h3 className="text-base font-bold text-white">Registered Developer Directory</h3>
+                  <span className="text-xs text-neutral-500 font-mono">({developers.length} total)</span>
+                </div>
+                <p className="text-xs text-neutral-400 mt-0.5">
+                  Full authority to inspect apps, freeze publishing actions, ban accounts, or delete developers.
+                </p>
+              </div>
+
+              {/* Status Filter Buttons */}
+              <div className="flex flex-wrap items-center gap-1.5 p-1 bg-neutral-950 border border-neutral-800 rounded-xl">
+                {(['all', 'active', 'frozen', 'banned'] as const).map((st) => (
+                  <button
+                    key={st}
+                    type="button"
+                    onClick={() => setDevFilterStatus(st)}
+                    className={`px-3 py-1 text-xs font-semibold rounded-lg capitalize transition-colors cursor-pointer ${
+                      devFilterStatus === st
+                        ? 'bg-neutral-800 text-white shadow-sm'
+                        : 'text-neutral-400 hover:text-neutral-200'
+                    }`}
+                  >
+                    {st}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Search Input */}
+            <div className="relative">
+              <Search className="w-4 h-4 text-neutral-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={devSearchTerm}
+                onChange={(e) => setDevSearchTerm(e.target.value)}
+                placeholder="Search developers by name, email, or company name..."
+                className="w-full bg-neutral-950 border border-neutral-800 focus:border-amber-500 rounded-xl py-2 pl-10 pr-4 text-xs text-white placeholder-neutral-500 outline-none"
+              />
+            </div>
+
+            {/* Developers Table / Cards */}
+            {isLoadingDevelopers ? (
+              <div className="py-12 text-center text-xs text-neutral-500 flex items-center justify-center gap-2">
+                <RefreshCw className="w-4 h-4 animate-spin text-amber-400" />
+                <span>Loading developer accounts...</span>
+              </div>
+            ) : developers.length === 0 ? (
+              <div className="p-10 text-center bg-neutral-950 rounded-2xl border border-neutral-800 space-y-2">
+                <User className="w-8 h-8 text-neutral-600 mx-auto" />
+                <p className="text-xs text-neutral-400 font-medium">No developer accounts registered yet.</p>
+                <p className="text-[11px] text-neutral-500">
+                  When developers create accounts via the Developer Portal, they will appear here with full controls.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {developers
+                  .filter((d) => {
+                    if (devFilterStatus !== 'all' && (d.status || 'active') !== devFilterStatus) {
+                      return false;
+                    }
+                    if (!devSearchTerm.trim()) return true;
+                    const q = devSearchTerm.toLowerCase();
+                    return (
+                      d.name.toLowerCase().includes(q) ||
+                      d.email.toLowerCase().includes(q) ||
+                      (d.companyName && d.companyName.toLowerCase().includes(q))
+                    );
+                  })
+                  .map((dev) => {
+                    const status = dev.status || 'active';
+
+                    return (
+                      <div
+                        key={dev.id}
+                        className="p-4 bg-neutral-950/80 border border-neutral-800/80 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-4 hover:border-neutral-700/80 transition-colors"
+                      >
+                        <div className="flex items-start gap-3.5">
+                          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-neutral-800 to-neutral-900 border border-neutral-700/60 flex items-center justify-center text-xs font-bold text-white shrink-0">
+                            {dev.name.slice(0, 2).toUpperCase()}
+                          </div>
+
+                          <div className="space-y-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <h4 className="text-sm font-bold text-white">{dev.name}</h4>
+                              {dev.companyName && (
+                                <span className="text-[11px] text-neutral-400 bg-neutral-900 px-2 py-0.5 rounded border border-neutral-800">
+                                  {dev.companyName}
+                                </span>
+                              )}
+
+                              {/* Status Badge */}
+                              {status === 'active' && (
+                                <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-emerald-950/80 text-emerald-400 border border-emerald-800 flex items-center gap-1">
+                                  <Check className="w-2.5 h-2.5 stroke-[3]" />
+                                  <span>Active</span>
+                                </span>
+                              )}
+                              {status === 'frozen' && (
+                                <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-cyan-950/80 text-cyan-400 border border-cyan-800 flex items-center gap-1">
+                                  <Snowflake className="w-2.5 h-2.5" />
+                                  <span>Frozen (Publish Disabled)</span>
+                                </span>
+                              )}
+                              {status === 'banned' && (
+                                <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-rose-950/80 text-rose-400 border border-rose-800 flex items-center gap-1">
+                                  <Ban className="w-2.5 h-2.5" />
+                                  <span>Banned</span>
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="flex flex-wrap items-center gap-3 text-xs text-neutral-400 font-mono">
+                              <span>{dev.email}</span>
+                              <span>•</span>
+                              <span>Joined: {new Date(dev.createdAt).toLocaleDateString()}</span>
+                              <span>•</span>
+                              <span className="text-amber-400 font-bold">{dev.appsCount || 0} Apps Submitted</span>
+                              <span>•</span>
+                              <span className="text-cyan-400 font-bold">{(dev.totalDownloads || 0).toLocaleString()} Downloads</span>
+                            </div>
+
+                            {/* Ban or Freeze reason display */}
+                            {dev.banReason && (
+                              <div className="text-[11px] text-rose-300 bg-rose-950/40 border border-rose-900/50 p-2 rounded-xl mt-1">
+                                <strong>Admin Note:</strong> {dev.banReason}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Developer Action Buttons */}
+                        <div className="flex flex-wrap items-center gap-2 self-end md:self-auto shrink-0">
+                          {/* Inspect Apps */}
+                          <button
+                            type="button"
+                            onClick={() => handleOpenInspectDev(dev)}
+                            className="px-3 py-1.5 text-xs font-semibold text-neutral-200 bg-neutral-900 hover:bg-neutral-800 border border-neutral-700/80 rounded-xl transition-colors flex items-center gap-1.5 cursor-pointer"
+                          >
+                            <Eye className="w-3.5 h-3.5 text-amber-400" />
+                            <span>Inspect Apps ({dev.appsCount || 0})</span>
+                          </button>
+
+                          {/* Freeze / Unfreeze */}
+                          {status === 'frozen' ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setStatusModalDev(dev);
+                                setNewStatusChoice('active');
+                                setStatusReasonInput('');
+                              }}
+                              className="px-3 py-1.5 text-xs font-bold text-emerald-400 bg-emerald-950/40 hover:bg-emerald-900/60 border border-emerald-800/80 rounded-xl transition-colors flex items-center gap-1.5 cursor-pointer"
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                              <span>Unfreeze</span>
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setStatusModalDev(dev);
+                                setNewStatusChoice('frozen');
+                                setStatusReasonInput('Publishing temporarily frozen for administrative review.');
+                              }}
+                              className="px-3 py-1.5 text-xs font-semibold text-cyan-400 bg-cyan-950/40 hover:bg-cyan-900/60 border border-cyan-800/80 rounded-xl transition-colors flex items-center gap-1.5 cursor-pointer"
+                            >
+                              <Snowflake className="w-3.5 h-3.5" />
+                              <span>Freeze</span>
+                            </button>
+                          )}
+
+                          {/* Ban / Unban */}
+                          {status === 'banned' ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setStatusModalDev(dev);
+                                setNewStatusChoice('active');
+                                setStatusReasonInput('');
+                              }}
+                              className="px-3 py-1.5 text-xs font-bold text-emerald-400 bg-emerald-950/40 hover:bg-emerald-900/60 border border-emerald-800/80 rounded-xl transition-colors flex items-center gap-1.5 cursor-pointer"
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                              <span>Unban</span>
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setStatusModalDev(dev);
+                                setNewStatusChoice('banned');
+                                setStatusReasonInput('Account banned due to violation of platform policy.');
+                              }}
+                              className="px-3 py-1.5 text-xs font-semibold text-rose-400 bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/80 rounded-xl transition-colors flex items-center gap-1.5 cursor-pointer"
+                            >
+                              <Ban className="w-3.5 h-3.5" />
+                              <span>Ban</span>
+                            </button>
+                          )}
+
+                          {/* Delete Account */}
+                          <button
+                            type="button"
+                            onClick={() => setDeleteDevModal(dev)}
+                            className="p-2 text-neutral-400 hover:text-rose-400 bg-neutral-900 hover:bg-rose-950/40 border border-neutral-800 hover:border-rose-800 rounded-xl transition-colors cursor-pointer"
+                            title="Delete Developer Account"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+            )}
+          </div>
+
+          {/* SUB-PANEL 3: STORE TAKEDOWNS & CENSORSHIP REGISTRY */}
+          <div className="p-6 bg-neutral-900/60 border border-neutral-800 rounded-3xl space-y-4">
+            <div className="flex items-center gap-2.5 border-b border-neutral-800 pb-4">
+              <div className="p-2 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400">
+                <EyeOff className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">Store Takedown Registry</h3>
+                <p className="text-xs text-neutral-400">
+                  Applications currently unpublished from the public storefront by Super Admin.
+                </p>
+              </div>
+            </div>
+
+            {apps.filter((a) => a.isTakenDown).length === 0 ? (
+              <div className="p-8 text-center text-xs text-neutral-500 bg-neutral-950 rounded-2xl border border-neutral-800">
+                No apps are currently taken down. All approved applications are live and downloadable.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {apps
+                  .filter((a) => a.isTakenDown)
+                  .map((takenApp) => (
+                    <div
+                      key={takenApp.id}
+                      className="p-4 bg-neutral-950 border border-rose-900/60 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4"
+                    >
+                      <div className="flex items-center gap-3">
+                        <img
+                          src={takenApp.iconUrl}
+                          alt={takenApp.name}
+                          className="w-12 h-12 rounded-xl object-contain border border-neutral-800 bg-neutral-900 p-1"
+                        />
+                        <div className="space-y-0.5">
+                          <div className="flex items-center gap-2">
+                            <h4 className="text-sm font-bold text-white">{takenApp.name}</h4>
+                            <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-rose-950 text-rose-400 border border-rose-800">
+                              Taken Down
+                            </span>
+                          </div>
+                          <p className="text-xs text-rose-300">
+                            <strong>Reason:</strong> {takenApp.takedownReason || 'Taken down by Super Admin'}
+                          </p>
+                          <p className="text-[11px] text-neutral-500 font-mono">
+                            Package: {takenApp.packageId} • Taken Down By: {takenApp.takenDownBy || 'Super Admin'}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 self-end sm:self-auto">
+                        <button
+                          type="button"
+                          onClick={() => handleRestoreApp(takenApp.id)}
+                          className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow transition-colors flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                          <span>Restore to Live Store</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setAppToDelete(takenApp)}
+                          className="p-2 text-rose-400 bg-neutral-900 hover:bg-rose-950/60 border border-rose-900/60 rounded-xl transition-colors cursor-pointer"
+                          title="Permanently Delete App"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -2835,6 +3670,450 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
               alt="Screenshot full preview"
               className="max-h-[80vh] w-auto object-contain rounded-2xl border border-neutral-800 shadow-2xl"
             />
+          </div>
+        </div>
+      )}
+
+      {/* GOD MODE: DEVELOPER STATUS MODAL (FREEZE / BAN / UNFREEZE) */}
+      {statusModalDev && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-fade-in">
+          <div
+            className="w-full max-w-md bg-neutral-900 border border-neutral-800 rounded-3xl p-6 shadow-2xl text-neutral-100 space-y-4"
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className="flex items-center justify-between border-b border-neutral-800 pb-3">
+              <div className="flex items-center gap-2.5">
+                <Sliders className="w-5 h-5 text-amber-400" />
+                <h3 className="text-base font-bold text-white">Manage Developer Status</h3>
+              </div>
+              <button
+                onClick={() => setStatusModalDev(null)}
+                className="p-1 text-neutral-400 hover:text-white rounded-lg"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="text-xs text-neutral-300">
+              Updating account status for <strong className="text-white font-bold">{statusModalDev.name}</strong> ({statusModalDev.email}).
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-neutral-300 mb-1.5">
+                Select Account Status
+              </label>
+              <div className="grid grid-cols-3 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setNewStatusChoice('active')}
+                  className={`py-2 px-2 text-xs font-bold rounded-xl border transition-colors flex items-center justify-center gap-1 cursor-pointer ${
+                    newStatusChoice === 'active'
+                      ? 'bg-emerald-950 text-emerald-300 border-emerald-600'
+                      : 'bg-neutral-950 text-neutral-400 border-neutral-800'
+                  }`}
+                >
+                  <Check className="w-3.5 h-3.5" />
+                  <span>Active</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setNewStatusChoice('frozen')}
+                  className={`py-2 px-2 text-xs font-bold rounded-xl border transition-colors flex items-center justify-center gap-1 cursor-pointer ${
+                    newStatusChoice === 'frozen'
+                      ? 'bg-cyan-950 text-cyan-300 border-cyan-600'
+                      : 'bg-neutral-950 text-neutral-400 border-neutral-800'
+                  }`}
+                >
+                  <Snowflake className="w-3.5 h-3.5" />
+                  <span>Freeze</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setNewStatusChoice('banned')}
+                  className={`py-2 px-2 text-xs font-bold rounded-xl border transition-colors flex items-center justify-center gap-1 cursor-pointer ${
+                    newStatusChoice === 'banned'
+                      ? 'bg-rose-950 text-rose-300 border-rose-600'
+                      : 'bg-neutral-950 text-neutral-400 border-neutral-800'
+                  }`}
+                >
+                  <Ban className="w-3.5 h-3.5" />
+                  <span>Ban</span>
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-neutral-300 mb-1.5">
+                Reason / Note for Developer
+              </label>
+              <textarea
+                rows={3}
+                value={statusReasonInput}
+                onChange={(e) => setStatusReasonInput(e.target.value)}
+                placeholder="Explain the reason for freeze or ban (shown in developer dashboard)..."
+                className="w-full bg-neutral-950 border border-neutral-800 focus:border-amber-500 rounded-xl py-2 px-3 text-xs text-white placeholder-neutral-500 outline-none"
+              />
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setStatusModalDev(null)}
+                className="px-4 py-2 text-xs font-semibold text-neutral-400 hover:text-white bg-neutral-800 rounded-xl"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isUpdatingStatus}
+                onClick={handleUpdateDevStatus}
+                className="px-5 py-2 text-xs font-bold text-neutral-950 bg-amber-500 hover:bg-amber-400 rounded-xl transition-colors flex items-center gap-1.5 shadow-lg shadow-amber-950/40 disabled:opacity-50 cursor-pointer"
+              >
+                {isUpdatingStatus ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Check className="w-3.5 h-3.5 stroke-[3]" />
+                )}
+                <span>Update Status</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* GOD MODE: DELETE DEVELOPER CONFIRMATION MODAL */}
+      {deleteDevModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-fade-in">
+          <div
+            className="w-full max-w-md bg-neutral-900 border border-neutral-800 rounded-3xl p-6 shadow-2xl text-neutral-100 space-y-4"
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className="flex items-center gap-3 text-rose-400">
+              <div className="p-2.5 rounded-xl bg-rose-950/60 border border-rose-800/60">
+                <AlertTriangle className="w-5 h-5 text-rose-400" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">Delete Developer Account</h3>
+                <p className="text-xs text-neutral-400">Irreversible administrative deletion</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-neutral-300 leading-relaxed bg-neutral-950 p-3.5 rounded-xl border border-neutral-800/80">
+              Are you sure you want to permanently delete <strong className="text-white font-semibold">"{deleteDevModal.name}"</strong> ({deleteDevModal.email})?
+              This developer will no longer be able to log in or publish applications.
+            </p>
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                disabled={isDeletingDev}
+                onClick={() => setDeleteDevModal(null)}
+                className="px-4 py-2 text-xs font-semibold text-neutral-300 hover:text-white bg-neutral-800 rounded-xl cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isDeletingDev}
+                onClick={handleDeleteDeveloper}
+                className="px-4 py-2 text-xs font-bold text-white bg-rose-600 hover:bg-rose-500 rounded-xl transition-colors flex items-center gap-2 shadow-lg shadow-rose-950/40 disabled:opacity-50 cursor-pointer"
+              >
+                {isDeletingDev ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Trash2 className="w-3.5 h-3.5" />
+                )}
+                <span>Delete Account</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* GOD MODE: INSPECT DEVELOPER APPS MODAL */}
+      {inspectDev && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-fade-in">
+          <div
+            className="w-full max-w-2xl bg-neutral-900 border border-neutral-800 rounded-3xl p-6 shadow-2xl text-neutral-100 space-y-4 max-h-[85vh] flex flex-col"
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className="flex items-center justify-between border-b border-neutral-800 pb-3 shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-400">
+                  <Eye className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">Apps by {inspectDev.name}</h3>
+                  <p className="text-xs text-neutral-400">{inspectDev.email}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setInspectDev(null)}
+                className="p-1 text-neutral-400 hover:text-white rounded-lg"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="overflow-y-auto space-y-3 flex-1 pr-1">
+              {isLoadingDevApps ? (
+                <div className="py-12 text-center text-xs text-neutral-500 flex items-center justify-center gap-2">
+                  <RefreshCw className="w-4 h-4 animate-spin text-amber-400" />
+                  <span>Loading applications...</span>
+                </div>
+              ) : inspectDevApps.length === 0 ? (
+                <div className="p-8 text-center text-xs text-neutral-500 bg-neutral-950 rounded-2xl border border-neutral-800">
+                  This developer has not submitted any applications yet.
+                </div>
+              ) : (
+                inspectDevApps.map((a) => (
+                  <div
+                    key={a.id}
+                    className="p-3.5 bg-neutral-950 border border-neutral-800 rounded-2xl flex items-center justify-between gap-3"
+                  >
+                    <div className="flex items-center gap-3">
+                      <img
+                        src={a.iconUrl}
+                        alt={a.name}
+                        className="w-11 h-11 rounded-xl object-contain border border-neutral-800 bg-neutral-900 p-1 shrink-0"
+                      />
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h5 className="text-sm font-bold text-white">{a.name}</h5>
+                          <span className="text-[10px] text-neutral-400 bg-neutral-900 px-1.5 py-0.2 rounded font-mono">
+                            v{a.currentVersion}
+                          </span>
+                          {a.isTakenDown && (
+                            <span className="text-[10px] text-rose-400 bg-rose-950 px-1.5 py-0.2 rounded border border-rose-800">
+                              Taken Down
+                            </span>
+                          )}
+                          {a.approvalStatus === 'pending_approval' && (
+                            <span className="text-[10px] text-amber-400 bg-amber-950 px-1.5 py-0.2 rounded border border-amber-800">
+                              Pending Review
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs text-neutral-400 line-clamp-1 mt-0.5">{a.tagline}</p>
+                        <div className="text-[11px] text-neutral-500 font-mono mt-0.5">
+                          Downloads: {(a.downloadsTotal || 0).toLocaleString()} • Package: {a.packageId}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => onDownloadTest(a.id, a.releases?.[0]?.id)}
+                        className="p-2 text-neutral-300 hover:text-white bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 rounded-xl"
+                        title="Download APK"
+                      >
+                        <Download className="w-3.5 h-3.5 text-cyan-400" />
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="flex justify-end pt-3 border-t border-neutral-800 shrink-0">
+              <button
+                type="button"
+                onClick={() => setInspectDev(null)}
+                className="px-5 py-2 text-xs font-semibold text-neutral-300 bg-neutral-800 hover:bg-neutral-700 rounded-xl cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* GOD MODE: SOFT TAKEDOWN MODAL */}
+      {takedownAppModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-fade-in">
+          <div
+            className="w-full max-w-md bg-neutral-900 border border-neutral-800 rounded-3xl p-6 shadow-2xl text-neutral-100 space-y-4"
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className="flex items-center justify-between border-b border-neutral-800 pb-3">
+              <div className="flex items-center gap-2.5 text-rose-400">
+                <EyeOff className="w-5 h-5" />
+                <h3 className="text-base font-bold text-white">Soft Takedown Application</h3>
+              </div>
+              <button
+                onClick={() => setTakedownAppModal(null)}
+                className="p-1 text-neutral-400 hover:text-white rounded-lg"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="text-xs text-neutral-300 space-y-1">
+              <p>
+                Taking down <strong className="text-white font-bold">{takedownAppModal.name}</strong> from the store.
+              </p>
+              <p className="text-[11px] text-neutral-400 leading-relaxed">
+                This will immediately hide the application from search results, category listings, and block public downloads. All APK files and versions are safely preserved and can be restored at any time.
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-neutral-300 mb-1.5">
+                Takedown Reason
+              </label>
+              <textarea
+                rows={3}
+                value={takedownReasonInput}
+                onChange={(e) => setTakedownReasonInput(e.target.value)}
+                placeholder="e.g. Under investigation for security vulnerabilities or policy violation..."
+                className="w-full bg-neutral-950 border border-neutral-800 focus:border-rose-500 rounded-xl py-2 px-3 text-xs text-white placeholder-neutral-500 outline-none"
+              />
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setTakedownAppModal(null)}
+                className="px-4 py-2 text-xs font-semibold text-neutral-400 hover:text-white bg-neutral-800 rounded-xl"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isTakedownSaving}
+                onClick={handleTakedownApp}
+                className="px-5 py-2 text-xs font-bold text-white bg-rose-600 hover:bg-rose-500 rounded-xl transition-colors flex items-center gap-1.5 shadow-lg shadow-rose-950/40 disabled:opacity-50 cursor-pointer"
+              >
+                {isTakedownSaving ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <EyeOff className="w-3.5 h-3.5" />
+                )}
+                <span>Confirm Soft Takedown</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* GOD MODE: SUPER ADMIN DIRECT METADATA OVERRIDE MODAL */}
+      {overrideAppModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-fade-in">
+          <div
+            className="w-full max-w-lg bg-neutral-900 border border-neutral-800 rounded-3xl p-6 shadow-2xl text-neutral-100 space-y-4"
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className="flex items-center justify-between border-b border-neutral-800 pb-3">
+              <div className="flex items-center gap-2.5 text-amber-400">
+                <Edit3 className="w-5 h-5" />
+                <h3 className="text-base font-bold text-white">Super Admin Direct Override</h3>
+              </div>
+              <button
+                onClick={() => setOverrideAppModal(null)}
+                className="p-1 text-neutral-400 hover:text-white rounded-lg"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-xs text-neutral-400">
+              Directly override metadata for <strong className="text-white">{overrideAppModal.name}</strong> without developer involvement.
+            </p>
+
+            <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-1">
+              <div>
+                <label className="block text-xs font-semibold text-neutral-300 mb-1">
+                  App Name
+                </label>
+                <input
+                  type="text"
+                  value={overrideFormData.name}
+                  onChange={(e) => setOverrideFormData((p) => ({ ...p, name: e.target.value }))}
+                  className="w-full bg-neutral-950 border border-neutral-800 focus:border-amber-500 rounded-xl py-2 px-3 text-xs text-white outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-neutral-300 mb-1">
+                  Tagline / Brief Info
+                </label>
+                <input
+                  type="text"
+                  value={overrideFormData.tagline}
+                  onChange={(e) => setOverrideFormData((p) => ({ ...p, tagline: e.target.value }))}
+                  className="w-full bg-neutral-950 border border-neutral-800 focus:border-amber-500 rounded-xl py-2 px-3 text-xs text-white outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-neutral-300 mb-1">
+                  Category
+                </label>
+                <select
+                  value={overrideFormData.category}
+                  onChange={(e) => setOverrideFormData((p) => ({ ...p, category: e.target.value }))}
+                  className="w-full bg-neutral-950 border border-neutral-800 focus:border-amber-500 rounded-xl py-2 px-3 text-xs text-white outline-none"
+                >
+                  {['Productivity', 'Utilities', 'Tools', 'Entertainment', 'Smart TV', 'Social', 'Games', 'TV & Movies', 'Streaming'].map((c) => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-neutral-300 mb-1">
+                  Full Description
+                </label>
+                <textarea
+                  rows={3}
+                  value={overrideFormData.description}
+                  onChange={(e) => setOverrideFormData((p) => ({ ...p, description: e.target.value }))}
+                  className="w-full bg-neutral-950 border border-neutral-800 focus:border-amber-500 rounded-xl py-2 px-3 text-xs text-white outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-neutral-300 mb-1">
+                  Icon URL
+                </label>
+                <input
+                  type="text"
+                  value={overrideFormData.iconUrl}
+                  onChange={(e) => setOverrideFormData((p) => ({ ...p, iconUrl: e.target.value }))}
+                  placeholder="/zuzustore-logo.png"
+                  className="w-full bg-neutral-950 border border-neutral-800 focus:border-amber-500 rounded-xl py-2 px-3 text-xs text-white outline-none"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-2 border-t border-neutral-800">
+              <button
+                type="button"
+                onClick={() => setOverrideAppModal(null)}
+                className="px-4 py-2 text-xs font-semibold text-neutral-400 hover:text-white bg-neutral-800 rounded-xl"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isSavingOverride}
+                onClick={handleSaveOverride}
+                className="px-5 py-2 text-xs font-bold text-neutral-950 bg-amber-500 hover:bg-amber-400 rounded-xl transition-colors flex items-center gap-1.5 shadow-lg shadow-amber-950/40 disabled:opacity-50 cursor-pointer"
+              >
+                {isSavingOverride ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Check className="w-3.5 h-3.5 stroke-[3]" />
+                )}
+                <span>Save Overrides</span>
+              </button>
+            </div>
           </div>
         </div>
       )}

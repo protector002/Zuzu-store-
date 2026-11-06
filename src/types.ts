@@ -79,6 +79,10 @@ export interface StoreApp {
   tvBannerUrl?: string;
   downloaderCode?: string;
   approvalStatus?: 'approved' | 'pending_approval' | 'rejected';
+  isTakenDown?: boolean;
+  takedownReason?: string;
+  takenDownAt?: string;
+  takenDownBy?: string;
   submittedBy?: {
     id: string;
     name: string;
@@ -98,12 +102,50 @@ export interface AdminUser {
   role: string;
 }
 
+export type DeveloperStatus = 'active' | 'frozen' | 'banned';
+
 export interface DeveloperUser {
   id: string;
   name: string;
   email: string;
   companyName?: string;
+  status?: DeveloperStatus;
+  banReason?: string;
+  bannedAt?: string;
   createdAt: string;
+}
+
+export interface DeveloperAccountAdminView {
+  id: string;
+  name: string;
+  email: string;
+  companyName?: string;
+  status: DeveloperStatus;
+  banReason?: string;
+  bannedAt?: string;
+  createdAt: string;
+  appsCount: number;
+  totalDownloads: number;
+  apps?: Array<{
+    id: string;
+    slug: string;
+    name: string;
+    currentVersion: string;
+    approvalStatus: string;
+    isTakenDown: boolean;
+    downloadsTotal?: number;
+  }>;
+}
+
+export interface AdminBroadcast {
+  id?: string;
+  message: string;
+  level: 'info' | 'warning' | 'alert';
+  active: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+  link?: string;
+  linkText?: string;
 }
 
 export interface DeveloperSessionState {

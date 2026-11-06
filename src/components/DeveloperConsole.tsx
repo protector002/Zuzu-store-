@@ -16,10 +16,14 @@ import {
   FileCode,
   ShieldCheck,
   LogOut,
-  Send
+  Send,
+  Megaphone,
+  Snowflake,
+  Ban,
+  EyeOff
 } from 'lucide-react';
-import { DeveloperUser, StoreApp } from '../types';
-import { submitDeveloperApp, fetchDeveloperMyApps, deleteDeveloperApp, developerLogout } from '../services/api';
+import { DeveloperUser, StoreApp, AdminBroadcast } from '../types';
+import { submitDeveloperApp, fetchDeveloperMyApps, deleteDeveloperApp, developerLogout, fetchBroadcast } from '../services/api';
 
 interface DeveloperConsoleProps {
   developer: DeveloperUser;
@@ -35,6 +39,10 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
   const [activeTab, setActiveTab] = useState<'submit' | 'my-apps'>('submit');
   const [myApps, setMyApps] = useState<StoreApp[]>([]);
   const [isLoadingApps, setIsLoadingApps] = useState(false);
+  const [broadcast, setBroadcast] = useState<AdminBroadcast | null>(null);
+
+  const isFrozen = developer.status === 'frozen';
+  const isBanned = developer.status === 'banned';
 
   // Form State
   const [name, setName] = useState('');
@@ -72,6 +80,9 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
 
   useEffect(() => {
     loadMyApps();
+    fetchBroadcast().then((b) => {
+      if (b && b.active) setBroadcast(b);
+    });
   }, []);
 
   // Icon file handler
@@ -244,6 +255,60 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
           </div>
         </div>
       </header>
+
+      {/* Platform Broadcast Banner */}
+      {broadcast && broadcast.active && broadcast.message && (
+        <div
+          className={`py-2.5 px-4 border-b text-xs shadow-md ${
+            broadcast.level === 'alert'
+              ? 'bg-rose-950/90 border-rose-800 text-rose-200'
+              : broadcast.level === 'warning'
+              ? 'bg-amber-950/90 border-amber-800 text-amber-200'
+              : 'bg-cyan-950/90 border-cyan-800 text-cyan-200'
+          }`}
+        >
+          <div className="max-w-7xl mx-auto w-full flex items-center justify-between gap-4">
+            <div className="flex items-center gap-2.5">
+              <Megaphone className="w-4 h-4 shrink-0 animate-bounce" />
+              <span className="font-semibold">{broadcast.message}</span>
+            </div>
+            {broadcast.link && broadcast.linkText && (
+              <a
+                href={broadcast.link}
+                className="font-bold underline text-[11px] shrink-0 hover:opacity-80"
+              >
+                {broadcast.linkText} →
+              </a>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Account Frozen or Banned Security Notice */}
+      {isBanned && (
+        <div className="bg-rose-950 border-b border-rose-800 py-3 px-4 sm:px-6">
+          <div className="max-w-5xl mx-auto flex items-center gap-3 text-rose-200 text-xs">
+            <Ban className="w-5 h-5 text-rose-400 shrink-0" />
+            <div>
+              <strong className="font-bold text-white">Account Banned by Super Admin:</strong>{' '}
+              {developer.banReason || 'This developer account has been suspended for violating store distribution policies.'}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isFrozen && !isBanned && (
+        <div className="bg-cyan-950 border-b border-cyan-800 py-3 px-4 sm:px-6">
+          <div className="max-w-5xl mx-auto flex items-center gap-3 text-cyan-200 text-xs">
+            <Snowflake className="w-5 h-5 text-cyan-400 shrink-0" />
+            <div>
+              <strong className="font-bold text-white">Account Temporarily Frozen:</strong>{' '}
+              {developer.banReason || 'Publishing privileges are suspended for administrative review.'}{' '}
+              New app submissions are currently disabled.
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Main Content Area */}
       <main className="max-w-5xl mx-auto px-4 sm:px-6 pt-6">
@@ -559,13 +624,23 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
                 </div>
                 <button
                   type="submit"
-                  disabled={isSubmitting}
-                  className="w-full sm:w-auto py-3 px-8 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-neutral-950 font-black text-xs rounded-xl shadow-lg transition-transform active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  disabled={isSubmitting || isFrozen || isBanned}
+                  className="w-full sm:w-auto py-3 px-8 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-neutral-950 font-black text-xs rounded-xl shadow-lg transition-transform active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 cursor-pointer"
                 >
                   {isSubmitting ? (
                     <>
                       <span className="inline-block w-4 h-4 border-2 border-neutral-950 border-t-transparent rounded-full animate-spin" />
                       <span>Submitting for Review...</span>
+                    </>
+                  ) : isBanned ? (
+                    <>
+                      <Ban className="w-4 h-4" />
+                      <span>Account Banned</span>
+                    </>
+                  ) : isFrozen ? (
+                    <>
+                      <Snowflake className="w-4 h-4" />
+                      <span>Account Frozen</span>
                     </>
                   ) : (
                     <>
@@ -658,19 +733,22 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
 
                         {/* Status Badge */}
                         <div>
-                          {status === 'pending_approval' && (
+                          {app.isTakenDown ? (
+                            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-500/10 text-rose-400 border border-rose-500/30 text-xs font-bold">
+                              <EyeOff className="w-3.5 h-3.5" />
+                              <span>Taken Down</span>
+                            </span>
+                          ) : status === 'pending_approval' ? (
                             <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500/10 text-amber-400 border border-amber-500/30 text-xs font-bold">
                               <Clock className="w-3.5 h-3.5 animate-pulse" />
                               <span>Pending Review</span>
                             </span>
-                          )}
-                          {status === 'approved' && (
+                          ) : status === 'approved' ? (
                             <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 text-xs font-bold">
                               <CheckCircle className="w-3.5 h-3.5" />
                               <span>Live on Store</span>
                             </span>
-                          )}
-                          {status === 'rejected' && (
+                          ) : (
                             <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-500/10 text-rose-400 border border-rose-500/30 text-xs font-bold">
                               <XCircle className="w-3.5 h-3.5" />
                               <span>Requires Changes</span>
@@ -678,6 +756,17 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
                           )}
                         </div>
                       </div>
+
+                      {/* Takedown notice if taken down */}
+                      {app.isTakenDown && (
+                        <div className="p-3 bg-rose-950/40 border border-rose-800/60 rounded-xl text-xs text-rose-300 flex items-start gap-2.5">
+                          <EyeOff className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                          <div>
+                            <span className="font-bold text-rose-200">Taken Down by Super Admin:</span>{' '}
+                            {app.takedownReason || 'Taken down by Super Admin for platform review.'}
+                          </div>
+                        </div>
+                      )}
 
                       {/* Rejection / Feedback Note if rejected */}
                       {status === 'rejected' && app.rejectionReason && (

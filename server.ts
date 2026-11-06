@@ -25,6 +25,7 @@ try {
 const APPS_FILE = path.join(DATA_DIR, 'apps.json');
 const SESSIONS_FILE = path.join(DATA_DIR, 'sessions.json');
 const DEVELOPERS_FILE = path.join(DATA_DIR, 'developers.json');
+const BROADCAST_FILE = path.join(DATA_DIR, 'broadcast.json');
 
 // Admin credentials specified by the user
 const ADMIN_EMAIL = 'sseruwagijohn452@gmail.com';
@@ -96,6 +97,10 @@ export interface StoreApp {
   appEdition?: 'phone' | 'tv' | 'both';
   isTvCompatible?: boolean;
   approvalStatus?: 'approved' | 'pending_approval' | 'rejected';
+  isTakenDown?: boolean;
+  takedownReason?: string;
+  takenDownAt?: string;
+  takenDownBy?: string;
   submittedBy?: {
     id: string;
     name: string;
@@ -297,7 +302,21 @@ export interface DeveloperAccount {
   email: string;
   passwordHash: string;
   companyName?: string;
+  status?: 'active' | 'frozen' | 'banned';
+  banReason?: string;
+  bannedAt?: string;
   createdAt: string;
+}
+
+export interface AdminBroadcast {
+  id?: string;
+  message: string;
+  level: 'info' | 'warning' | 'alert';
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+  link?: string;
+  linkText?: string;
 }
 
 function getDevelopers(): Record<string, DeveloperAccount> {
@@ -318,6 +337,30 @@ function saveDevelopers(devs: Record<string, DeveloperAccount>) {
     fs.writeFileSync(DEVELOPERS_FILE, JSON.stringify(devs, null, 2), 'utf-8');
   } catch (err) {
     console.error('Error saving developers:', err);
+  }
+}
+
+function getBroadcast(): AdminBroadcast | null {
+  try {
+    if (!fs.existsSync(BROADCAST_FILE)) {
+      return null;
+    }
+    const data = fs.readFileSync(BROADCAST_FILE, 'utf-8');
+    return JSON.parse(data);
+  } catch (err) {
+    return null;
+  }
+}
+
+function saveBroadcast(bc: AdminBroadcast | null) {
+  try {
+    if (!bc) {
+      if (fs.existsSync(BROADCAST_FILE)) fs.unlinkSync(BROADCAST_FILE);
+      return;
+    }
+    fs.writeFileSync(BROADCAST_FILE, JSON.stringify(bc, null, 2), 'utf-8');
+  } catch (err) {
+    console.error('Error saving broadcast:', err);
   }
 }
 
@@ -480,6 +523,18 @@ const requireDeveloper = (req: express.Request, res: express.Response, next: exp
   const dev = Object.values(devs).find((d) => d.id === payload.id || d.email.toLowerCase() === payload.email.toLowerCase());
   if (!dev) {
     return res.status(401).json({ error: 'Developer account not found.' });
+  }
+
+  if (dev.status === 'banned') {
+    return res.status(403).json({
+      error: `Your developer account has been banned by Super Admin. Reason: ${dev.banReason || 'Administrative ban'}`
+    });
+  }
+
+  if (dev.status === 'frozen' && (req.method === 'POST' || req.method === 'DELETE' || req.method === 'PATCH')) {
+    return res.status(403).json({
+      error: `Your developer account is temporarily frozen by Super Admin. Reason: ${dev.banReason || 'Administrative freeze'}. Publishing actions are disabled.`
+    });
   }
 
   (req as any).developer = dev;
@@ -729,10 +784,14 @@ app.get('/api/apps', (req, res) => {
   const isAdmin = token ? verifyAdminToken(token) : false;
   const isSuperAdminView = isAdmin && req.headers['x-admin-view'] === 'true';
 
-  // Public visitors only see approved apps
+  // Public visitors only see approved apps that have NOT been taken down by Super Admin
   let filtered = isSuperAdminView
     ? apps
-    : apps.filter((a) => a.approvalStatus === 'approved' || !a.approvalStatus);
+    : apps.filter(
+        (a) =>
+          !a.isTakenDown &&
+          (a.approvalStatus === 'approved' || !a.approvalStatus)
+      );
 
   if (category && category !== 'All') {
     filtered = filtered.filter((a) => a.category.toLowerCase() === String(category).toLowerCase());
@@ -764,6 +823,19 @@ app.get('/api/apps/:id', (req, res) => {
 
   if (!appItem) {
     return res.status(404).json({ error: 'App not found in store.' });
+  }
+
+  // If taken down by Super Admin, block public viewing
+  if (appItem.isTakenDown) {
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.startsWith('Bearer ') ? authHeader.split(' ')[1] : '';
+    const isAdmin = token ? verifyAdminToken(token) : false;
+    if (!isAdmin) {
+      return res.status(404).json({
+        error: 'This application has been taken down from the store.',
+        reason: appItem.takedownReason
+      });
+    }
   }
 
   // If pending or rejected, only allow Super Admin or the submitter developer to view it
@@ -993,6 +1065,18 @@ app.get('/api/apps/:id/download', async (req, res) => {
   let targetRelease: AppRelease | null = null;
 
   if (targetApp) {
+    if (targetApp.isTakenDown) {
+      const authHeader = req.headers.authorization;
+      const token = authHeader?.startsWith('Bearer ') ? authHeader.split(' ')[1] : '';
+      const isAdmin = token ? verifyAdminToken(token) : false;
+      if (!isAdmin) {
+        return res.status(404).json({
+          error: 'This application package has been taken down by Super Admin.',
+          reason: targetApp.takedownReason
+        });
+      }
+    }
+
     targetRelease = releaseId
       ? targetApp.releases.find((r) => r.id === releaseId) || targetApp.releases[0]
       : targetApp.releases[0];
@@ -2019,6 +2103,252 @@ app.post('/api/admin/submissions/:id/reject', requireAdmin, (req, res) => {
     success: true,
     message: `Application "${appItem.name}" rejected. Feedback sent to developer.`,
     app: appItem
+  });
+});
+
+// ==========================================
+// SYSTEM BROADCAST BANNER (PUBLIC & ADMIN)
+// ==========================================
+
+// Get active broadcast banner (Public)
+app.get('/api/broadcast', (req, res) => {
+  const broadcast = getBroadcast();
+  return res.json({ success: true, broadcast });
+});
+
+// Super Admin: Publish or update broadcast banner
+app.post('/api/admin/broadcast', requireAdmin, (req, res) => {
+  const { message, active, level, link, linkText } = req.body;
+  const broadcast: AdminBroadcast = {
+    message: String(message || '').trim(),
+    active: active !== undefined ? Boolean(active) : true,
+    level: level === 'warning' || level === 'alert' ? level : 'info',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    link: link ? String(link).trim() : undefined,
+    linkText: linkText ? String(linkText).trim() : undefined
+  };
+
+  saveBroadcast(broadcast);
+  return res.json({
+    success: true,
+    message: 'System broadcast banner updated successfully!',
+    broadcast
+  });
+});
+
+// ==========================================
+// SUPER ADMIN GOD MODE & MODERATION
+// ==========================================
+
+// Super Admin: Get all registered developers with full activity statistics
+app.get('/api/admin/developers', requireAdmin, (req, res) => {
+  const devs = getDevelopers();
+  const apps = getApps();
+
+  const developerList = Object.values(devs).map((dev) => {
+    const devApps = apps.filter(
+      (a) =>
+        a.submittedBy?.id === dev.id ||
+        a.submittedBy?.email?.toLowerCase() === dev.email.toLowerCase() ||
+        a.developer?.email?.toLowerCase() === dev.email.toLowerCase()
+    );
+
+    const totalDownloads = devApps.reduce((acc, a) => acc + (a.downloadsTotal || 0), 0);
+
+    return {
+      id: dev.id,
+      name: dev.name,
+      email: dev.email,
+      companyName: dev.companyName,
+      createdAt: dev.createdAt,
+      status: dev.status || 'active',
+      banReason: dev.banReason,
+      bannedAt: dev.bannedAt,
+      appsCount: devApps.length,
+      totalDownloads,
+      apps: devApps.map((a) => ({
+        id: a.id,
+        slug: a.slug,
+        name: a.name,
+        currentVersion: a.currentVersion,
+        approvalStatus: a.approvalStatus || 'approved',
+        isTakenDown: Boolean(a.isTakenDown),
+        downloadsTotal: a.downloadsTotal || 0
+      }))
+    };
+  });
+
+  return res.json({
+    success: true,
+    developers: developerList,
+    total: developerList.length
+  });
+});
+
+// Super Admin: Change developer account status (active, frozen, banned)
+app.post('/api/admin/developers/:id/status', requireAdmin, (req, res) => {
+  const { id } = req.params;
+  const { status, reason } = req.body;
+
+  if (!status || !['active', 'frozen', 'banned'].includes(status)) {
+    return res.status(400).json({ error: 'Valid status is required: "active", "frozen", or "banned".' });
+  }
+
+  const devs = getDevelopers();
+  const dev = Object.values(devs).find((d) => d.id === id || d.email.toLowerCase() === id.toLowerCase());
+
+  if (!dev) {
+    return res.status(404).json({ error: 'Developer account not found.' });
+  }
+
+  dev.status = status;
+  if (status === 'banned' || status === 'frozen') {
+    dev.banReason = reason ? String(reason).trim() : `Account ${status} by Super Admin.`;
+    dev.bannedAt = new Date().toISOString();
+  } else {
+    dev.banReason = undefined;
+    dev.bannedAt = undefined;
+  }
+
+  devs[dev.id] = dev;
+  saveDevelopers(devs);
+
+  return res.json({
+    success: true,
+    message: `Developer account "${dev.name}" status changed to ${status.toUpperCase()}.`,
+    developer: {
+      id: dev.id,
+      name: dev.name,
+      email: dev.email,
+      status: dev.status,
+      banReason: dev.banReason,
+      bannedAt: dev.bannedAt
+    }
+  });
+});
+
+// Super Admin: Delete developer account
+app.delete('/api/admin/developers/:id', requireAdmin, (req, res) => {
+  const { id } = req.params;
+  const devs = getDevelopers();
+  const devKey = Object.keys(devs).find((k) => devs[k].id === id || devs[k].email.toLowerCase() === id.toLowerCase());
+
+  if (!devKey) {
+    return res.status(404).json({ error: 'Developer account not found.' });
+  }
+
+  const removedDev = devs[devKey];
+  delete devs[devKey];
+  saveDevelopers(devs);
+
+  return res.json({
+    success: true,
+    message: `Developer account "${removedDev.name}" (${removedDev.email}) has been permanently deleted.`
+  });
+});
+
+// Super Admin: Get all apps for a specific developer
+app.get('/api/admin/developers/:id/apps', requireAdmin, (req, res) => {
+  const { id } = req.params;
+  const apps = getApps();
+  const devApps = apps.filter(
+    (a) =>
+      a.submittedBy?.id === id ||
+      a.submittedBy?.email?.toLowerCase() === id.toLowerCase() ||
+      a.developer?.email?.toLowerCase() === id.toLowerCase()
+  );
+
+  return res.json({
+    success: true,
+    apps: devApps,
+    count: devApps.length
+  });
+});
+
+// Super Admin: Soft unpublish / Take down app from public store
+app.post('/api/admin/apps/:id/takedown', requireAdmin, (req, res) => {
+  const { id } = req.params;
+  const { reason } = req.body;
+  const apps = getApps();
+  const appItem = apps.find((a) => a.id === id || a.slug === id);
+
+  if (!appItem) {
+    return res.status(404).json({ error: 'Application not found.' });
+  }
+
+  appItem.isTakenDown = true;
+  appItem.takedownReason = reason ? String(reason).trim() : 'Taken down by Super Admin for review.';
+  appItem.takenDownAt = new Date().toISOString();
+  appItem.takenDownBy = ADMIN_EMAIL;
+  appItem.updatedAt = new Date().toISOString();
+
+  saveApps(apps);
+
+  return res.json({
+    success: true,
+    message: `Application "${appItem.name}" has been taken down from the public storefront.`,
+    app: appItem
+  });
+});
+
+// Super Admin: Restore soft-unpublished app back to live storefront
+app.post('/api/admin/apps/:id/restore', requireAdmin, (req, res) => {
+  const { id } = req.params;
+  const apps = getApps();
+  const appItem = apps.find((a) => a.id === id || a.slug === id);
+
+  if (!appItem) {
+    return res.status(404).json({ error: 'Application not found.' });
+  }
+
+  appItem.isTakenDown = false;
+  appItem.takedownReason = undefined;
+  appItem.takenDownAt = undefined;
+  appItem.takenDownBy = undefined;
+  appItem.updatedAt = new Date().toISOString();
+
+  saveApps(apps);
+
+  return res.json({
+    success: true,
+    message: `Application "${appItem.name}" has been restored to the live storefront!`,
+    app: appItem
+  });
+});
+
+// Super Admin: Direct metadata override for any application
+app.patch('/api/admin/apps/:id/override', requireAdmin, (req, res) => {
+  const { id } = req.params;
+  const overrides = req.body;
+  const apps = getApps();
+  const index = apps.findIndex((a) => a.id === id || a.slug === id);
+
+  if (index === -1) {
+    return res.status(404).json({ error: 'Application not found.' });
+  }
+
+  const currentApp = apps[index];
+
+  // If overriding direct download URL on latest release
+  if (overrides.directDownloadUrl && currentApp.releases?.[0]) {
+    currentApp.releases[0].directDownloadUrl = normalizeDownloadUrl(overrides.directDownloadUrl);
+  }
+
+  const updatedApp: StoreApp = {
+    ...currentApp,
+    ...overrides,
+    id: currentApp.id, // maintain primary key
+    updatedAt: new Date().toISOString()
+  };
+
+  apps[index] = updatedApp;
+  saveApps(apps);
+
+  return res.json({
+    success: true,
+    message: `Super Admin override applied to "${updatedApp.name}".`,
+    app: updatedApp
   });
 });
 

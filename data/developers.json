@@ -6,5 +6,14 @@
     "passwordHash": "35cd7c4bb84f587675b92115f88c73bd6c9b913abe93af8312313ec229d4f8be",
     "companyName": "AnimeLabs",
     "createdAt": "2026-11-05T20:13:13.308Z"
+  },
+  "dev-1793960150529-scf2u": {
+    "id": "dev-1793960150529-scf2u",
+    "name": "Alex Turner",
+    "email": "testdev_1793960150524@example.com",
+    "passwordHash": "6a4f4d7745408181317b5afb4a0b4ee3844ecbe053c15c7bc8cf62a509c47a25",
+    "companyName": "Turner Games",
+    "createdAt": "2026-11-06T10:15:50.529Z",
+    "status": "active"
   }
 }

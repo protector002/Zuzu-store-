@@ -1,5 +1,79 @@
 [
   {
+    "id": "devapp-1793960150569",
+    "slug": "turner-speed-racing",
+    "name": "Turner Speed Racing",
+    "tagline": "Fast paced racing",
+    "description": "Submitted by Alex Turner",
+    "iconUrl": "/zuzustore-logo.png",
+    "heroImageUrl": "/zuzustore-logo.png",
+    "screenshots": [
+      "/zuzustore-logo.png"
+    ],
+    "category": "Games",
+    "developer": {
+      "name": "Alex Turner (Turner Games)",
+      "email": "testdev_1793960150524@example.com",
+      "verified": false
+    },
+    "rating": 0,
+    "ratingCount": 0,
+    "downloadsTotal": 0,
+    "supportedPlatforms": [
+      "Android"
+    ],
+    "currentVersion": "1.0.0",
+    "packageId": "com.dev-1793960150529-scf2u.turner.speed.racing",
+    "architecture": "Universal (arm64-v8a)",
+    "minRequirements": {
+      "Android": "Android 8.0+"
+    },
+    "permissions": [
+      "android.permission.INTERNET",
+      "android.permission.ACCESS_NETWORK_STATE"
+    ],
+    "features": [
+      {
+        "title": "Developer Release",
+        "description": "Submitted by developer Alex Turner for store review."
+      }
+    ],
+    "releases": [
+      {
+        "id": "rel-1793960150569",
+        "version": "1.0.0",
+        "buildNumber": 1,
+        "releaseDate": "November 6, 2026",
+        "fileSize": "30.0 MB",
+        "fileName": "turner-speed-racing-v1.0.0.apk",
+        "platform": "Android",
+        "minOS": "Android 8.0+",
+        "changelog": [
+          "Initial developer submission."
+        ],
+        "downloadCount": 0,
+        "sha256Checksum": "cfc7083b17627bd8970bfa977b8f293a0b9fc03df0603351d3c0c6bd39d4c3b8",
+        "isLatest": true
+      }
+    ],
+    "reviews": [],
+    "isOfficial": false,
+    "appEdition": "phone",
+    "isTvCompatible": false,
+    "approvalStatus": "approved",
+    "submittedBy": {
+      "id": "dev-1793960150529-scf2u",
+      "name": "Alex Turner",
+      "email": "testdev_1793960150524@example.com"
+    },
+    "submittedAt": "2026-11-06T10:15:50.636Z",
+    "createdAt": "2026-11-06T10:15:50.636Z",
+    "updatedAt": "2026-11-06T10:15:50.734Z",
+    "reviewedAt": "2026-11-06T10:15:50.661Z",
+    "reviewedBy": "sseruwagijohn452@gmail.com",
+    "isTakenDown": false
+  },
+  {
     "id": "zuzu-super-cleaner",
     "slug": "zuzu-super-cleaner",
     "name": "Zuzu Super Cleaner",

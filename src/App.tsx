@@ -31,12 +31,13 @@ import {
   submitReview,
   downloadWithProgress,
   parseFileSizeToBytes,
-  formatBytes
+  formatBytes,
+  fetchBroadcast
 } from './services/api';
-import { StoreApp, AppRelease, Platform, AdminUser, DeveloperUser, DownloadProgressState } from './types';
+import { StoreApp, AppRelease, Platform, AdminUser, DeveloperUser, DownloadProgressState, AdminBroadcast } from './types';
 import { getApkBlob, deleteApkBlob } from './utils/fileStorage';
 import { filterPhoneApps, filterTvApps, getPhoneRelease, getTvRelease } from './utils/editionHelper';
-import { CheckCircle2, ArrowRight } from 'lucide-react';
+import { CheckCircle2, ArrowRight, Megaphone } from 'lucide-react';
 
 
 
@@ -58,6 +59,9 @@ export default function App() {
   // Developer state
   const [developer, setDeveloper] = useState<DeveloperUser | null>(null);
   const [isDevAuthModalOpen, setIsDevAuthModalOpen] = useState(false);
+
+  // Platform Broadcast Banner State
+  const [broadcast, setBroadcast] = useState<AdminBroadcast | null>(null);
 
   // Modals
   const [isQrOpen, setIsQrOpen] = useState(false);
@@ -132,6 +136,11 @@ export default function App() {
       if (res.authenticated && res.developer) {
         setDeveloper(res.developer);
       }
+    });
+
+    // Check system broadcast
+    fetchBroadcast().then((b) => {
+      if (b && b.active) setBroadcast(b);
     });
   }, []);
 
@@ -586,6 +595,34 @@ export default function App() {
         <OpeningSplash onComplete={() => setShowSplash(false)} />
       )}
 
+      {/* Live System Broadcast Banner */}
+      {broadcast && broadcast.active && broadcast.message && (
+        <div
+          className={`py-2.5 px-4 text-xs shadow-md border-b flex items-center justify-between transition-colors z-50 relative ${
+            broadcast.level === 'alert'
+              ? 'bg-rose-950/95 border-rose-800 text-rose-200'
+              : broadcast.level === 'warning'
+              ? 'bg-amber-950/95 border-amber-800 text-amber-200'
+              : 'bg-cyan-950/95 border-cyan-800 text-cyan-200'
+          }`}
+        >
+          <div className="max-w-7xl mx-auto w-full flex items-center justify-between gap-4">
+            <div className="flex items-center gap-2.5">
+              <Megaphone className="w-4 h-4 shrink-0 animate-bounce" />
+              <span className="font-semibold">{broadcast.message}</span>
+            </div>
+            {broadcast.link && broadcast.linkText && (
+              <a
+                href={broadcast.link}
+                className="font-bold underline text-[11px] shrink-0 hover:opacity-80"
+              >
+                {broadcast.linkText} →
+              </a>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Top Bar Navigation */}
       <Header
         currentView={currentView}
@@ -821,6 +858,7 @@ export default function App() {
                   loadApps();
                   showToast(`App "${app.name}" approved and live on ZuzuStore!`);
                 }}
+                onRefreshCatalog={loadApps}
               />
             )}
 

@@ -191,9 +191,9 @@ export const AppDetailView: React.FC<AppDetailViewProps> = ({
           />
           <div className="flex-1 min-w-0">
             <div className="flex flex-wrap items-center gap-2 text-xs text-neutral-400 mb-1">
-              <span className="text-cyan-400 font-semibold">{app.category}</span>
+              <span className="text-amber-400 font-semibold">{app.category}</span>
               <span>•</span>
-              <span>By {app.developer.name}</span>
+              <span>By <strong className="text-white font-medium">{app.submittedBy?.name || app.developer.name}</strong></span>
               {app.isOfficial && (
                 <>
                   <span>•</span>
