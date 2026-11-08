@@ -4,6 +4,17 @@ import path from 'path';
 import crypto from 'crypto';
 import multer from 'multer';
 import { Readable } from 'stream';
+import { initializeApp, getApps as getFirebaseApps, getApp } from 'firebase/app';
+import {
+  getFirestore,
+  collection,
+  doc,
+  getDocs,
+  getDoc,
+  setDoc,
+  deleteDoc,
+  updateDoc
+} from 'firebase/firestore';
 
 // Ensure data and upload directories exist (use /tmp on Vercel serverless)
 const isVercel = process.env.VERCEL === '1';
@@ -96,6 +107,9 @@ export interface StoreApp {
   isOfficial: boolean;
   appEdition?: 'phone' | 'tv' | 'both';
   isTvCompatible?: boolean;
+  displayOrder?: number;
+  isFeatured?: boolean;
+  isPinnedToTop?: boolean;
   approvalStatus?: 'approved' | 'pending_approval' | 'rejected';
   isTakenDown?: boolean;
   takedownReason?: string;
@@ -319,7 +333,29 @@ export interface AdminBroadcast {
   linkText?: string;
 }
 
-function getDevelopers(): Record<string, DeveloperAccount> {
+// Initialize Firestore in Server
+let firestoreDb: any = null;
+try {
+  const configPath = path.resolve(process.cwd(), 'firebase-applet-config.json');
+  if (fs.existsSync(configPath)) {
+    const raw = fs.readFileSync(configPath, 'utf-8');
+    const firebaseConfig = JSON.parse(raw);
+    const fbApp = getFirebaseApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
+    firestoreDb =
+      firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== '(default)'
+        ? getFirestore(fbApp, firebaseConfig.firestoreDatabaseId)
+        : getFirestore(fbApp);
+    console.log('[Firestore Server] Connected to persistent database:', firebaseConfig.firestoreDatabaseId || '(default)');
+  }
+} catch (err) {
+  console.warn('[Firestore Server] Init warning:', err);
+}
+
+// In-memory cache for developers & broadcasts
+let memoryDevelopers: Record<string, DeveloperAccount> = {};
+let memoryBroadcast: AdminBroadcast | null = null;
+
+function getLocalDevelopers(): Record<string, DeveloperAccount> {
   try {
     if (!fs.existsSync(DEVELOPERS_FILE)) {
       fs.writeFileSync(DEVELOPERS_FILE, '{}', 'utf-8');
@@ -332,37 +368,231 @@ function getDevelopers(): Record<string, DeveloperAccount> {
   }
 }
 
-function saveDevelopers(devs: Record<string, DeveloperAccount>) {
+function saveLocalDevelopers(devs: Record<string, DeveloperAccount>) {
   try {
     fs.writeFileSync(DEVELOPERS_FILE, JSON.stringify(devs, null, 2), 'utf-8');
   } catch (err) {
-    console.error('Error saving developers:', err);
+    console.error('Error saving developers file:', err);
+  }
+}
+
+function getDevelopers(): Record<string, DeveloperAccount> {
+  if (Object.keys(memoryDevelopers).length > 0) {
+    return memoryDevelopers;
+  }
+  const local = getLocalDevelopers();
+  if (Object.keys(local).length > 0) {
+    memoryDevelopers = local;
+    return local;
+  }
+  return memoryDevelopers;
+}
+
+async function findDeveloperByIdOrEmail(idOrEmail: string): Promise<DeveloperAccount | null> {
+  if (!idOrEmail) return null;
+  const norm = idOrEmail.toLowerCase().trim();
+
+  // 1. Check in-memory developers
+  for (const dev of Object.values(memoryDevelopers)) {
+    if (dev.id === idOrEmail || dev.email.toLowerCase().trim() === norm) {
+      return dev;
+    }
+  }
+
+  // 2. Check local file
+  const local = getLocalDevelopers();
+  for (const dev of Object.values(local)) {
+    if (dev.id === idOrEmail || dev.email.toLowerCase().trim() === norm) {
+      memoryDevelopers[dev.id] = dev;
+      return dev;
+    }
+  }
+
+  // 3. Fallback to Firestore cloud database directly
+  if (firestoreDb) {
+    try {
+      const docSnap = await getDoc(doc(firestoreDb, 'developers', idOrEmail));
+      if (docSnap.exists()) {
+        const dev = docSnap.data() as DeveloperAccount;
+        memoryDevelopers[dev.id] = dev;
+        return dev;
+      }
+
+      // Check email pointer doc
+      const emailSnap = await getDoc(doc(firestoreDb, 'developers', `email_${norm}`));
+      if (emailSnap.exists()) {
+        const devId = (emailSnap.data() as any).developerId;
+        if (devId) {
+          const directSnap = await getDoc(doc(firestoreDb, 'developers', devId));
+          if (directSnap.exists()) {
+            const dev = directSnap.data() as DeveloperAccount;
+            memoryDevelopers[dev.id] = dev;
+            return dev;
+          }
+        }
+      }
+
+      // Query docs
+      const querySnap = await getDocs(collection(firestoreDb, 'developers'));
+      for (const d of querySnap.docs) {
+        if (d.id.startsWith('email_')) continue;
+        const dev = d.data() as DeveloperAccount;
+        if (dev.id === idOrEmail || dev.email?.toLowerCase().trim() === norm) {
+          memoryDevelopers[dev.id] = dev;
+          return dev;
+        }
+      }
+    } catch (e) {
+      console.warn('[Firestore] Developer lookup warning:', e);
+    }
+  }
+
+  return null;
+}
+
+async function persistDeveloper(dev: DeveloperAccount): Promise<void> {
+  memoryDevelopers[dev.id] = dev;
+  saveLocalDevelopers(memoryDevelopers);
+
+  if (firestoreDb) {
+    try {
+      await setDoc(doc(firestoreDb, 'developers', dev.id), {
+        ...dev,
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+
+      // Mirror to email index for instant lookup
+      await setDoc(doc(firestoreDb, 'developers', `email_${dev.email.toLowerCase().trim()}`), {
+        developerId: dev.id,
+        email: dev.email.toLowerCase().trim(),
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+    } catch (e) {
+      console.error('[Firestore] Error persisting developer to cloud:', e);
+    }
+  }
+}
+
+async function deleteDeveloperPermanently(devId: string): Promise<void> {
+  const dev = memoryDevelopers[devId];
+  const email = dev?.email?.toLowerCase().trim();
+
+  delete memoryDevelopers[devId];
+  saveLocalDevelopers(memoryDevelopers);
+
+  if (firestoreDb) {
+    try {
+      await deleteDoc(doc(firestoreDb, 'developers', devId));
+      if (email) {
+        await deleteDoc(doc(firestoreDb, 'developers', `email_${email}`));
+      }
+    } catch (e) {
+      console.error('[Firestore] Error deleting developer from cloud:', e);
+    }
+  }
+}
+
+function saveDevelopers(devs: Record<string, DeveloperAccount>) {
+  memoryDevelopers = devs;
+  saveLocalDevelopers(devs);
+  if (firestoreDb) {
+    Object.values(devs).forEach((dev) => {
+      persistDeveloper(dev).catch(() => {});
+    });
   }
 }
 
 function getBroadcast(): AdminBroadcast | null {
+  if (memoryBroadcast) return memoryBroadcast;
   try {
     if (!fs.existsSync(BROADCAST_FILE)) {
       return null;
     }
     const data = fs.readFileSync(BROADCAST_FILE, 'utf-8');
-    return JSON.parse(data);
+    memoryBroadcast = JSON.parse(data);
+    return memoryBroadcast;
   } catch (err) {
     return null;
   }
 }
 
 function saveBroadcast(bc: AdminBroadcast | null) {
+  memoryBroadcast = bc;
   try {
     if (!bc) {
       if (fs.existsSync(BROADCAST_FILE)) fs.unlinkSync(BROADCAST_FILE);
-      return;
+    } else {
+      fs.writeFileSync(BROADCAST_FILE, JSON.stringify(bc, null, 2), 'utf-8');
     }
-    fs.writeFileSync(BROADCAST_FILE, JSON.stringify(bc, null, 2), 'utf-8');
   } catch (err) {
     console.error('Error saving broadcast:', err);
   }
+
+  if (firestoreDb) {
+    if (!bc) {
+      deleteDoc(doc(firestoreDb, 'broadcasts', 'active_broadcast')).catch(() => {});
+    } else {
+      setDoc(doc(firestoreDb, 'broadcasts', 'active_broadcast'), {
+        ...bc,
+        updatedAt: new Date().toISOString()
+      }, { merge: true }).catch(() => {});
+    }
+  }
 }
+
+// Background sync from Firestore to hydrate memory
+async function syncFromFirestore() {
+  if (!firestoreDb) return;
+  try {
+    // 1. Sync developers from Firestore
+    const devSnap = await getDocs(collection(firestoreDb, 'developers'));
+    const loadedDevs: Record<string, DeveloperAccount> = {};
+    devSnap.forEach((d) => {
+      if (d.id.startsWith('email_')) return;
+      const dev = d.data() as DeveloperAccount;
+      if (dev && dev.id) {
+        loadedDevs[dev.id] = dev;
+      }
+    });
+
+    const localDevs = getLocalDevelopers();
+    memoryDevelopers = { ...localDevs, ...loadedDevs };
+    saveLocalDevelopers(memoryDevelopers);
+    console.log(`[Firestore Server] Synchronized ${Object.keys(memoryDevelopers).length} developers.`);
+
+    // 2. Sync broadcasts
+    const bcSnap = await getDoc(doc(firestoreDb, 'broadcasts', 'active_broadcast'));
+    if (bcSnap.exists()) {
+      memoryBroadcast = bcSnap.data() as AdminBroadcast;
+      console.log('[Firestore Server] Synchronized broadcast banner.');
+    }
+
+    // 3. Sync apps
+    const appsSnap = await getDocs(collection(firestoreDb, 'apps'));
+    const cloudApps: StoreApp[] = [];
+    appsSnap.forEach((d) => {
+      const app = d.data() as StoreApp;
+      if (app && (app.id || d.id)) {
+        cloudApps.push(app);
+      }
+    });
+    if (cloudApps.length > 0) {
+      cloudApps.sort((a, b) => {
+        const orderA = a.displayOrder !== undefined ? a.displayOrder : (a.isFeatured ? 1 : 9999);
+        const orderB = b.displayOrder !== undefined ? b.displayOrder : (b.isFeatured ? 1 : 9999);
+        if (orderA !== orderB) return orderA - orderB;
+        return new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime();
+      });
+      memoryApps = cloudApps;
+      saveApps(cloudApps);
+      console.log(`[Firestore Server] Synchronized ${cloudApps.length} store apps.`);
+    }
+  } catch (err) {
+    console.warn('[Firestore Server] Initial sync notice:', err);
+  }
+}
+
+syncFromFirestore().catch(() => {});
 
 function createDeveloperToken(devId: string, email: string): string {
   const expiresAt = Date.now() + 30 * 24 * 60 * 60 * 1000;
@@ -507,7 +737,7 @@ const requireAdmin = (req: express.Request, res: express.Response, next: express
 };
 
 // Developer authentication middleware
-const requireDeveloper = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+const requireDeveloper = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return res.status(401).json({ error: 'Developer authentication required. Please sign in.' });
@@ -519,8 +749,7 @@ const requireDeveloper = (req: express.Request, res: express.Response, next: exp
     return res.status(401).json({ error: 'Session expired or invalid developer credentials.' });
   }
 
-  const devs = getDevelopers();
-  const dev = Object.values(devs).find((d) => d.id === payload.id || d.email.toLowerCase() === payload.email.toLowerCase());
+  const dev = (await findDeveloperByIdOrEmail(payload.id)) || (await findDeveloperByIdOrEmail(payload.email));
   if (!dev) {
     return res.status(401).json({ error: 'Developer account not found.' });
   }
@@ -588,7 +817,7 @@ app.post('/api/auth/login', (req, res) => {
 });
 
 // Developer registration endpoint
-app.post('/api/developer/auth/register', (req, res) => {
+app.post('/api/developer/auth/register', async (req, res) => {
   const { name, email, password, companyName } = req.body;
 
   if (!name || !name.trim()) {
@@ -610,8 +839,7 @@ app.post('/api/developer/auth/register', (req, res) => {
     return res.status(400).json({ error: 'This email is reserved for platform Super Admin.' });
   }
 
-  const devs = getDevelopers();
-  const existing = Object.values(devs).find((d) => d.email.toLowerCase() === normalizedEmail);
+  const existing = await findDeveloperByIdOrEmail(normalizedEmail);
   if (existing) {
     return res.status(400).json({ error: 'A developer account already exists with this email. Please sign in.' });
   }
@@ -625,11 +853,11 @@ app.post('/api/developer/auth/register', (req, res) => {
     email: normalizedEmail,
     passwordHash,
     companyName: companyName ? companyName.trim() : undefined,
+    status: 'active',
     createdAt: new Date().toISOString()
   };
 
-  devs[devId] = newDev;
-  saveDevelopers(devs);
+  await persistDeveloper(newDev);
 
   const token = createDeveloperToken(devId, normalizedEmail);
 
@@ -641,13 +869,14 @@ app.post('/api/developer/auth/register', (req, res) => {
       name: newDev.name,
       email: newDev.email,
       companyName: newDev.companyName,
+      status: newDev.status,
       createdAt: newDev.createdAt
     }
   });
 });
 
 // Developer login endpoint
-app.post('/api/developer/auth/login', (req, res) => {
+app.post('/api/developer/auth/login', async (req, res) => {
   const { email, password } = req.body;
 
   if (!email || !password) {
@@ -655,8 +884,7 @@ app.post('/api/developer/auth/login', (req, res) => {
   }
 
   const normalizedEmail = email.trim().toLowerCase();
-  const devs = getDevelopers();
-  const dev = Object.values(devs).find((d) => d.email.toLowerCase() === normalizedEmail);
+  const dev = await findDeveloperByIdOrEmail(normalizedEmail);
 
   if (!dev) {
     return res.status(401).json({ error: 'No developer account found with this email. Please create an account.' });
@@ -677,13 +905,16 @@ app.post('/api/developer/auth/login', (req, res) => {
       name: dev.name,
       email: dev.email,
       companyName: dev.companyName,
+      status: dev.status || 'active',
+      banReason: dev.banReason,
+      bannedAt: dev.bannedAt,
       createdAt: dev.createdAt
     }
   });
 });
 
 // Check active session (Unified for Super Admin & Developer)
-app.get('/api/auth/session', (req, res) => {
+app.get('/api/auth/session', async (req, res) => {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return res.json({ authenticated: false });
@@ -707,8 +938,7 @@ app.get('/api/auth/session', (req, res) => {
   // 2. Check if Developer
   const devPayload = verifyDeveloperToken(token);
   if (devPayload) {
-    const devs = getDevelopers();
-    const dev = Object.values(devs).find((d) => d.id === devPayload.id || d.email.toLowerCase() === devPayload.email.toLowerCase());
+    const dev = (await findDeveloperByIdOrEmail(devPayload.id)) || (await findDeveloperByIdOrEmail(devPayload.email));
     if (dev) {
       return res.json({
         authenticated: true,
@@ -718,6 +948,9 @@ app.get('/api/auth/session', (req, res) => {
           name: dev.name,
           email: dev.email,
           companyName: dev.companyName,
+          status: dev.status || 'active',
+          banReason: dev.banReason,
+          bannedAt: dev.bannedAt,
           createdAt: dev.createdAt
         }
       });
@@ -728,7 +961,7 @@ app.get('/api/auth/session', (req, res) => {
 });
 
 // Check developer session specifically
-app.get('/api/developer/auth/session', (req, res) => {
+app.get('/api/developer/auth/session', async (req, res) => {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return res.json({ authenticated: false });
@@ -740,8 +973,7 @@ app.get('/api/developer/auth/session', (req, res) => {
     return res.json({ authenticated: false });
   }
 
-  const devs = getDevelopers();
-  const dev = Object.values(devs).find((d) => d.id === devPayload.id || d.email.toLowerCase() === devPayload.email.toLowerCase());
+  const dev = (await findDeveloperByIdOrEmail(devPayload.id)) || (await findDeveloperByIdOrEmail(devPayload.email));
   if (!dev) {
     return res.json({ authenticated: false });
   }
@@ -753,6 +985,9 @@ app.get('/api/developer/auth/session', (req, res) => {
       name: dev.name,
       email: dev.email,
       companyName: dev.companyName,
+      status: dev.status || 'active',
+      banReason: dev.banReason,
+      bannedAt: dev.bannedAt,
       createdAt: dev.createdAt
     }
   });
@@ -811,6 +1046,13 @@ app.get('/api/apps', (req, res) => {
         a.category.toLowerCase().includes(q)
     );
   }
+
+  filtered.sort((a, b) => {
+    const orderA = a.displayOrder !== undefined ? a.displayOrder : (a.isFeatured ? 1 : 9999);
+    const orderB = b.displayOrder !== undefined ? b.displayOrder : (b.isFeatured ? 1 : 9999);
+    if (orderA !== orderB) return orderA - orderB;
+    return (b.downloadsTotal || 0) - (a.downloadsTotal || 0);
+  });
 
   return res.json(filtered);
 });
@@ -1992,6 +2234,12 @@ app.post(
       apps.unshift(newApp);
       saveApps(apps);
 
+      if (firestoreDb) {
+        setDoc(doc(firestoreDb, 'apps', newApp.id), newApp, { merge: true }).catch((e) => {
+          console.warn('[Firestore] Error saving submitted app to cloud:', e);
+        });
+      }
+
       return res.status(201).json({
         success: true,
         message: 'Application submitted successfully! It is now pending review by Super Admin.',
@@ -2041,6 +2289,10 @@ app.delete('/api/developer/apps/:id', requireDeveloper, (req, res) => {
   apps.splice(index, 1);
   saveApps(apps);
 
+  if (firestoreDb) {
+    deleteDoc(doc(firestoreDb, 'apps', appItem.id)).catch(() => {});
+  }
+
   return res.json({ success: true, message: `Submission for "${appItem.name}" has been removed.` });
 });
 
@@ -2073,6 +2325,10 @@ app.post('/api/admin/submissions/:id/approve', requireAdmin, (req, res) => {
 
   saveApps(apps);
 
+  if (firestoreDb) {
+    setDoc(doc(firestoreDb, 'apps', appItem.id), appItem, { merge: true }).catch(() => {});
+  }
+
   return res.json({
     success: true,
     message: `Application "${appItem.name}" approved! It is now live on Zuzu Store.`,
@@ -2098,6 +2354,10 @@ app.post('/api/admin/submissions/:id/reject', requireAdmin, (req, res) => {
   appItem.updatedAt = new Date().toISOString();
 
   saveApps(apps);
+
+  if (firestoreDb) {
+    setDoc(doc(firestoreDb, 'apps', appItem.id), appItem, { merge: true }).catch(() => {});
+  }
 
   return res.json({
     success: true,
@@ -2142,7 +2402,21 @@ app.post('/api/admin/broadcast', requireAdmin, (req, res) => {
 // ==========================================
 
 // Super Admin: Get all registered developers with full activity statistics
-app.get('/api/admin/developers', requireAdmin, (req, res) => {
+app.get('/api/admin/developers', requireAdmin, async (req, res) => {
+  if (firestoreDb) {
+    try {
+      const devSnap = await getDocs(collection(firestoreDb, 'developers'));
+      devSnap.forEach((d) => {
+        if (d.id.startsWith('email_')) return;
+        const dev = d.data() as DeveloperAccount;
+        if (dev && dev.id) {
+          memoryDevelopers[dev.id] = dev;
+        }
+      });
+      saveLocalDevelopers(memoryDevelopers);
+    } catch (_) {}
+  }
+
   const devs = getDevelopers();
   const apps = getApps();
 
@@ -2186,8 +2460,8 @@ app.get('/api/admin/developers', requireAdmin, (req, res) => {
   });
 });
 
-// Super Admin: Change developer account status (active, frozen, banned)
-app.post('/api/admin/developers/:id/status', requireAdmin, (req, res) => {
+// Super Admin: Change developer account status (active, frozen, banned) - Supports both POST and PATCH
+const handleUpdateDevStatus = async (req: express.Request, res: express.Response) => {
   const { id } = req.params;
   const { status, reason } = req.body;
 
@@ -2195,8 +2469,7 @@ app.post('/api/admin/developers/:id/status', requireAdmin, (req, res) => {
     return res.status(400).json({ error: 'Valid status is required: "active", "frozen", or "banned".' });
   }
 
-  const devs = getDevelopers();
-  const dev = Object.values(devs).find((d) => d.id === id || d.email.toLowerCase() === id.toLowerCase());
+  const dev = await findDeveloperByIdOrEmail(id);
 
   if (!dev) {
     return res.status(404).json({ error: 'Developer account not found.' });
@@ -2211,8 +2484,7 @@ app.post('/api/admin/developers/:id/status', requireAdmin, (req, res) => {
     dev.bannedAt = undefined;
   }
 
-  devs[dev.id] = dev;
-  saveDevelopers(devs);
+  await persistDeveloper(dev);
 
   return res.json({
     success: true,
@@ -2226,25 +2498,25 @@ app.post('/api/admin/developers/:id/status', requireAdmin, (req, res) => {
       bannedAt: dev.bannedAt
     }
   });
-});
+};
 
-// Super Admin: Delete developer account
-app.delete('/api/admin/developers/:id', requireAdmin, (req, res) => {
+app.post('/api/admin/developers/:id/status', requireAdmin, handleUpdateDevStatus);
+app.patch('/api/admin/developers/:id/status', requireAdmin, handleUpdateDevStatus);
+
+// Super Admin: Delete developer account permanently
+app.delete('/api/admin/developers/:id', requireAdmin, async (req, res) => {
   const { id } = req.params;
-  const devs = getDevelopers();
-  const devKey = Object.keys(devs).find((k) => devs[k].id === id || devs[k].email.toLowerCase() === id.toLowerCase());
+  const dev = await findDeveloperByIdOrEmail(id);
 
-  if (!devKey) {
+  if (!dev) {
     return res.status(404).json({ error: 'Developer account not found.' });
   }
 
-  const removedDev = devs[devKey];
-  delete devs[devKey];
-  saveDevelopers(devs);
+  await deleteDeveloperPermanently(dev.id);
 
   return res.json({
     success: true,
-    message: `Developer account "${removedDev.name}" (${removedDev.email}) has been permanently deleted.`
+    message: `Developer account "${dev.name}" (${dev.email}) has been permanently deleted from store & database.`
   });
 });
 
@@ -2285,6 +2557,10 @@ app.post('/api/admin/apps/:id/takedown', requireAdmin, (req, res) => {
 
   saveApps(apps);
 
+  if (firestoreDb) {
+    setDoc(doc(firestoreDb, 'apps', appItem.id), appItem, { merge: true }).catch(() => {});
+  }
+
   return res.json({
     success: true,
     message: `Application "${appItem.name}" has been taken down from the public storefront.`,
@@ -2309,6 +2585,10 @@ app.post('/api/admin/apps/:id/restore', requireAdmin, (req, res) => {
   appItem.updatedAt = new Date().toISOString();
 
   saveApps(apps);
+
+  if (firestoreDb) {
+    setDoc(doc(firestoreDb, 'apps', appItem.id), appItem, { merge: true }).catch(() => {});
+  }
 
   return res.json({
     success: true,
@@ -2345,10 +2625,71 @@ app.patch('/api/admin/apps/:id/override', requireAdmin, (req, res) => {
   apps[index] = updatedApp;
   saveApps(apps);
 
+  if (firestoreDb) {
+    setDoc(doc(firestoreDb, 'apps', updatedApp.id), updatedApp, { merge: true }).catch(() => {});
+  }
+
   return res.json({
     success: true,
     message: `Super Admin override applied to "${updatedApp.name}".`,
     app: updatedApp
+  });
+});
+
+// Super Admin: Reorder & Visual Curation of Apps for "For You" & Storefront
+app.post('/api/admin/apps/reorder', requireAdmin, async (req, res) => {
+  const { order } = req.body;
+  if (!Array.isArray(order)) {
+    return res.status(400).json({ error: 'Order array of { id, displayOrder, isFeatured } required.' });
+  }
+
+  const apps = getApps();
+  const orderMap = new Map<string, { displayOrder: number; isFeatured?: boolean }>();
+  order.forEach((item) => {
+    if (item && item.id) {
+      orderMap.set(item.id, {
+        displayOrder: typeof item.displayOrder === 'number' ? item.displayOrder : 9999,
+        isFeatured: Boolean(item.isFeatured)
+      });
+    }
+  });
+
+  // Update apps in memory and Firestore
+  apps.forEach((app) => {
+    const config = orderMap.get(app.id) || (app.slug ? orderMap.get(app.slug) : undefined);
+    if (config) {
+      app.displayOrder = config.displayOrder;
+      app.isFeatured = config.isFeatured;
+      app.updatedAt = new Date().toISOString();
+
+      if (firestoreDb) {
+        setDoc(
+          doc(firestoreDb, 'apps', app.id),
+          {
+            displayOrder: app.displayOrder,
+            isFeatured: app.isFeatured,
+            updatedAt: app.updatedAt
+          },
+          { merge: true }
+        ).catch((err) => console.warn(`[Firestore Server] Reorder doc update notice for ${app.id}:`, err));
+      }
+    }
+  });
+
+  // Sort apps array according to new displayOrder
+  apps.sort((a, b) => {
+    const orderA = a.displayOrder !== undefined ? a.displayOrder : (a.isFeatured ? 1 : 9999);
+    const orderB = b.displayOrder !== undefined ? b.displayOrder : (b.isFeatured ? 1 : 9999);
+    if (orderA !== orderB) return orderA - orderB;
+    return (b.downloadsTotal || 0) - (a.downloadsTotal || 0);
+  });
+
+  saveApps(apps);
+
+  return res.json({
+    success: true,
+    message: 'Storefront and For You ranking successfully saved and published!',
+    apps
   });
 });
 

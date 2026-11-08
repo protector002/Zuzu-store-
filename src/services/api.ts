@@ -6,7 +6,12 @@ import {
   deleteReleaseFromFirestore,
   getTombstonesFromFirestore,
   incrementAppDownloadInFirestore,
-  syncLocalCatalogToFirestore
+  syncLocalCatalogToFirestore,
+  saveDeveloperToFirestore,
+  getDeveloperFromFirestore,
+  saveBroadcastToFirestore,
+  getBroadcastFromFirestore,
+  reorderAppsInFirestore
 } from './firebase';
 import { deleteApkBlob } from '../utils/fileStorage';
 
@@ -827,6 +832,15 @@ export async function developerRegister(payload: {
   }
 
   setDeveloperToken(data.token);
+
+  // Permanently sync developer profile to Firestore cloud database & local storage
+  if (data.developer) {
+    saveDeveloperToFirestore(data.developer).catch((e) => console.warn('Cloud developer sync notice:', e));
+    try {
+      localStorage.setItem('zuzu_active_developer', JSON.stringify(data.developer));
+    } catch (_) {}
+  }
+
   return data;
 }
 
@@ -846,6 +860,15 @@ export async function developerLogin(
   }
 
   setDeveloperToken(data.token);
+
+  // Permanently sync developer profile to Firestore cloud database & local storage
+  if (data.developer) {
+    saveDeveloperToFirestore(data.developer).catch((e) => console.warn('Cloud developer sync notice:', e));
+    try {
+      localStorage.setItem('zuzu_active_developer', JSON.stringify(data.developer));
+    } catch (_) {}
+  }
+
   return data;
 }
 
@@ -862,15 +885,43 @@ export async function checkDeveloperSession(): Promise<{
         Authorization: `Bearer ${token}`
       }
     });
-    if (!res.ok) return { authenticated: false };
-    return res.json();
-  } catch (_) {
-    return { authenticated: false };
-  }
+    if (res.ok) {
+      const data = await res.json();
+      if (data.authenticated && data.developer) {
+        saveDeveloperToFirestore(data.developer).catch(() => {});
+        try {
+          localStorage.setItem('zuzu_active_developer', JSON.stringify(data.developer));
+        } catch (_) {}
+        return data;
+      }
+    }
+  } catch (_) {}
+
+  // Fallback: Check local cache and Firestore cloud directly so developer is never lost if server restarts
+  try {
+    const cached = localStorage.getItem('zuzu_active_developer');
+    if (cached) {
+      const dev: DeveloperUser = JSON.parse(cached);
+      if (dev && dev.id) {
+        const cloudDev = await getDeveloperFromFirestore(dev.id);
+        if (cloudDev && cloudDev.status !== 'banned') {
+          return { authenticated: true, developer: cloudDev };
+        }
+        if (dev.status !== 'banned') {
+          return { authenticated: true, developer: dev };
+        }
+      }
+    }
+  } catch (_) {}
+
+  return { authenticated: false };
 }
 
 export async function developerLogout(): Promise<void> {
   clearDeveloperToken();
+  try {
+    localStorage.removeItem('zuzu_active_developer');
+  } catch (_) {}
 }
 
 // =====================================
@@ -1207,12 +1258,17 @@ export async function fetchBroadcast(): Promise<AdminBroadcast | null> {
     const res = await fetch('/api/broadcast');
     if (res.ok) {
       const data = await res.json();
-      return data.broadcast || null;
+      if (data.broadcast) {
+        saveBroadcastToFirestore(data.broadcast).catch(() => {});
+        return data.broadcast;
+      }
     }
   } catch (err) {
-    console.warn('Error fetching system broadcast:', err);
+    console.warn('Error fetching system broadcast from API:', err);
   }
-  return null;
+
+  // Direct Firestore cloud fallback
+  return await getBroadcastFromFirestore();
 }
 
 export async function saveAdminBroadcast(
@@ -1231,6 +1287,47 @@ export async function saveAdminBroadcast(
   if (!res.ok || !data.success) {
     throw new Error(data.error || 'Failed to publish broadcast banner.');
   }
+
+  if (data.broadcast) {
+    saveBroadcastToFirestore(data.broadcast).catch(() => {});
+  }
+
+  return data;
+}
+
+export async function adminReorderApps(
+  order: Array<{ id: string; displayOrder: number; isFeatured?: boolean }>
+): Promise<{ success: boolean; apps: StoreApp[]; message: string }> {
+  // 1. Persist directly to Firestore
+  try {
+    await reorderAppsInFirestore(order);
+  } catch (e) {
+    console.warn('Direct Firestore reorder sync notice:', e);
+  }
+
+  // 2. Persist to server backend
+  const res = await fetch('/api/admin/apps/reorder', {
+    method: 'POST',
+    headers: {
+      ...getAuthHeaders(),
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ order })
+  });
+
+  const data = await res.json();
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || 'Failed to update app ranking in store.');
+  }
+
+  // Update local storage cache
+  try {
+    const cached = JSON.parse(localStorage.getItem('zuzu_local_catalog') || '[]');
+    if (Array.isArray(cached) && Array.isArray(data.apps)) {
+      localStorage.setItem('zuzu_local_catalog', JSON.stringify(data.apps));
+    }
+  } catch (_) {}
+
   return data;
 }
 

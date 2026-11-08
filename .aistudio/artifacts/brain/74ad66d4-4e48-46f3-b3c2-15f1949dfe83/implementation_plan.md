@@ -128,3 +128,25 @@ All endpoints are protected by `requireAdmin` (strictly matching `ADMIN_EMAIL: s
 5. **Codebase Health**:
    - Execute `compile_applet` and `lint_applet` together to verify 0 syntax or TypeScript errors.
    - Verify dev server starts and operates cleanly on port 3000.
+
+---
+
+## 7. Storefront & "For You" Curation System (Completed)
+
+1. **User Requirement & Clarification Answers**:
+   - Reorder method: **Move Up and Move Down buttons with quick Save**
+   - Number one app: **Set as both the main Hero banner and number one in For You**
+
+2. **Data & Schema Additions**:
+   - `StoreApp` interface: `displayOrder?: number; isFeatured?: boolean; isPinnedToTop?: boolean;`
+   - Updated `firebase-blueprint.json` with `displayOrder`, `isFeatured`, and `isPinnedToTop` properties.
+
+3. **Backend & Firestore Synchronization**:
+   - `POST /api/admin/apps/reorder`: Protected by Super Admin session, updates `displayOrder` and `isFeatured` for all apps in memory and directly updates `apps/{appId}` in Firestore.
+   - `GET /api/apps` and `syncFromFirestore()`: Automatically sort by `displayOrder` ascending (where #1 is top/Hero), preserving total downloads as secondary order.
+
+4. **Frontend Curation Module**:
+   - In `PublisherPortal.tsx`: **SUB-PANEL 4: Storefront & "For You" App Ranking** with position badges, Move Up (↑), Move Down (↓), one-click "Make #1 Spotlight", and "Quick Save & Publish Order".
+   - In `PublisherPortal.tsx` (Live Catalog tab): Added quick access button `"Curate & Reorder 'For You'"`.
+   - In `AppCatalog.tsx`: Added `"Recommended For You"` top shelf rendered in exact Super Admin display order.
+   - In `App.tsx`: `featuredPhoneApp` prioritizes the #1 designated spotlight app.

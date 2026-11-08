@@ -7,14 +7,16 @@ interface DeveloperAuthModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess: (dev: DeveloperUser) => void;
+  initialMode?: 'login' | 'register';
 }
 
 export const DeveloperAuthModal: React.FC<DeveloperAuthModalProps> = ({
   isOpen,
   onClose,
   onSuccess,
+  initialMode = 'register',
 }) => {
-  const [mode, setMode] = useState<'login' | 'register'>('login');
+  const [mode, setMode] = useState<'login' | 'register'>(initialMode);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -93,27 +95,18 @@ export const DeveloperAuthModal: React.FC<DeveloperAuthModalProps> = ({
             <Code2 className="w-6 h-6" />
           </div>
           <div>
-            <h2 className="text-lg font-black text-white tracking-tight">Developer Portal</h2>
-            <p className="text-xs text-neutral-400">Publish your Android & TV applications</p>
+            <h2 className="text-lg font-black text-white tracking-tight flex items-center gap-2">
+              <span>Become a Developer</span>
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-300 font-mono">
+                Get Console
+              </span>
+            </h2>
+            <p className="text-xs text-neutral-400">Publish and manage your Android &amp; TV applications</p>
           </div>
         </div>
 
         {/* Tab Switcher */}
         <div className="flex bg-neutral-950 p-1 rounded-xl border border-neutral-800 mb-5">
-          <button
-            type="button"
-            onClick={() => {
-              setMode('login');
-              setError(null);
-            }}
-            className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${
-              mode === 'login'
-                ? 'bg-gradient-to-r from-amber-500 to-amber-600 text-neutral-950 shadow-md'
-                : 'text-neutral-400 hover:text-white'
-            }`}
-          >
-            Developer Sign In
-          </button>
           <button
             type="button"
             onClick={() => {
@@ -126,7 +119,21 @@ export const DeveloperAuthModal: React.FC<DeveloperAuthModalProps> = ({
                 : 'text-neutral-400 hover:text-white'
             }`}
           >
-            Create Developer Account
+            Get Console (Register)
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setMode('login');
+              setError(null);
+            }}
+            className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${
+              mode === 'login'
+                ? 'bg-gradient-to-r from-amber-500 to-amber-600 text-neutral-950 shadow-md'
+                : 'text-neutral-400 hover:text-white'
+            }`}
+          >
+            Sign In to Console
           </button>
         </div>
 
@@ -242,7 +249,7 @@ export const DeveloperAuthModal: React.FC<DeveloperAuthModalProps> = ({
               <span className="inline-block w-4 h-4 border-2 border-neutral-950 border-t-transparent rounded-full animate-spin" />
             ) : (
               <>
-                <span>{mode === 'register' ? 'Register & Open Console' : 'Sign In to Console'}</span>
+                <span>{mode === 'register' ? 'Get Console & Start Publishing' : 'Sign In to Developer Console'}</span>
                 <ArrowRight className="w-4 h-4" />
               </>
             )}

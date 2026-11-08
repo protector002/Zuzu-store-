@@ -1,11 +1,13 @@
 import React from 'react';
-import { Smartphone, Download, QrCode, ShieldCheck, UploadCloud, HelpCircle, Sparkles, Tv } from 'lucide-react';
-import { AdminUser } from '../types';
+import { Smartphone, Download, QrCode, ShieldCheck, UploadCloud, HelpCircle, Sparkles, Tv, Code2 } from 'lucide-react';
+import { AdminUser, DeveloperUser } from '../types';
 
 interface StoreWelcomeBannerProps {
   admin: AdminUser | null;
+  developer?: DeveloperUser | null;
   onOpenLoginModal: () => void;
   onNavigateToUpload: () => void;
+  onOpenDeveloperPortal?: () => void;
   onOpenGuide: () => void;
   totalDownloads?: number;
   totalApps?: number;
@@ -14,7 +16,9 @@ interface StoreWelcomeBannerProps {
 
 export const StoreWelcomeBanner: React.FC<StoreWelcomeBannerProps> = ({
   admin,
+  developer,
   onNavigateToUpload,
+  onOpenDeveloperPortal,
   onOpenGuide,
   totalDownloads = 0,
   totalApps = 0,
@@ -125,6 +129,18 @@ export const StoreWelcomeBanner: React.FC<StoreWelcomeBannerProps> = ({
             >
               <UploadCloud className="w-4 h-4" />
               <span>Publish Your First APK Package</span>
+            </button>
+          )}
+
+          {/* Become a Developer / Get Console Button */}
+          {onOpenDeveloperPortal && (
+            <button
+              onClick={onOpenDeveloperPortal}
+              className="px-5 py-3.5 text-xs sm:text-sm font-bold text-amber-300 hover:text-white bg-neutral-900/90 hover:bg-neutral-800 border border-amber-500/50 hover:border-amber-400 rounded-xl transition-all shadow-md flex items-center gap-2 cursor-pointer active:scale-95 group"
+              title="Become a Developer • Get Console & Publish APKs"
+            >
+              <Code2 className="w-4 h-4 text-amber-400 group-hover:rotate-6 transition-transform" />
+              <span>{developer ? 'Open Dev Console' : 'Become a Developer (Get Console)'}</span>
             </button>
           )}
 

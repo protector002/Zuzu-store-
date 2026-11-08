@@ -1,12 +1,14 @@
 import React from 'react';
-import { ShieldCheck, Smartphone, Lock, UploadCloud, Layers, Tv } from 'lucide-react';
-import { AdminUser } from '../types';
+import { ShieldCheck, Smartphone, Lock, UploadCloud, Layers, Tv, Code2 } from 'lucide-react';
+import { AdminUser, DeveloperUser } from '../types';
 
 interface FooterProps {
   onNavigate: (view: 'store' | 'upload' | 'tv' | 'developer_console') => void;
   onOpenGuide: () => void;
   appsCount: number;
   admin?: AdminUser | null;
+  developer?: DeveloperUser | null;
+  onOpenDeveloperPortal?: () => void;
   onSecretAdminTrigger?: () => void;
 }
 
@@ -15,6 +17,8 @@ export const Footer: React.FC<FooterProps> = ({
   onOpenGuide,
   appsCount,
   admin,
+  developer,
+  onOpenDeveloperPortal,
   onSecretAdminTrigger,
 }) => {
   return (
@@ -55,6 +59,17 @@ export const Footer: React.FC<FooterProps> = ({
                   <span>Smart TV Page</span>
                 </button>
               </li>
+              {onOpenDeveloperPortal && (
+                <li>
+                  <button
+                    onClick={onOpenDeveloperPortal}
+                    className="hover:text-amber-300 transition-colors text-left flex items-center gap-1.5 text-amber-400 font-semibold cursor-pointer"
+                  >
+                    <Code2 className="w-3 h-3 text-amber-400" />
+                    <span>{developer ? 'Developer Console' : 'Become a Developer (Get Console)'}</span>
+                  </button>
+                </li>
+              )}
               <li>
                 <a href="#catalog" onClick={() => onNavigate('store')} className="hover:text-cyan-400 transition-colors">
                   Browse Catalog ({appsCount} {appsCount === 1 ? 'app' : 'apps'})

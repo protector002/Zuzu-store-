@@ -13,7 +13,7 @@ import {
   query,
   orderBy
 } from 'firebase/firestore';
-import { StoreApp } from '../types';
+import { StoreApp, DeveloperUser, AdminBroadcast } from '../types';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 // Initialize Firebase App singleton
@@ -183,8 +183,11 @@ export async function getAppsFromFirestore(includeUnapproved = false): Promise<S
       apps.push(data);
     });
 
-    // Sort by createdAt descending
+    // Sort by displayOrder first (where 1 is top/Hero), then createdAt descending
     apps.sort((a, b) => {
+      const orderA = a.displayOrder !== undefined ? a.displayOrder : (a.isFeatured ? 1 : 9999);
+      const orderB = b.displayOrder !== undefined ? b.displayOrder : (b.isFeatured ? 1 : 9999);
+      if (orderA !== orderB) return orderA - orderB;
       const timeA = new Date(b.createdAt || 0).getTime();
       const timeB = new Date(a.createdAt || 0).getTime();
       return timeA - timeB;
@@ -194,6 +197,30 @@ export async function getAppsFromFirestore(includeUnapproved = false): Promise<S
   } catch (err) {
     console.warn('Error fetching apps from Firestore, will use fallback:', err);
     return [];
+  }
+}
+
+/**
+ * Persist app ranking / order changes directly to Firestore
+ */
+export async function reorderAppsInFirestore(
+  order: Array<{ id: string; displayOrder: number; isFeatured?: boolean }>
+): Promise<void> {
+  for (const item of order) {
+    try {
+      const docRef = doc(db, APPS_COLLECTION, item.id);
+      await setDoc(
+        docRef,
+        {
+          displayOrder: item.displayOrder,
+          isFeatured: item.isFeatured ?? (item.displayOrder === 1),
+          updatedAt: new Date().toISOString()
+        },
+        { merge: true }
+      );
+    } catch (e) {
+      console.warn(`Failed to update displayOrder for ${item.id} in Firestore:`, e);
+    }
   }
 }
 
@@ -398,4 +425,151 @@ export async function syncLocalCatalogToFirestore(): Promise<StoreApp[]> {
     console.warn('Auto-sync notice:', err);
     return [];
   }
+}
+
+// Collection references for Developers and Broadcasts
+const DEVELOPERS_COLLECTION = 'developers';
+const BROADCASTS_COLLECTION = 'broadcasts';
+
+/**
+ * Permanently save developer account profile in Firestore cloud database
+ */
+export async function saveDeveloperToFirestore(dev: DeveloperUser): Promise<void> {
+  try {
+    const docRef = doc(db, DEVELOPERS_COLLECTION, dev.id);
+    await setDoc(
+      docRef,
+      {
+        ...dev,
+        updatedAt: new Date().toISOString()
+      },
+      { merge: true }
+    );
+
+    // Also mirror to email index document for instant O(1) lookups
+    const emailRef = doc(db, DEVELOPERS_COLLECTION, `email_${dev.email.toLowerCase().trim()}`);
+    await setDoc(
+      emailRef,
+      {
+        developerId: dev.id,
+        email: dev.email.toLowerCase().trim(),
+        updatedAt: new Date().toISOString()
+      },
+      { merge: true }
+    );
+
+    // Cache locally as immediate fallback
+    try {
+      localStorage.setItem(`zuzu_dev_${dev.id}`, JSON.stringify(dev));
+      localStorage.setItem(`zuzu_dev_email_${dev.email.toLowerCase().trim()}`, dev.id);
+    } catch (_) {}
+  } catch (err) {
+    console.error('Failed to save developer to Firestore:', err);
+  }
+}
+
+/**
+ * Retrieve a developer account from Firestore by ID or Email
+ */
+export async function getDeveloperFromFirestore(idOrEmail: string): Promise<DeveloperUser | null> {
+  try {
+    const norm = idOrEmail.toLowerCase().trim();
+
+    // 1. Direct ID lookup
+    const idDoc = await getDoc(doc(db, DEVELOPERS_COLLECTION, idOrEmail));
+    if (idDoc.exists()) {
+      return idDoc.data() as DeveloperUser;
+    }
+
+    // 2. Email pointer lookup
+    const emailDoc = await getDoc(doc(db, DEVELOPERS_COLLECTION, `email_${norm}`));
+    if (emailDoc.exists()) {
+      const devId = (emailDoc.data() as any).developerId;
+      if (devId) {
+        const directDoc = await getDoc(doc(db, DEVELOPERS_COLLECTION, devId));
+        if (directDoc.exists()) {
+          return directDoc.data() as DeveloperUser;
+        }
+      }
+    }
+
+    // 3. Collection scan query
+    const snap = await getDocs(collection(db, DEVELOPERS_COLLECTION));
+    for (const d of snap.docs) {
+      if (d.id.startsWith('email_')) continue;
+      const data = d.data() as DeveloperUser;
+      if (data.id === idOrEmail || data.email?.toLowerCase().trim() === norm) {
+        return data;
+      }
+    }
+  } catch (err) {
+    console.warn('Error reading developer from Firestore:', err);
+  }
+
+  // Fallback to local storage
+  try {
+    const cachedId = localStorage.getItem(`zuzu_dev_email_${idOrEmail.toLowerCase().trim()}`) || idOrEmail;
+    const cached = localStorage.getItem(`zuzu_dev_${cachedId}`);
+    if (cached) {
+      return JSON.parse(cached);
+    }
+  } catch (_) {}
+
+  return null;
+}
+
+/**
+ * Retrieve all registered developers from Firestore for Super Admin God Mode
+ */
+export async function getAllDevelopersFromFirestore(): Promise<DeveloperUser[]> {
+  try {
+    const snap = await getDocs(collection(db, DEVELOPERS_COLLECTION));
+    const devs: DeveloperUser[] = [];
+    snap.forEach((d) => {
+      if (d.id.startsWith('email_')) return;
+      const dev = d.data() as DeveloperUser;
+      if (dev && dev.id && dev.email) {
+        devs.push(dev);
+      }
+    });
+    return devs;
+  } catch (err) {
+    console.warn('Error fetching all developers from Firestore:', err);
+    return [];
+  }
+}
+
+/**
+ * Permanently save admin broadcast banner in Firestore
+ */
+export async function saveBroadcastToFirestore(broadcast: AdminBroadcast | null): Promise<void> {
+  try {
+    const docRef = doc(db, BROADCASTS_COLLECTION, 'active_broadcast');
+    if (!broadcast || !broadcast.active) {
+      await deleteDoc(docRef);
+    } else {
+      await setDoc(docRef, {
+        ...broadcast,
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+    }
+  } catch (err) {
+    console.warn('Error saving broadcast to Firestore:', err);
+  }
+}
+
+/**
+ * Retrieve active broadcast banner from Firestore
+ */
+export async function getBroadcastFromFirestore(): Promise<AdminBroadcast | null> {
+  try {
+    const docRef = doc(db, BROADCASTS_COLLECTION, 'active_broadcast');
+    const snap = await getDoc(docRef);
+    if (snap.exists()) {
+      return snap.data() as AdminBroadcast;
+    }
+  } catch (err) {
+    console.warn('Error fetching broadcast from Firestore:', err);
+  }
+  return null;
 }

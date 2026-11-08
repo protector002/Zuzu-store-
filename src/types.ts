@@ -78,6 +78,9 @@ export interface StoreApp {
   isTvCompatible?: boolean;
   tvBannerUrl?: string;
   downloaderCode?: string;
+  displayOrder?: number;
+  isFeatured?: boolean;
+  isPinnedToTop?: boolean;
   approvalStatus?: 'approved' | 'pending_approval' | 'rejected';
   isTakenDown?: boolean;
   takedownReason?: string;

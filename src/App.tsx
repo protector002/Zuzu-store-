@@ -583,9 +583,18 @@ export default function App() {
     );
   });
 
-  const phoneApps = filterPhoneApps(filteredApps);
+  const phoneApps = filterPhoneApps(filteredApps).sort((a, b) => {
+    const orderA = a.displayOrder !== undefined ? a.displayOrder : (a.isFeatured ? 1 : 9999);
+    const orderB = b.displayOrder !== undefined ? b.displayOrder : (b.isFeatured ? 1 : 9999);
+    if (orderA !== orderB) return orderA - orderB;
+    return (b.downloadsTotal || 0) - (a.downloadsTotal || 0);
+  });
   const tvApps = filterTvApps(filteredApps);
-  const featuredPhoneApp = phoneApps[0] || null;
+  const featuredPhoneApp =
+    phoneApps.find((a) => a.isFeatured) ||
+    phoneApps.find((a) => a.displayOrder === 1) ||
+    phoneApps[0] ||
+    null;
   const totalDownloads = apps.reduce((sum, a) => sum + (a.downloadsTotal || 0), 0);
 
   return (
@@ -746,6 +755,15 @@ export default function App() {
                   /* If no phone apps published yet, show clean ZuzuStore welcome banner with logo */
                   <StoreWelcomeBanner
                     admin={admin}
+                    developer={developer}
+                    onOpenDeveloperPortal={() => {
+                      if (developer) {
+                        setCurrentView('developer_console');
+                        window.scrollTo({ top: 0, behavior: 'smooth' });
+                      } else {
+                        setIsDevAuthModalOpen(true);
+                      }
+                    }}
                     onOpenLoginModal={() => setIsLoginModalOpen(true)}
                     onNavigateToUpload={() => setCurrentView('upload')}
                     onOpenGuide={() => openGuideModal('Android')}
@@ -893,6 +911,15 @@ export default function App() {
         onOpenGuide={() => openGuideModal('Android')}
         appsCount={apps.length}
         admin={admin}
+        developer={developer}
+        onOpenDeveloperPortal={() => {
+          if (developer) {
+            setCurrentView('developer_console');
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          } else {
+            setIsDevAuthModalOpen(true);
+          }
+        }}
         onSecretAdminTrigger={handleOpenSecretAdmin}
       />
 

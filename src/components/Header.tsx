@@ -343,18 +343,6 @@ export const Header: React.FC<HeaderProps> = ({
             Installation Guide
           </button>
 
-          {/* Developer Portal Tab */}
-          <button
-            onClick={onOpenDeveloperPortal}
-            className={`transition-colors whitespace-nowrap flex items-center gap-1.5 cursor-pointer py-1 ${
-              currentView === 'developer_console' ? 'text-amber-400 font-semibold' : 'text-neutral-400 hover:text-white'
-            }`}
-            title="Publish your apps on ZuzuStore"
-          >
-            <Code2 className="w-3.5 h-3.5 text-amber-400" />
-            <span>{developer ? 'Dev Console' : 'Developers'}</span>
-          </button>
-
           {/* Publisher Portal Tab: ONLY visible to logged-in administrator */}
           {admin && (
             <button
@@ -371,19 +359,54 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Right Action Zone */}
         <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
-          {/* Mobile Developer Portal Button */}
+          {/* Become a Developer / Get Console Button (Visible & fully functional on Mobile, Tablet, and Desktop) */}
           <button
             type="button"
             onClick={onOpenDeveloperPortal}
-            className={`md:hidden p-2 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+            className={`group relative px-2 sm:px-3 py-1 sm:py-1.5 rounded-xl font-extrabold flex items-center gap-1 sm:gap-1.5 transition-all duration-300 cursor-pointer overflow-hidden border whitespace-nowrap shrink-0 active:scale-95 ${
               currentView === 'developer_console'
-                ? 'bg-amber-500/20 border-amber-500/60 text-amber-300'
-                : 'bg-neutral-900/90 border-neutral-800 text-neutral-400 hover:text-white'
+                ? 'bg-gradient-to-r from-amber-500/25 via-amber-600/30 to-amber-500/25 border-amber-400/90 text-amber-300 shadow-md shadow-amber-500/25 ring-1 ring-amber-400/50'
+                : 'bg-neutral-900/90 hover:bg-neutral-800 border-amber-500/50 hover:border-amber-400 text-amber-300 hover:text-white shadow-xs'
             }`}
-            title="Developer Portal"
-            aria-label="Developer Portal"
+            title={developer ? 'Open Developer Console' : 'Become a Developer • Get Console & Publish APKs'}
+            aria-label={developer ? 'Open Developer Console' : 'Become a Developer • Get Console'}
           >
-            <Code2 className="w-4 h-4" />
+            {/* Shimmer sweep on hover */}
+            <span className="absolute inset-0 w-1/2 h-full bg-gradient-to-r from-transparent via-white/20 to-transparent pointer-events-none -translate-x-full group-hover:translate-x-[300%] transition-transform duration-700" />
+
+            {/* Icon: Checkmark if active view, or code icon */}
+            {currentView === 'developer_console' ? (
+              <span className="flex items-center justify-center w-3.5 h-3.5 sm:w-4 sm:h-4 rounded-full bg-amber-400 text-neutral-950 shrink-0 shadow-xs">
+                <Check className="w-2.5 h-2.5 stroke-[3]" />
+              </span>
+            ) : (
+              <Code2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-400 shrink-0 group-hover:rotate-6 transition-transform" />
+            )}
+
+            {/* Responsive Text Label */}
+            <span className="text-[11px] sm:text-xs tracking-tight font-black">
+              {developer ? (
+                <>
+                  <span className="hidden sm:inline">Dev Console</span>
+                  <span className="sm:hidden">Console</span>
+                </>
+              ) : (
+                <>
+                  <span className="hidden xl:inline">Become a Developer</span>
+                  <span className="hidden sm:inline xl:hidden">Get Console</span>
+                  <span className="sm:hidden">Get Console</span>
+                </>
+              )}
+            </span>
+
+            {/* Small active badge or beacon */}
+            {developer ? (
+              <span className="hidden md:inline-flex w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" title="Active Developer" />
+            ) : (
+              <span className="hidden xl:inline-flex text-[9px] font-black uppercase tracking-wider bg-amber-500/20 text-amber-300 border border-amber-500/40 px-1 py-0.2 rounded shrink-0">
+                Publish
+              </span>
+            )}
           </button>
 
           {/* Mobile Search Toggle Button (visible on mobile screens < md) */}

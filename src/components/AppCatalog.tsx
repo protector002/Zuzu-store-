@@ -68,8 +68,13 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
     setInternalSearch(val);
   };
 
-  // Strictly filter for Android Phone apps (TV-only apps belong strictly to the Smart TV page)
-  const phoneApps = filterPhoneApps(apps);
+  // Strictly filter for Android Phone apps, sorted by Super Admin displayOrder (1 is top/hero)
+  const phoneApps = filterPhoneApps(apps).sort((a, b) => {
+    const orderA = a.displayOrder !== undefined ? a.displayOrder : (a.isFeatured ? 1 : 9999);
+    const orderB = b.displayOrder !== undefined ? b.displayOrder : (b.isFeatured ? 1 : 9999);
+    if (orderA !== orderB) return orderA - orderB;
+    return (b.downloadsTotal || 0) - (a.downloadsTotal || 0);
+  });
 
   // Active search filtering
   const searchResults = phoneApps.filter((app) => {
@@ -94,6 +99,7 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
   };
 
   // Shelves computation for "For You" Play Store style
+  const curatedForYouApps = [...phoneApps];
   const popularApps = [...phoneApps].sort((a, b) => (b.downloadsTotal || 0) - (a.downloadsTotal || 0));
   const topRatedApps = [...phoneApps].sort((a, b) => b.rating - a.rating);
   const newDeveloperApps = [...phoneApps].sort(
@@ -477,7 +483,17 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
           {/* TAB 1: FOR YOU (Play Store Shelves Layout) */}
           {mainTab === 'for-you' && (
             <div className="space-y-8">
-              {/* Shelf 1: Popular & Trending Apps */}
+              {/* Shelf 1: Recommended For You (Curated in exact Super Admin display order) */}
+              {curatedForYouApps.length > 0 && (
+                <PlayStoreShelf
+                  title="Recommended For You"
+                  subtitle="Top featured apps curated for your Android device"
+                  appsList={curatedForYouApps}
+                  icon={Sparkles}
+                />
+              )}
+
+              {/* Shelf 2: Popular & Trending Apps */}
               <PlayStoreShelf
                 title="Popular & Trending Apps"
                 subtitle="Most downloaded Android packages across Zuzu Store"

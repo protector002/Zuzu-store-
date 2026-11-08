@@ -40,7 +40,9 @@ import {
   Radio,
   EyeOff,
   UserCheck,
-  UserX
+  UserX,
+  ArrowUp,
+  ArrowDown
 } from 'lucide-react';
 import { StoreApp, Platform, AppCategory, AdminUser, DeveloperAccountAdminView, AdminBroadcast, DeveloperStatus } from '../types';
 import { saveApkBlob } from '../utils/fileStorage';
@@ -57,7 +59,8 @@ import {
   restoreApp,
   overrideAppMetadata,
   fetchBroadcast,
-  saveAdminBroadcast
+  saveAdminBroadcast,
+  adminReorderApps
 } from '../services/api';
 import { isTvApp, isPhoneApp, filterPhoneApps, filterTvApps } from '../utils/editionHelper';
 
@@ -274,6 +277,82 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
   });
   const [isSavingBroadcast, setIsSavingBroadcast] = useState(false);
   const [broadcastToast, setBroadcastToast] = useState<string | null>(null);
+
+  // ==========================================
+  // STOREFRONT & "FOR YOU" VISUAL CURATION STATE
+  // ==========================================
+  const [curatedApps, setCuratedApps] = useState<StoreApp[]>([]);
+  const [hasOrderChanges, setHasOrderChanges] = useState(false);
+  const [isSavingOrder, setIsSavingOrder] = useState(false);
+  const [orderToast, setOrderToast] = useState<string | null>(null);
+
+  // Synchronize curatedApps whenever apps change, sorted by current displayOrder
+  useEffect(() => {
+    const phoneList = filterPhoneApps(apps).sort((a, b) => {
+      const orderA = a.displayOrder !== undefined ? a.displayOrder : (a.isFeatured ? 1 : 9999);
+      const orderB = b.displayOrder !== undefined ? b.displayOrder : (b.isFeatured ? 1 : 9999);
+      if (orderA !== orderB) return orderA - orderB;
+      return (b.downloadsTotal || 0) - (a.downloadsTotal || 0);
+    });
+    setCuratedApps(phoneList);
+    setHasOrderChanges(false);
+  }, [apps]);
+
+  const handleMoveAppUp = (index: number) => {
+    if (index <= 0) return;
+    setCuratedApps((prev) => {
+      const next = [...prev];
+      const temp = next[index];
+      next[index] = next[index - 1];
+      next[index - 1] = temp;
+      return next;
+    });
+    setHasOrderChanges(true);
+  };
+
+  const handleMoveAppDown = (index: number) => {
+    setCuratedApps((prev) => {
+      if (index >= prev.length - 1) return prev;
+      const next = [...prev];
+      const temp = next[index];
+      next[index] = next[index + 1];
+      next[index + 1] = temp;
+      return next;
+    });
+    setHasOrderChanges(true);
+  };
+
+  const handleMakeHeroSpotlight = (index: number) => {
+    if (index === 0) return;
+    setCuratedApps((prev) => {
+      const target = prev[index];
+      const filtered = prev.filter((_, i) => i !== index);
+      return [target, ...filtered];
+    });
+    setHasOrderChanges(true);
+  };
+
+  const handleSaveStorefrontOrder = async () => {
+    if (curatedApps.length === 0) return;
+    setIsSavingOrder(true);
+    try {
+      const orderPayload = curatedApps.map((app, idx) => ({
+        id: app.id,
+        displayOrder: idx + 1,
+        isFeatured: idx === 0 // Rank #1 is both Hero spotlight and #1 in For You as the user specified!
+      }));
+      await adminReorderApps(orderPayload);
+      setHasOrderChanges(false);
+      const topApp = curatedApps[0];
+      setOrderToast(`Saved! "${topApp?.name || 'Top App'}" is now #1 Hero Spotlight and Top of For You.`);
+      setTimeout(() => setOrderToast(null), 4500);
+      onRefreshCatalog?.();
+    } catch (err: any) {
+      alert(err.message || 'Failed to save storefront order.');
+    } finally {
+      setIsSavingOrder(false);
+    }
+  };
 
   const loadDevelopers = async () => {
     setIsLoadingDevelopers(true);
@@ -2132,20 +2211,37 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
                 <h3 className="text-base font-bold text-white">Live Store Catalog ({apps.length} {apps.length === 1 ? 'App' : 'Apps'})</h3>
                 <p className="text-xs text-neutral-400 mt-0.5">Manage live packages published to the Android App store and the Smart TV page.</p>
               </div>
-              {apps.length > 0 && (
+              <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
                 <button
+                  type="button"
                   onClick={() => {
-                    if (confirm('Clear all store apps from catalog?')) {
-                      onResetCatalog();
-                    }
+                    setActiveTab('god-mode');
+                    setTimeout(() => {
+                      const el = document.getElementById('curation-section');
+                      el?.scrollIntoView({ behavior: 'smooth' });
+                    }, 100);
                   }}
-                  className="px-3 py-1.5 text-xs text-neutral-400 hover:text-rose-400 bg-neutral-900 border border-neutral-800 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer self-start sm:self-auto"
-                  title="Clear all apps from catalog"
+                  className="px-3.5 py-1.5 text-xs font-bold text-neutral-950 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 rounded-lg flex items-center gap-1.5 transition-all shadow-md cursor-pointer"
+                  title="Rank which apps appear on top of one another in For You"
                 >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                  <span>Clear Catalog</span>
+                  <Crown className="w-3.5 h-3.5 fill-current" />
+                  <span>Curate &amp; Reorder &quot;For You&quot;</span>
                 </button>
-              )}
+                {apps.length > 0 && (
+                  <button
+                    onClick={() => {
+                      if (confirm('Clear all store apps from catalog?')) {
+                        onResetCatalog();
+                      }
+                    }}
+                    className="px-3 py-1.5 text-xs text-neutral-400 hover:text-rose-400 bg-neutral-900 border border-neutral-800 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
+                    title="Clear all apps from catalog"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>Clear Catalog</span>
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Filter Tabs: All | Android App | Smart TV */}
@@ -3227,6 +3323,213 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
                       </div>
                     </div>
                   ))}
+              </div>
+            )}
+          </div>
+
+          {/* SUB-PANEL 4: STOREFRONT & "FOR YOU" VISUAL CURATION & RANKING */}
+          <div id="curation-section" className="p-6 bg-neutral-900/60 border border-neutral-800 rounded-3xl space-y-5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-neutral-800 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-400 shrink-0">
+                  <Crown className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-base font-bold text-white">Storefront &amp; &quot;For You&quot; App Ranking</h3>
+                    <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-300">
+                      Visual Curation
+                    </span>
+                  </div>
+                  <p className="text-xs text-neutral-400 mt-0.5">
+                    Select which app appears on top of another in &quot;For You&quot;, and pick the #1 app to headline the homepage Hero banner.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2.5 self-start sm:self-auto">
+                <button
+                  type="button"
+                  onClick={handleSaveStorefrontOrder}
+                  disabled={isSavingOrder || !hasOrderChanges}
+                  className={`px-4 py-2 text-xs font-bold rounded-xl transition-all flex items-center gap-2 shadow-lg cursor-pointer ${
+                    hasOrderChanges
+                      ? 'bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-neutral-950 shadow-amber-500/30 animate-pulse'
+                      : 'bg-neutral-800 text-neutral-400 cursor-not-allowed'
+                  }`}
+                >
+                  {isSavingOrder ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      <span>Saving Order...</span>
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      <span>{hasOrderChanges ? 'Quick Save & Publish Order' : 'Storefront Order Saved'}</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* Notification Toast */}
+            {orderToast && (
+              <div className="p-3.5 bg-emerald-950/60 border border-emerald-700/60 rounded-2xl text-xs text-emerald-200 flex items-center justify-between shadow-lg animate-fade-in">
+                <div className="flex items-center gap-2.5">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span>{orderToast}</span>
+                </div>
+                <button onClick={() => setOrderToast(null)} className="text-emerald-400 hover:underline text-[11px] font-semibold">
+                  Dismiss
+                </button>
+              </div>
+            )}
+
+            {/* Explanation Guide Bar */}
+            <div className="p-3.5 bg-neutral-950 rounded-2xl border border-neutral-800/80 text-xs text-neutral-300 flex items-start gap-3">
+              <Sparkles className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <p>
+                  <strong className="text-white font-semibold">How For You Ranking Works:</strong> The app at <strong className="text-amber-400">Position #1</strong> is automatically featured in the homepage <strong className="text-white">Hero Spotlight Banner</strong> and placed first in the <strong className="text-white">Recommended For You</strong> shelf.
+                </p>
+                <p className="text-[11px] text-neutral-400">
+                  Use the <strong className="text-neutral-200">Move Up (↑)</strong> and <strong className="text-neutral-200">Move Down (↓)</strong> buttons on any app to reorder apps above or below one another, or click <strong className="text-amber-300">&quot;Make #1 Spotlight&quot;</strong> to immediately jump an app to the top. Then click <strong className="text-white">&quot;Quick Save &amp; Publish Order&quot;</strong> to sync instantly across all visitors and cloud Firestore.
+                </p>
+              </div>
+            </div>
+
+            {/* Curated Apps List */}
+            {curatedApps.length === 0 ? (
+              <div className="p-8 text-center text-xs text-neutral-500 bg-neutral-950 rounded-2xl border border-neutral-800">
+                No Android phone applications available to rank. Publish or approve applications first.
+              </div>
+            ) : (
+              <div className="space-y-2.5">
+                {curatedApps.map((app, index) => {
+                  const isHero = index === 0;
+                  const devName = app.submittedBy?.name || app.developer?.name || 'Publisher';
+
+                  return (
+                    <div
+                      key={app.id}
+                      className={`p-3.5 rounded-2xl border transition-all flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3.5 ${
+                        isHero
+                          ? 'bg-gradient-to-r from-amber-950/40 via-neutral-950 to-neutral-950 border-amber-500/50 shadow-md ring-1 ring-amber-500/20'
+                          : 'bg-neutral-950 hover:bg-neutral-900/60 border-neutral-800/80 hover:border-neutral-700'
+                      }`}
+                    >
+                      {/* Left: Position Rank & App Info */}
+                      <div className="flex items-center gap-3.5 min-w-0">
+                        {/* Position Number Badge */}
+                        <div
+                          className={`w-10 h-10 rounded-xl flex flex-col items-center justify-center font-black shrink-0 ${
+                            isHero
+                              ? 'bg-gradient-to-br from-amber-400 to-amber-600 text-neutral-950 shadow-md shadow-amber-500/20'
+                              : 'bg-neutral-900 border border-neutral-800 text-neutral-300'
+                          }`}
+                        >
+                          {isHero ? (
+                            <>
+                              <Crown className="w-3.5 h-3.5 fill-neutral-950" />
+                              <span className="text-[11px] leading-none">#1</span>
+                            </>
+                          ) : (
+                            <span className="text-xs">#{index + 1}</span>
+                          )}
+                        </div>
+
+                        {/* App Icon */}
+                        <img
+                          src={app.iconUrl || '/zuzustore-logo.png'}
+                          alt={app.name}
+                          className="w-11 h-11 rounded-xl object-contain border border-neutral-800 bg-neutral-900 p-1 shrink-0"
+                          onError={(e) => {
+                            e.currentTarget.onerror = null;
+                            e.currentTarget.src = '/zuzustore-logo.png';
+                          }}
+                        />
+
+                        {/* App Details */}
+                        <div className="space-y-0.5 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h4 className="text-sm font-bold text-white truncate">{app.name}</h4>
+                            {isHero && (
+                              <span className="px-2 py-0.5 text-[10px] font-black uppercase tracking-wider bg-amber-400 text-neutral-950 rounded-full shadow">
+                                ★ Hero Spotlight &amp; Top of For You
+                              </span>
+                            )}
+                            <span className="px-2 py-0.5 text-[10px] font-semibold rounded-full bg-neutral-900 border border-neutral-800 text-neutral-400">
+                              {app.category}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-neutral-400 truncate">
+                            {app.tagline || app.description}
+                          </p>
+                          <p className="text-[10px] text-neutral-500 font-mono">
+                            Developer: {devName} • Package: {app.packageId} • Downloads: {(app.downloadsTotal || 0).toLocaleString()}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Right: Reordering Actions */}
+                      <div className="flex items-center gap-1.5 self-end sm:self-auto shrink-0">
+                        {/* Make #1 Spotlight Button */}
+                        {!isHero && (
+                          <button
+                            type="button"
+                            onClick={() => handleMakeHeroSpotlight(index)}
+                            className="px-2.5 py-1.5 text-[11px] font-bold text-amber-300 hover:text-amber-200 bg-amber-950/40 hover:bg-amber-900/50 border border-amber-800/60 rounded-xl transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
+                            title="Make this app #1 Hero Spotlight and Top of For You"
+                          >
+                            <Crown className="w-3 h-3 text-amber-400" />
+                            <span>Make #1 Spotlight</span>
+                          </button>
+                        )}
+
+                        {/* Move Up Button */}
+                        <button
+                          type="button"
+                          disabled={index === 0}
+                          onClick={() => handleMoveAppUp(index)}
+                          className={`p-2 rounded-xl border transition-colors cursor-pointer flex items-center justify-center ${
+                            index === 0
+                              ? 'opacity-30 cursor-not-allowed bg-neutral-900 border-neutral-800 text-neutral-600'
+                              : 'bg-neutral-900 hover:bg-neutral-800 border-neutral-700 text-white hover:text-amber-300 active:scale-95'
+                          }`}
+                          title="Move app up one position (place on top)"
+                        >
+                          <ArrowUp className="w-4 h-4" />
+                        </button>
+
+                        {/* Move Down Button */}
+                        <button
+                          type="button"
+                          disabled={index === curatedApps.length - 1}
+                          onClick={() => handleMoveAppDown(index)}
+                          className={`p-2 rounded-xl border transition-colors cursor-pointer flex items-center justify-center ${
+                            index === curatedApps.length - 1
+                              ? 'opacity-30 cursor-not-allowed bg-neutral-900 border-neutral-800 text-neutral-600'
+                              : 'bg-neutral-900 hover:bg-neutral-800 border-neutral-700 text-white hover:text-amber-300 active:scale-95'
+                          }`}
+                          title="Move app down one position"
+                        >
+                          <ArrowDown className="w-4 h-4" />
+                        </button>
+
+                        {/* View in Store */}
+                        <button
+                          type="button"
+                          onClick={() => onViewAppInStore(app)}
+                          className="p-2 text-neutral-400 hover:text-white bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 rounded-xl transition-colors cursor-pointer"
+                          title="Preview in Store"
+                        >
+                          <Eye className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>

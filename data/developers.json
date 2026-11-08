@@ -15,5 +15,23 @@
     "companyName": "Turner Games",
     "createdAt": "2026-11-06T10:15:50.529Z",
     "status": "active"
+  },
+  "dev-1794041845641-tjovs": {
+    "id": "dev-1794041845641-tjovs",
+    "name": "Protector",
+    "email": "jt6707033@gmail.com",
+    "passwordHash": "0181fdad0ee20a1b5119cf61bacd94afbf29b8fb40064e01e428f80649f76789",
+    "companyName": "Protector Software",
+    "createdAt": "2026-11-07T08:57:25.641Z"
+  },
+  "dev-1794041940141-j9egi": {
+    "companyName": "Anime Innovations",
+    "createdAt": "2026-11-07T08:59:00.141Z",
+    "email": "teststudio@example.com",
+    "id": "dev-1794041940141-j9egi",
+    "name": "Test Studio Anime",
+    "passwordHash": "6a4f4d7745408181317b5afb4a0b4ee3844ecbe053c15c7bc8cf62a509c47a25",
+    "status": "active",
+    "updatedAt": "2026-11-07T08:59:00.141Z"
   }
 }
