@@ -1558,3 +1558,60 @@ export async function pingLivePay(): Promise<{ success: boolean; message: string
 
   return data;
 }
+
+// Public: Get store commission percentage and sending fee rate
+export async function fetchStoreCommission(): Promise<{
+  adminCommissionPercent: number;
+  withdrawalTransferFeePer1000: number;
+}> {
+  try {
+    const res = await fetch('/api/store/commission');
+    if (res.ok) {
+      const data = await res.json();
+      return {
+        adminCommissionPercent: data.adminCommissionPercent ?? 6,
+        withdrawalTransferFeePer1000: data.withdrawalTransferFeePer1000 ?? 100
+      };
+    }
+  } catch (_) {}
+  return { adminCommissionPercent: 6, withdrawalTransferFeePer1000: 100 };
+}
+
+// Super Admin: Get system settings
+export async function fetchAdminCommission(): Promise<{
+  adminCommissionPercent: number;
+  withdrawalTransferFeePer1000: number;
+  updatedAt: string;
+}> {
+  const res = await fetch('/api/admin/commission', {
+    headers: { ...getAuthHeaders() }
+  });
+  const data = await res.json();
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || 'Failed to fetch admin settings.');
+  }
+  return data.settings;
+}
+
+// Super Admin: Update commission rate and transfer fee
+export async function updateAdminCommission(
+  adminCommissionPercent: number,
+  withdrawalTransferFeePer1000: number = 100
+): Promise<{ success: boolean; message: string; settings: any }> {
+  const res = await fetch('/api/admin/commission', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeaders()
+    },
+    body: JSON.stringify({ adminCommissionPercent, withdrawalTransferFeePer1000 })
+  });
+
+  const data = await res.json();
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || 'Failed to update commission rate.');
+  }
+
+  return data;
+}
+

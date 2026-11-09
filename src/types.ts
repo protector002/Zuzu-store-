@@ -240,7 +240,9 @@ export interface WithdrawalRequest {
   developerId: string;
   developerName: string;
   developerEmail: string;
-  amount: number; // Minimum 1000
+  amount: number; // Gross amount requested (min 1000)
+  transferFee?: number; // Sending charge (100 UGX deducted per 1000 UGX)
+  netPayoutAmount?: number; // Actual cash sent to handset (amount - transferFee)
   currency: string;
   payoutMethod: 'mobile_money_mtn' | 'mobile_money_airtel' | 'bank_transfer' | 'paypal';
   payoutDetails: {
@@ -268,14 +270,22 @@ export interface LivePayConfigStatus {
   supportedNetworks: string[];
 }
 
+export interface SystemSettings {
+  adminCommissionPercent: number;
+  withdrawalTransferFeePer1000: number;
+  updatedAt: string;
+}
+
 export interface AdminFinancialSummary {
   totalGrossSales: number;
-  totalAdminCommissionEarned: number; // 6%
-  totalDeveloperNetEarnings: number; // 94%
+  totalAdminCommissionEarned: number;
+  totalDeveloperNetEarnings: number;
   totalDisbursedWithdrawals: number;
   totalPendingWithdrawals: number;
   totalPaidTransactionsCount: number;
   currency: string;
+  adminCommissionPercent?: number;
+  withdrawalTransferFeePer1000?: number;
   livepayConfig?: LivePayConfigStatus;
 }
 

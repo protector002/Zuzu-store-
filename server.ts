@@ -40,6 +40,7 @@ const BROADCAST_FILE = path.join(DATA_DIR, 'broadcast.json');
 const SALES_FILE = path.join(DATA_DIR, 'sales.json');
 const WALLETS_FILE = path.join(DATA_DIR, 'wallets.json');
 const WITHDRAWALS_FILE = path.join(DATA_DIR, 'withdrawals.json');
+const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
 
 // Admin credentials specified by the user
 const ADMIN_EMAIL = 'sseruwagijohn452@gmail.com';
@@ -184,6 +185,8 @@ export interface WithdrawalRequest {
   developerName: string;
   developerEmail: string;
   amount: number; // Minimum 1000
+  transferFee?: number; // Sending charge (100 UGX deducted per 1000 UGX)
+  netPayoutAmount?: number; // Actual cash sent to handset (amount - transferFee)
   currency: string;
   payoutMethod: 'mobile_money_mtn' | 'mobile_money_airtel' | 'bank_transfer' | 'paypal';
   payoutDetails: {
@@ -201,6 +204,12 @@ export interface WithdrawalRequest {
   requestedAt: string;
   processedAt?: string;
   processedBy?: string;
+}
+
+export interface SystemSettings {
+  adminCommissionPercent: number; // default 6%
+  withdrawalTransferFeePer1000: number; // default 100 UGX per 1,000 UGX
+  updatedAt: string;
 }
 
 // Initial seed apps - start empty so only authentic admin-published APKs appear
@@ -706,6 +715,16 @@ async function syncFromFirestore() {
       memoryWithdrawals = cloudWithdrawals;
       saveWithdrawals(cloudWithdrawals);
     }
+
+    // 7. Sync system settings (admin commission % and withdrawal sending fee)
+    const settingsSnap = await getDoc(doc(firestoreDb, 'settings', 'system_config'));
+    if (settingsSnap.exists()) {
+      const data = settingsSnap.data() as SystemSettings;
+      if (data) {
+        saveSystemSettings(data);
+        console.log(`[Firestore Server] Synchronized system settings: commission=${data.adminCommissionPercent}%, transferFeePer1000=${data.withdrawalTransferFeePer1000} UGX`);
+      }
+    }
   } catch (err) {
     console.warn('[Firestore Server] Initial sync notice:', err);
   }
@@ -780,6 +799,59 @@ function saveWithdrawals(withdrawals: WithdrawalRequest[]) {
   } catch (err) {
     console.error('Error saving withdrawals file:', err);
   }
+}
+
+// System Settings (Admin Commission % and Withdrawal Transfer Fees)
+let memorySettings: SystemSettings = {
+  adminCommissionPercent: 6,
+  withdrawalTransferFeePer1000: 100,
+  updatedAt: new Date().toISOString()
+};
+
+function getSystemSettings(): SystemSettings {
+  try {
+    if (!fs.existsSync(SETTINGS_FILE)) {
+      const initial: SystemSettings = {
+        adminCommissionPercent: 6,
+        withdrawalTransferFeePer1000: 100,
+        updatedAt: new Date().toISOString()
+      };
+      fs.writeFileSync(SETTINGS_FILE, JSON.stringify(initial, null, 2), 'utf-8');
+      memorySettings = initial;
+      return initial;
+    }
+    const data = fs.readFileSync(SETTINGS_FILE, 'utf-8');
+    const parsed = JSON.parse(data);
+    const valid: SystemSettings = {
+      adminCommissionPercent: typeof parsed.adminCommissionPercent === 'number' && parsed.adminCommissionPercent >= 0 && parsed.adminCommissionPercent <= 100 ? parsed.adminCommissionPercent : 6,
+      withdrawalTransferFeePer1000: typeof parsed.withdrawalTransferFeePer1000 === 'number' && parsed.withdrawalTransferFeePer1000 >= 0 ? parsed.withdrawalTransferFeePer1000 : 100,
+      updatedAt: parsed.updatedAt || new Date().toISOString()
+    };
+    memorySettings = valid;
+    return valid;
+  } catch (err) {
+    return memorySettings;
+  }
+}
+
+function saveSystemSettings(settings: Partial<SystemSettings>): SystemSettings {
+  const current = getSystemSettings();
+  const updated: SystemSettings = {
+    adminCommissionPercent: typeof settings.adminCommissionPercent === 'number' && settings.adminCommissionPercent >= 0 && settings.adminCommissionPercent <= 100 ? settings.adminCommissionPercent : current.adminCommissionPercent,
+    withdrawalTransferFeePer1000: typeof settings.withdrawalTransferFeePer1000 === 'number' && settings.withdrawalTransferFeePer1000 >= 0 ? settings.withdrawalTransferFeePer1000 : current.withdrawalTransferFeePer1000,
+    updatedAt: new Date().toISOString()
+  };
+  memorySettings = updated;
+  try {
+    fs.writeFileSync(SETTINGS_FILE, JSON.stringify(updated, null, 2), 'utf-8');
+  } catch (err) {
+    console.error('Error saving settings file:', err);
+  }
+
+  if (firestoreDb) {
+    setDoc(doc(firestoreDb, 'settings', 'system_config'), cleanForFirestore(updated), { merge: true }).catch(() => {});
+  }
+  return updated;
 }
 
 function getOrCreateWallet(devId: string): DeveloperWallet {
@@ -2597,6 +2669,12 @@ app.post('/api/developer/withdraw', requireDeveloper, (req, res) => {
     return res.status(400).json({ error: 'Valid payout phone number or bank account number is required.' });
   }
 
+  const settings = getSystemSettings();
+  const feeRatePer1000 = settings.withdrawalTransferFeePer1000 ?? 100;
+  // Calculate transfer fee: 100 UGX deducted per every 1,000 UGX
+  const transferFee = Math.round((numAmount / 1000) * feeRatePer1000);
+  const netPayoutAmount = Math.max(0, numAmount - transferFee);
+
   const withdrawalId = `wdr-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   const withdrawal: WithdrawalRequest = {
     id: withdrawalId,
@@ -2604,6 +2682,8 @@ app.post('/api/developer/withdraw', requireDeveloper, (req, res) => {
     developerName: dev.name,
     developerEmail: dev.email,
     amount: numAmount,
+    transferFee,
+    netPayoutAmount,
     currency: wallet.currency || currency || 'UGX',
     payoutMethod: payoutMethod || 'mobile_money_mtn',
     payoutDetails: {
@@ -2637,7 +2717,7 @@ app.post('/api/developer/withdraw', requireDeveloper, (req, res) => {
 
   return res.json({
     success: true,
-    message: `Withdrawal request of ${numAmount.toLocaleString()} ${withdrawal.currency} submitted successfully! Super Admin will disburse your payout.`,
+    message: `Withdrawal request of ${numAmount.toLocaleString()} ${withdrawal.currency} submitted successfully! Sending network charge: ${transferFee.toLocaleString()} ${withdrawal.currency}. Net cash to handset: ${netPayoutAmount.toLocaleString()} ${withdrawal.currency}.`,
     withdrawal,
     wallet
   });
@@ -3187,9 +3267,10 @@ app.post('/api/apps/:id/purchase', async (req, res) => {
   const isPaid = priceConfig && priceConfig.type === 'paid' && Number(priceConfig.price) > 0;
   const grossAmount = isPaid ? Number(priceConfig.price) : 0;
 
-  // 6% Super Admin commission calculation
-  const adminCommissionPercent = 6;
-  const adminCommissionAmount = Math.round(grossAmount * 0.06);
+  // Dynamic Super Admin commission calculation (default 6%, or user-configured %)
+  const currentSettings = getSystemSettings();
+  const adminCommissionPercent = Math.max(0, Math.min(100, currentSettings.adminCommissionPercent ?? 6));
+  const adminCommissionAmount = Math.round((grossAmount * adminCommissionPercent) / 100);
   const developerNetAmount = grossAmount - adminCommissionAmount;
 
   const saleId = `sale-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -3326,17 +3407,20 @@ app.get('/api/admin/financials', requireAdmin, (req, res) => {
 
   const host = req.get('host') || 'localhost:3000';
   const protocol = req.protocol || 'https';
+  const currentSettings = getSystemSettings();
 
   return res.json({
     success: true,
     financials: {
       totalGrossSales,
-      totalAdminCommissionEarned, // 6% pure profit for admin!
-      totalDeveloperNetEarnings, // 94%
+      totalAdminCommissionEarned, // Super Admin profit!
+      totalDeveloperNetEarnings,
       totalDisbursedWithdrawals,
       totalPendingWithdrawals,
       totalPaidTransactionsCount: sales.length,
       currency: 'UGX',
+      adminCommissionPercent: currentSettings.adminCommissionPercent,
+      withdrawalTransferFeePer1000: currentSettings.withdrawalTransferFeePer1000,
       livepayConfig: {
         accountNumber: LIVEPAY_ACCOUNT_NUMBER,
         active: true,
@@ -3347,6 +3431,48 @@ app.get('/api/admin/financials', requireAdmin, (req, res) => {
     },
     recentSales: sales.slice(0, 50),
     withdrawals
+  });
+});
+
+// Store / Developer: Public endpoint to get current store commission % and sending fee rate
+app.get('/api/store/commission', (req, res) => {
+  const settings = getSystemSettings();
+  return res.json({
+    success: true,
+    adminCommissionPercent: settings.adminCommissionPercent,
+    withdrawalTransferFeePer1000: settings.withdrawalTransferFeePer1000,
+    updatedAt: settings.updatedAt
+  });
+});
+
+// Super Admin: Get current system settings
+app.get('/api/admin/commission', requireAdmin, (req, res) => {
+  const settings = getSystemSettings();
+  return res.json({
+    success: true,
+    settings
+  });
+});
+
+// Super Admin: Update commission rate and/or withdrawal transfer fee
+app.post('/api/admin/commission', requireAdmin, (req, res) => {
+  const { adminCommissionPercent, withdrawalTransferFeePer1000 } = req.body;
+  const numPercent = Number(adminCommissionPercent);
+  if (isNaN(numPercent) || numPercent < 0 || numPercent > 100) {
+    return res.status(400).json({ error: 'Commission percent must be a valid number between 0 and 100.' });
+  }
+
+  const numFeePer1000 = withdrawalTransferFeePer1000 !== undefined ? Number(withdrawalTransferFeePer1000) : 100;
+
+  const updated = saveSystemSettings({
+    adminCommissionPercent: numPercent,
+    withdrawalTransferFeePer1000: !isNaN(numFeePer1000) && numFeePer1000 >= 0 ? numFeePer1000 : 100
+  });
+
+  return res.json({
+    success: true,
+    message: `System commission updated to ${updated.adminCommissionPercent}% (Sending charge: ${updated.withdrawalTransferFeePer1000} UGX per 1,000 UGX).`,
+    settings: updated
   });
 });
 
@@ -3460,12 +3586,18 @@ app.post('/api/admin/withdrawals/:id/disburse-livepay', requireAdmin, async (req
     return res.status(400).json({ error: 'Developer has not provided a valid mobile money phone number.' });
   }
 
+  // Amount to actually send to handset is netPayoutAmount (after deducting 100 per 1000 sending charge)
+  const settings = getSystemSettings();
+  const feeRatePer1000 = settings.withdrawalTransferFeePer1000 ?? 100;
+  const computedFee = item.transferFee !== undefined ? item.transferFee : Math.round((item.amount / 1000) * feeRatePer1000);
+  const netAmountToSend = item.netPayoutAmount !== undefined ? item.netPayoutAmount : Math.max(0, item.amount - computedFee);
+
   const livepayRef = `WDR${Date.now().toString().slice(-8)}`;
-  console.log(`[LivePay Payout] Initiating disbursement of ${item.amount} ${item.currency} to ${recipientPhone} from account ${LIVEPAY_ACCOUNT_NUMBER}...`);
+  console.log(`[LivePay Payout] Initiating disbursement of Net ${netAmountToSend} ${item.currency} (Fee: ${computedFee}) to ${recipientPhone} from account ${LIVEPAY_ACCOUNT_NUMBER}...`);
 
   const payoutResult = await callLivePayPayout({
     phoneNumber: recipientPhone,
-    amount: item.amount,
+    amount: netAmountToSend,
     currency: item.currency || 'UGX',
     reference: livepayRef,
     description: `Payout to ${item.developerName}`
