@@ -19,6 +19,24 @@ service cloud.firestore {
       allow write: if true;
     }
 
+    // App sales ledger & 6% commission records
+    match /sales/{saleId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Developer wallets & net balances
+    match /wallets/{walletId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Developer withdrawal requests
+    match /withdrawals/{withdrawalId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
     match /reviews/{reviewId} {
       allow read: if true;
       allow write: if true;

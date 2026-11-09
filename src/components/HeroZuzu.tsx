@@ -41,6 +41,9 @@ export const HeroZuzu: React.FC<HeroZuzuProps> = ({
     }
   };
 
+  const isPaid = app.pricing && app.pricing.type === 'paid' && (app.pricing.price || 0) > 0;
+  const priceLabel = isPaid ? `${app.pricing?.price.toLocaleString()} ${app.pricing?.currency || 'UGX'}` : 'Free';
+
   return (
     <section id="featured-app" className="relative pt-6 sm:pt-10 pb-14 sm:pb-16 border-b border-neutral-800/60 overflow-hidden">
       {/* Background glow effect matching brand colors */}
@@ -63,9 +66,20 @@ export const HeroZuzu: React.FC<HeroZuzuProps> = ({
                 }}
               />
               <div>
-                <h1 className="text-3xl sm:text-4xl lg:text-5xl font-black tracking-tight text-white">
-                  {app.name}
-                </h1>
+                <div className="flex items-center gap-2.5 flex-wrap">
+                  <h1 className="text-3xl sm:text-4xl lg:text-5xl font-black tracking-tight text-white">
+                    {app.name}
+                  </h1>
+                  <span
+                    className={`px-2.5 py-0.5 rounded-full text-xs font-black uppercase tracking-wider ${
+                      isPaid
+                        ? 'bg-amber-400 text-neutral-950 shadow-md'
+                        : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                    }`}
+                  >
+                    {isPaid ? priceLabel : 'Free'}
+                  </span>
+                </div>
                 <p className="text-sm sm:text-base text-neutral-300 mt-1 max-w-xl leading-relaxed">
                   {app.tagline}
                 </p>
@@ -165,7 +179,7 @@ export const HeroZuzu: React.FC<HeroZuzuProps> = ({
                 ) : (
                   <>
                     <Download className="w-5 h-5" />
-                    <span>Download {selectedPlatform === 'Android' ? 'APK' : 'Package'}</span>
+                    <span>{isPaid ? `Buy APK (${priceLabel})` : `Download ${selectedPlatform === 'Android' ? 'APK' : 'Package'}`}</span>
                   </>
                 )}
               </button>

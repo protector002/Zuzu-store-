@@ -17,11 +17,12 @@
     "status": "active"
   },
   "dev-1794041845641-tjovs": {
-    "id": "dev-1794041845641-tjovs",
+    "updatedAt": "2026-11-08T10:20:55.578Z",
     "name": "Protector",
-    "email": "jt6707033@gmail.com",
-    "passwordHash": "0181fdad0ee20a1b5119cf61bacd94afbf29b8fb40064e01e428f80649f76789",
+    "id": "dev-1794041845641-tjovs",
+    "status": "active",
     "companyName": "Protector Software",
+    "email": "jt6707033@gmail.com",
     "createdAt": "2026-11-07T08:57:25.641Z"
   },
   "dev-1794041940141-j9egi": {
@@ -33,5 +34,22 @@
     "passwordHash": "6a4f4d7745408181317b5afb4a0b4ee3844ecbe053c15c7bc8cf62a509c47a25",
     "status": "active",
     "updatedAt": "2026-11-07T08:59:00.141Z"
+  },
+  "dev-1794131359997-xksdo": {
+    "createdAt": "2026-11-08T09:49:19.997Z",
+    "id": "dev-1794131359997-xksdo",
+    "name": "Protector",
+    "companyName": "Protector",
+    "status": "active",
+    "email": "jt6707003@gmail.com",
+    "updatedAt": "2026-11-09T11:34:16.934Z"
+  },
+  "dev-1794224084386-2nucd": {
+    "id": "dev-1794224084386-2nucd",
+    "name": "Monetized Dev",
+    "email": "dev_monetize_test@zuzustore.com",
+    "passwordHash": "18f6094f45aba3f18c012260fb6e9b25ef33ea94f034d0fc765991dba8c85e3e",
+    "status": "active",
+    "createdAt": "2026-11-09T11:34:44.386Z"
   }
 }

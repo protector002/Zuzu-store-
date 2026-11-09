@@ -20,10 +20,26 @@ import {
   Megaphone,
   Snowflake,
   Ban,
-  EyeOff
+  EyeOff,
+  Wallet,
+  DollarSign,
+  ArrowDownToLine,
+  CheckCircle2,
+  Receipt,
+  CreditCard,
+  RefreshCw
 } from 'lucide-react';
-import { DeveloperUser, StoreApp, AdminBroadcast } from '../types';
-import { submitDeveloperApp, fetchDeveloperMyApps, deleteDeveloperApp, developerLogout, fetchBroadcast } from '../services/api';
+import { DeveloperUser, StoreApp, AdminBroadcast, DeveloperWallet, WithdrawalRequest, AppPricingType } from '../types';
+import {
+  submitDeveloperApp,
+  fetchDeveloperMyApps,
+  deleteDeveloperApp,
+  developerLogout,
+  fetchBroadcast,
+  fetchDeveloperWallet,
+  requestDeveloperWithdrawal,
+  fetchDeveloperWithdrawals
+} from '../services/api';
 
 interface DeveloperConsoleProps {
   developer: DeveloperUser;
@@ -36,10 +52,26 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
   onLogout,
   onBackToStore,
 }) => {
-  const [activeTab, setActiveTab] = useState<'submit' | 'my-apps'>('submit');
+  const [activeTab, setActiveTab] = useState<'submit' | 'my-apps' | 'wallet'>('submit');
   const [myApps, setMyApps] = useState<StoreApp[]>([]);
   const [isLoadingApps, setIsLoadingApps] = useState(false);
   const [broadcast, setBroadcast] = useState<AdminBroadcast | null>(null);
+
+  // Wallet & Earnings State
+  const [wallet, setWallet] = useState<DeveloperWallet | null>(null);
+  const [withdrawals, setWithdrawals] = useState<WithdrawalRequest[]>([]);
+  const [isLoadingWallet, setIsLoadingWallet] = useState(false);
+  const [walletMessage, setWalletMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // Withdrawal Request Form State
+  const [withdrawAmount, setWithdrawAmount] = useState<number>(1000);
+  const [withdrawMethod, setWithdrawMethod] = useState<'mobile_money_mtn' | 'mobile_money_airtel' | 'bank_transfer' | 'paypal'>('mobile_money_mtn');
+  const [payoutAccountName, setPayoutAccountName] = useState('');
+  const [payoutAccountNumber, setPayoutAccountNumber] = useState('');
+  const [payoutBankName, setPayoutBankName] = useState('');
+  const [payoutSwiftCode, setPayoutSwiftCode] = useState('');
+  const [payoutNotes, setPayoutNotes] = useState('');
+  const [isSubmittingWithdrawal, setIsSubmittingWithdrawal] = useState(false);
 
   const isFrozen = developer.status === 'frozen';
   const isBanned = developer.status === 'banned';
@@ -61,6 +93,11 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
   const [directDownloadUrl, setDirectDownloadUrl] = useState('');
   const [minOS, setMinOS] = useState('Android 8.0+');
 
+  // Pricing & Monetization Form State (Free vs Paid)
+  const [pricingType, setPricingType] = useState<AppPricingType>('free');
+  const [price, setPrice] = useState<number>(5000);
+  const [currency, setCurrency] = useState<string>('UGX');
+
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitSuccess, setSubmitSuccess] = useState<string | null>(null);
@@ -78,8 +115,30 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
     }
   };
 
+  // Load developer earnings and wallet
+  const loadWallet = async () => {
+    setIsLoadingWallet(true);
+    try {
+      const [walletData, withdrawalsData] = await Promise.all([
+        fetchDeveloperWallet().catch(() => null),
+        fetchDeveloperWithdrawals().catch(() => [])
+      ]);
+      if (walletData) {
+        setWallet(walletData);
+      }
+      if (withdrawalsData) {
+        setWithdrawals(withdrawalsData);
+      }
+    } catch (e) {
+      console.warn('Failed to load wallet data:', e);
+    } finally {
+      setIsLoadingWallet(false);
+    }
+  };
+
   useEffect(() => {
     loadMyApps();
+    loadWallet();
     fetchBroadcast().then((b) => {
       if (b && b.active) setBroadcast(b);
     });
@@ -165,6 +224,11 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
         formData.append('screenshotFiles', file);
       });
 
+      // Append monetization & pricing settings
+      formData.append('pricingType', pricingType);
+      formData.append('price', String(pricingType === 'paid' ? price : 0));
+      formData.append('currency', currency);
+
       const res = await submitDeveloperApp(formData);
 
       setSubmitSuccess(res.message || 'Application submitted successfully! It is now waiting for Super Admin review.');
@@ -182,6 +246,8 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
       setIconUrlFallback('');
       setScreenshotFiles([]);
       setScreenshotPreviews([]);
+      setPricingType('free');
+      setPrice(5000);
 
       // Reload developer's apps list & switch tab
       await loadMyApps();
@@ -193,6 +259,58 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
       setSubmitError(err.message || 'Failed to submit application. Please check your inputs.');
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleRequestWithdrawal = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setWalletMessage(null);
+
+    if (withdrawAmount < 1000) {
+      setWalletMessage({ type: 'error', text: 'Minimum withdrawal amount is 1,000 UGX.' });
+      return;
+    }
+
+    if (!wallet || withdrawAmount > wallet.availableBalance) {
+      setWalletMessage({
+        type: 'error',
+        text: `Insufficient balance. Your current available net balance is ${(wallet?.availableBalance || 0).toLocaleString()} UGX.`
+      });
+      return;
+    }
+
+    if (!payoutAccountName.trim() || !payoutAccountNumber.trim()) {
+      setWalletMessage({ type: 'error', text: 'Please fill in both the account name and account number / phone.' });
+      return;
+    }
+
+    setIsSubmittingWithdrawal(true);
+    try {
+      const res = await requestDeveloperWithdrawal({
+        amount: withdrawAmount,
+        payoutMethod: withdrawMethod,
+        payoutDetails: {
+          accountName: payoutAccountName.trim(),
+          accountNumber: payoutAccountNumber.trim(),
+          bankName: payoutBankName.trim() || undefined,
+          swiftCode: payoutSwiftCode.trim() || undefined,
+          notes: payoutNotes.trim() || undefined
+        },
+        currency: 'UGX'
+      });
+
+      setWalletMessage({
+        type: 'success',
+        text: res.message || 'Withdrawal request submitted! Super Admin will review and disburse your payout.'
+      });
+      setWallet(res.wallet);
+      setWithdrawAmount(1000);
+      setPayoutAccountNumber('');
+      await loadWallet();
+    } catch (err: any) {
+      setWalletMessage({ type: 'error', text: err.message || 'Failed to submit withdrawal request.' });
+    } finally {
+      setIsSubmittingWithdrawal(false);
     }
   };
 
@@ -342,6 +460,25 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
               {myApps.length > 0 && (
                 <span className="ml-1 px-1.5 py-0.2 bg-neutral-800 text-neutral-200 text-[10px] rounded-full">
                   {myApps.length}
+                </span>
+              )}
+            </button>
+            <button
+              onClick={() => {
+                setActiveTab('wallet');
+                loadWallet();
+              }}
+              className={`flex items-center gap-2 py-2 px-4 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                activeTab === 'wallet'
+                  ? 'bg-gradient-to-r from-amber-500 to-amber-600 text-neutral-950 shadow-md'
+                  : 'text-neutral-400 hover:text-white'
+              }`}
+            >
+              <Wallet className="w-4 h-4" />
+              <span>Earnings &amp; Wallet</span>
+              {wallet && wallet.availableBalance > 0 && (
+                <span className="ml-1 px-1.5 py-0.2 bg-emerald-500/20 text-emerald-400 font-mono text-[10px] rounded-full border border-emerald-500/30">
+                  {wallet.availableBalance.toLocaleString()} {wallet.currency}
                 </span>
               )}
             </button>
@@ -617,6 +754,152 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
                 </div>
               </div>
 
+              {/* Section 4: Monetization & Pricing (Free or Paid App) */}
+              <div className="space-y-4 pt-2">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 border-b border-neutral-800 pb-2">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-amber-400">
+                    4. Monetization &amp; Pricing (Free vs. Paid App)
+                  </h3>
+                  <span className="text-[11px] text-neutral-400 font-medium">
+                    Super Admin 6% Platform Fee applies on sales
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {/* Option 1: Free App */}
+                  <div
+                    onClick={() => setPricingType('free')}
+                    className={`p-4 rounded-2xl border cursor-pointer transition-all ${
+                      pricingType === 'free'
+                        ? 'bg-amber-950/20 border-amber-500 shadow-md ring-1 ring-amber-500/30'
+                        : 'bg-neutral-950 border-neutral-800 hover:border-neutral-700'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold text-xs ${
+                          pricingType === 'free' ? 'bg-amber-500 text-neutral-950' : 'bg-neutral-900 text-neutral-400'
+                        }`}>
+                          FREE
+                        </div>
+                        <div>
+                          <h4 className="text-xs font-bold text-white">100% Free Application</h4>
+                          <p className="text-[11px] text-neutral-400 mt-0.5">
+                            Users can download this APK freely without payment.
+                          </p>
+                        </div>
+                      </div>
+                      <div className={`w-4 h-4 rounded-full border flex items-center justify-center ${
+                        pricingType === 'free' ? 'border-amber-500 bg-amber-500' : 'border-neutral-700'
+                      }`}>
+                        {pricingType === 'free' && <div className="w-1.5 h-1.5 rounded-full bg-neutral-950" />}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Option 2: Paid App */}
+                  <div
+                    onClick={() => setPricingType('paid')}
+                    className={`p-4 rounded-2xl border cursor-pointer transition-all ${
+                      pricingType === 'paid'
+                        ? 'bg-amber-950/20 border-amber-500 shadow-md ring-1 ring-amber-500/30'
+                        : 'bg-neutral-950 border-neutral-800 hover:border-neutral-700'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold text-xs ${
+                          pricingType === 'paid' ? 'bg-amber-500 text-neutral-950' : 'bg-neutral-900 text-neutral-400'
+                        }`}>
+                          PAID
+                        </div>
+                        <div>
+                          <h4 className="text-xs font-bold text-white">Paid Premium Application</h4>
+                          <p className="text-[11px] text-neutral-400 mt-0.5">
+                            Charge users before they can download your APK.
+                          </p>
+                        </div>
+                      </div>
+                      <div className={`w-4 h-4 rounded-full border flex items-center justify-center ${
+                        pricingType === 'paid' ? 'border-amber-500 bg-amber-500' : 'border-neutral-700'
+                      }`}>
+                        {pricingType === 'paid' && <div className="w-1.5 h-1.5 rounded-full bg-neutral-950" />}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* If Paid App selected: price inputs and commission transparency breakdown */}
+                {pricingType === 'paid' && (
+                  <div className="p-4 bg-neutral-950 border border-neutral-800/90 rounded-2xl space-y-4 animate-fade-in">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs font-semibold text-neutral-300 mb-1.5">
+                          Price <span className="text-red-400">*</span>
+                        </label>
+                        <div className="relative">
+                          <input
+                            type="number"
+                            min="500"
+                            step="100"
+                            required={pricingType === 'paid'}
+                            value={price}
+                            onChange={(e) => setPrice(Math.max(0, parseInt(e.target.value, 10) || 0))}
+                            placeholder="5000"
+                            className="w-full bg-neutral-900 border border-neutral-800 focus:border-amber-500 rounded-xl py-2 px-3 text-xs text-white outline-none font-mono"
+                          />
+                          <span className="absolute right-3 top-2.5 text-xs text-neutral-400 font-mono">
+                            {currency}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-semibold text-neutral-300 mb-1.5">Currency</label>
+                        <select
+                          value={currency}
+                          onChange={(e) => setCurrency(e.target.value)}
+                          className="w-full bg-neutral-900 border border-neutral-800 focus:border-amber-500 rounded-xl py-2 px-3 text-xs text-white outline-none"
+                        >
+                          <option value="UGX">UGX (Ugandan Shillings)</option>
+                          <option value="USD">USD (US Dollars)</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Commission Split Live Preview */}
+                    <div className="p-3.5 bg-neutral-900/80 rounded-xl border border-neutral-800 space-y-2">
+                      <div className="text-[11px] font-bold text-amber-400 uppercase tracking-wider">
+                        Real Money Earnings &amp; 6% Super Admin Commission Breakdown
+                      </div>
+                      <div className="grid grid-cols-3 gap-2 pt-1 text-center">
+                        <div className="p-2 bg-neutral-950 rounded-lg border border-neutral-800">
+                          <span className="text-[10px] text-neutral-400 block">Gross Sale Price</span>
+                          <span className="text-xs font-black text-white font-mono">
+                            {price.toLocaleString()} {currency}
+                          </span>
+                        </div>
+                        <div className="p-2 bg-rose-950/30 rounded-lg border border-rose-900/40">
+                          <span className="text-[10px] text-rose-300 block">Super Admin 6% Fee</span>
+                          <span className="text-xs font-black text-rose-400 font-mono">
+                            -{Math.round(price * 0.06).toLocaleString()} {currency}
+                          </span>
+                        </div>
+                        <div className="p-2 bg-emerald-950/30 rounded-lg border border-emerald-900/40">
+                          <span className="text-[10px] text-emerald-300 block">Your Net Take-Home (94%)</span>
+                          <span className="text-xs font-black text-emerald-400 font-mono">
+                            {(price - Math.round(price * 0.06)).toLocaleString()} {currency}
+                          </span>
+                        </div>
+                      </div>
+                      <p className="text-[10px] text-neutral-400 pt-1">
+                        When users buy your app, you see the real money sold for and your net balance after the 6% Super Admin commission is credited directly to your Developer Wallet.
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+
               {/* Submit CTA */}
               <div className="pt-4 border-t border-neutral-800 flex flex-col sm:flex-row items-center justify-between gap-4">
                 <div className="text-xs text-neutral-400">
@@ -814,6 +1097,444 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
                 })}
               </div>
             )}
+          </div>
+        )}
+
+        {/* TAB 3: EARNINGS & WALLET (REAL MONEY SALES, 6% COMMISSION & WITHDRAWALS >= 1,000) */}
+        {activeTab === 'wallet' && (
+          <div className="space-y-6 animate-fade-in">
+            {/* Header and Refresh */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-lg font-black text-white">Developer Earnings &amp; Wallet</h2>
+                  <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-300">
+                    6% Admin Commission Applied
+                  </span>
+                </div>
+                <p className="text-xs text-neutral-400 mt-0.5">
+                  View real money earned from your paid apps, 6% Super Admin commission deductions, and request payouts.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={loadWallet}
+                disabled={isLoadingWallet}
+                className="py-1.5 px-3.5 bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 rounded-xl text-xs font-semibold text-neutral-300 flex items-center gap-2 self-start sm:self-auto cursor-pointer"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isLoadingWallet ? 'animate-spin text-amber-400' : ''}`} />
+                <span>Refresh Wallet</span>
+              </button>
+            </div>
+
+            {/* Notification Messages */}
+            {walletMessage && (
+              <div
+                className={`p-4 rounded-2xl text-xs flex items-center justify-between gap-3 animate-fade-in ${
+                  walletMessage.type === 'success'
+                    ? 'bg-emerald-950/40 border border-emerald-800 text-emerald-200'
+                    : 'bg-rose-950/40 border border-rose-800 text-rose-200'
+                }`}
+              >
+                <div className="flex items-center gap-2.5">
+                  {walletMessage.type === 'success' ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                  )}
+                  <span>{walletMessage.text}</span>
+                </div>
+                <button
+                  onClick={() => setWalletMessage(null)}
+                  className="font-bold underline text-[11px] shrink-0 hover:opacity-80"
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
+
+            {/* Financial Stat Cards */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
+              {/* Card 1: Available Balance */}
+              <div className="p-4 bg-gradient-to-br from-amber-950/50 via-neutral-900 to-neutral-900 border border-amber-500/40 rounded-2xl shadow-lg relative overflow-hidden">
+                <div className="flex items-center justify-between text-neutral-400 mb-1">
+                  <span className="text-[11px] font-semibold uppercase tracking-wider text-amber-300">
+                    Available Balance
+                  </span>
+                  <Wallet className="w-4 h-4 text-amber-400" />
+                </div>
+                <div className="text-2xl font-black text-white tabular-nums tracking-tight">
+                  {(wallet?.availableBalance || 0).toLocaleString()}{' '}
+                  <span className="text-xs text-amber-400 font-mono">{wallet?.currency || 'UGX'}</span>
+                </div>
+                <div className="flex items-center gap-1.5 text-[10px] text-amber-400/90 mt-2">
+                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  <span>Ready to Withdraw (Min 1,000)</span>
+                </div>
+              </div>
+
+              {/* Card 2: Total Gross Sales */}
+              <div className="p-4 bg-neutral-900 border border-neutral-800 rounded-2xl shadow-sm">
+                <div className="flex items-center justify-between text-neutral-400 mb-1">
+                  <span className="text-[11px] font-semibold uppercase tracking-wider">Gross App Sales</span>
+                  <DollarSign className="w-4 h-4 text-neutral-400" />
+                </div>
+                <div className="text-xl font-black text-neutral-100 tabular-nums">
+                  {(wallet?.totalGrossRevenue || 0).toLocaleString()}{' '}
+                  <span className="text-xs text-neutral-400 font-mono">{wallet?.currency || 'UGX'}</span>
+                </div>
+                <div className="text-[10px] text-neutral-500 mt-2">
+                  Real total money paid by buyers
+                </div>
+              </div>
+
+              {/* Card 3: 6% Admin Fee Deducted */}
+              <div className="p-4 bg-rose-950/20 border border-rose-900/30 rounded-2xl shadow-sm">
+                <div className="flex items-center justify-between text-rose-300 mb-1">
+                  <span className="text-[11px] font-semibold uppercase tracking-wider">Super Admin 6% Fee</span>
+                  <Receipt className="w-4 h-4 text-rose-400" />
+                </div>
+                <div className="text-xl font-black text-rose-300 tabular-nums">
+                  {(wallet?.totalAdminFeesPaid || 0).toLocaleString()}{' '}
+                  <span className="text-xs text-rose-400 font-mono">{wallet?.currency || 'UGX'}</span>
+                </div>
+                <div className="text-[10px] text-rose-400/80 mt-2">
+                  6% store fee automatically deducted
+                </div>
+              </div>
+
+              {/* Card 4: Total Withdrawn */}
+              <div className="p-4 bg-neutral-900 border border-neutral-800 rounded-2xl shadow-sm">
+                <div className="flex items-center justify-between text-neutral-400 mb-1">
+                  <span className="text-[11px] font-semibold uppercase tracking-wider">Total Withdrawn</span>
+                  <ArrowDownToLine className="w-4 h-4 text-emerald-400" />
+                </div>
+                <div className="text-xl font-black text-emerald-400 tabular-nums">
+                  {(wallet?.totalWithdrawn || 0).toLocaleString()}{' '}
+                  <span className="text-xs text-neutral-400 font-mono">{wallet?.currency || 'UGX'}</span>
+                </div>
+                <div className="text-[10px] text-neutral-400 mt-2">
+                  Pending: <strong className="text-amber-400 font-mono">{(wallet?.pendingWithdrawals || 0).toLocaleString()} {wallet?.currency || 'UGX'}</strong>
+                </div>
+              </div>
+            </div>
+
+            {/* WITHDRAWAL REQUEST MODULE */}
+            <div className="p-6 bg-neutral-900 border border-neutral-800 rounded-3xl space-y-5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-neutral-800 pb-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded-xl">
+                    <ArrowDownToLine className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-white">Request Payout / Withdrawal</h3>
+                    <p className="text-[11px] text-neutral-400">
+                      Disburse money directly to MTN MoMo, Airtel Money, Bank Account, or PayPal.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="px-3 py-1 bg-amber-950/40 border border-amber-800/60 rounded-full text-[11px] font-bold text-amber-300 self-start sm:self-auto">
+                  ★ Minimum withdrawal starts from 1,000 UGX
+                </div>
+              </div>
+
+              <form onSubmit={handleRequestWithdrawal} className="space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {/* Amount Field */}
+                  <div>
+                    <label className="block text-xs font-semibold text-neutral-300 mb-1.5">
+                      Withdrawal Amount (UGX) <span className="text-red-400">*</span>
+                    </label>
+                    <div className="relative">
+                      <input
+                        type="number"
+                        min="1000"
+                        step="500"
+                        required
+                        value={withdrawAmount}
+                        onChange={(e) => setWithdrawAmount(parseInt(e.target.value, 10) || 0)}
+                        className="w-full bg-neutral-950 border border-neutral-800 focus:border-amber-500 rounded-xl py-2.5 px-3.5 text-xs text-white outline-none font-mono"
+                        placeholder="1000"
+                      />
+                      <span className="absolute right-3 top-2.5 text-xs text-neutral-400 font-mono">UGX</span>
+                    </div>
+
+                    {/* Quick amount shortcuts */}
+                    <div className="flex items-center gap-2 mt-2">
+                      <button
+                        type="button"
+                        onClick={() => setWithdrawAmount(1000)}
+                        className="px-2 py-0.5 text-[10px] rounded-md bg-neutral-950 hover:bg-neutral-800 border border-neutral-800 text-neutral-300 transition-colors cursor-pointer"
+                      >
+                        Min: 1,000 UGX
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setWithdrawAmount(5000)}
+                        className="px-2 py-0.5 text-[10px] rounded-md bg-neutral-950 hover:bg-neutral-800 border border-neutral-800 text-neutral-300 transition-colors cursor-pointer"
+                      >
+                        5,000 UGX
+                      </button>
+                      {wallet && wallet.availableBalance >= 1000 && (
+                        <button
+                          type="button"
+                          onClick={() => setWithdrawAmount(wallet.availableBalance)}
+                          className="px-2 py-0.5 text-[10px] rounded-md bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-300 transition-colors cursor-pointer"
+                        >
+                          Max All ({wallet.availableBalance.toLocaleString()} UGX)
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Payout Method */}
+                  <div>
+                    <label className="block text-xs font-semibold text-neutral-300 mb-1.5">
+                      Payout Method <span className="text-red-400">*</span>
+                    </label>
+                    <select
+                      value={withdrawMethod}
+                      onChange={(e) => setWithdrawMethod(e.target.value as any)}
+                      className="w-full bg-neutral-950 border border-neutral-800 focus:border-amber-500 rounded-xl py-2.5 px-3.5 text-xs text-white outline-none"
+                    >
+                      <option value="mobile_money_mtn">MTN Mobile Money (⚡ Instant LivePay)</option>
+                      <option value="mobile_money_airtel">Airtel Money (⚡ Instant LivePay)</option>
+                      <option value="bank_transfer">Bank Wire Transfer</option>
+                      <option value="paypal">PayPal</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Account Details */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
+                  <div>
+                    <label className="block text-xs font-semibold text-neutral-300 mb-1.5">
+                      Account Registered Name <span className="text-red-400">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={payoutAccountName}
+                      onChange={(e) => setPayoutAccountName(e.target.value)}
+                      placeholder="e.g. John Sseruwagi"
+                      className="w-full bg-neutral-950 border border-neutral-800 focus:border-amber-500 rounded-xl py-2 px-3 text-xs text-white outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-neutral-300 mb-1.5">
+                      {withdrawMethod === 'mobile_money_mtn' || withdrawMethod === 'mobile_money_airtel'
+                        ? 'Mobile Money Phone Number'
+                        : withdrawMethod === 'paypal'
+                        ? 'PayPal Email'
+                        : 'Bank Account Number'}{' '}
+                      <span className="text-red-400">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={payoutAccountNumber}
+                      onChange={(e) => setPayoutAccountNumber(e.target.value)}
+                      placeholder={
+                        withdrawMethod === 'mobile_money_mtn' || withdrawMethod === 'mobile_money_airtel'
+                          ? '0770000000 or +256...'
+                          : withdrawMethod === 'paypal'
+                          ? 'user@example.com'
+                          : '1234567890'
+                      }
+                      className="w-full bg-neutral-950 border border-neutral-800 focus:border-amber-500 rounded-xl py-2 px-3 text-xs text-white outline-none font-mono"
+                    />
+                  </div>
+                </div>
+
+                {/* Optional Bank Fields */}
+                {withdrawMethod === 'bank_transfer' && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1 animate-fade-in">
+                    <div>
+                      <label className="block text-xs font-semibold text-neutral-300 mb-1.5">Bank Name</label>
+                      <input
+                        type="text"
+                        value={payoutBankName}
+                        onChange={(e) => setPayoutBankName(e.target.value)}
+                        placeholder="e.g. Stanbic Bank Uganda"
+                        className="w-full bg-neutral-950 border border-neutral-800 focus:border-amber-500 rounded-xl py-2 px-3 text-xs text-white outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-neutral-300 mb-1.5">SWIFT / Branch Code</label>
+                      <input
+                        type="text"
+                        value={payoutSwiftCode}
+                        onChange={(e) => setPayoutSwiftCode(e.target.value)}
+                        placeholder="e.g. SBICUGKX"
+                        className="w-full bg-neutral-950 border border-neutral-800 focus:border-amber-500 rounded-xl py-2 px-3 text-xs text-white outline-none font-mono"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-3 border-t border-neutral-800">
+                  <span className="text-[11px] text-neutral-400">
+                    Payouts are reviewed by Super Admin and credited directly to your destination account.
+                  </span>
+
+                  <button
+                    type="submit"
+                    disabled={isSubmittingWithdrawal || !wallet || (wallet?.availableBalance || 0) < 1000}
+                    className="w-full sm:w-auto py-2.5 px-6 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-neutral-950 font-bold text-xs rounded-xl shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isSubmittingWithdrawal ? (
+                      <>
+                        <span className="inline-block w-3.5 h-3.5 border-2 border-neutral-950 border-t-transparent rounded-full animate-spin" />
+                        <span>Submitting Request...</span>
+                      </>
+                    ) : (
+                      <>
+                        <ArrowDownToLine className="w-3.5 h-3.5" />
+                        <span>Request Payout ({withdrawAmount.toLocaleString()} UGX)</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            {/* WITHDRAWALS HISTORY */}
+            <div className="p-6 bg-neutral-900 border border-neutral-800 rounded-3xl space-y-4">
+              <div className="flex items-center justify-between border-b border-neutral-800 pb-3">
+                <h3 className="text-sm font-bold text-white">Your Payout Requests &amp; Status</h3>
+                <span className="text-xs text-neutral-400 font-mono">{withdrawals.length} total</span>
+              </div>
+
+              {withdrawals.length === 0 ? (
+                <div className="py-8 text-center text-xs text-neutral-500">
+                  No withdrawal requests made yet. When your sales reach 1,000 UGX or more, you can submit your first payout request here.
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-neutral-800 text-[11px] font-semibold text-neutral-400">
+                        <th className="pb-2.5">Date</th>
+                        <th className="pb-2.5">Amount</th>
+                        <th className="pb-2.5">Method</th>
+                        <th className="pb-2.5">Account Details</th>
+                        <th className="pb-2.5">Status</th>
+                        <th className="pb-2.5">Transaction Ref</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-neutral-800/60">
+                      {withdrawals.map((w) => (
+                        <tr key={w.id} className="text-neutral-300">
+                          <td className="py-3 font-mono text-[11px] text-neutral-400">
+                            {new Date(w.requestedAt).toLocaleDateString()}
+                          </td>
+                          <td className="py-3 font-bold text-white font-mono">
+                            {w.amount.toLocaleString()} {w.currency}
+                          </td>
+                          <td className="py-3 capitalize">
+                            {w.payoutMethod.replace(/_/g, ' ')}
+                          </td>
+                          <td className="py-3 font-mono text-[11px]">
+                            {w.payoutDetails.accountName} • {w.payoutDetails.accountNumber}
+                          </td>
+                          <td className="py-3">
+                            {w.status === 'paid' || w.status === 'approved' ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 text-[10px] font-bold">
+                                <CheckCircle className="w-3 h-3" />
+                                <span>Paid</span>
+                              </span>
+                            ) : w.status === 'pending' ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/30 text-[10px] font-bold">
+                                <Clock className="w-3 h-3 animate-pulse" />
+                                <span>Pending Admin</span>
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-400 border border-rose-500/30 text-[10px] font-bold">
+                                <XCircle className="w-3 h-3" />
+                                <span>Rejected</span>
+                              </span>
+                            )}
+                            {w.rejectionReason && (
+                              <p className="text-[10px] text-rose-400 mt-0.5">{w.rejectionReason}</p>
+                            )}
+                          </td>
+                          <td className="py-3 font-mono text-[11px] text-neutral-400">
+                            {w.transactionRef || '—'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* CUSTOMER SALES LEDGER */}
+            <div className="p-6 bg-neutral-900 border border-neutral-800 rounded-3xl space-y-4">
+              <div className="flex items-center justify-between border-b border-neutral-800 pb-3">
+                <div>
+                  <h3 className="text-sm font-bold text-white">Customer App Sales Ledger</h3>
+                  <p className="text-[11px] text-neutral-400">
+                    Real transactions showing gross sale price, 6% platform commission, and your 94% net take-home.
+                  </p>
+                </div>
+                <span className="text-xs text-neutral-400 font-mono">
+                  {wallet?.recentSales?.length || 0} sales
+                </span>
+              </div>
+
+              {!wallet?.recentSales || wallet.recentSales.length === 0 ? (
+                <div className="py-8 text-center text-xs text-neutral-500">
+                  No sales recorded yet. When visitors purchase your paid applications, their payments and the 6% commission split will appear here.
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-neutral-800 text-[11px] font-semibold text-neutral-400">
+                        <th className="pb-2.5">Date</th>
+                        <th className="pb-2.5">Application</th>
+                        <th className="pb-2.5">Buyer</th>
+                        <th className="pb-2.5">Gross Paid</th>
+                        <th className="pb-2.5">6% Admin Fee</th>
+                        <th className="pb-2.5">Net Take-Home</th>
+                        <th className="pb-2.5">Method</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-neutral-800/60">
+                      {wallet.recentSales.map((sale) => (
+                        <tr key={sale.id} className="text-neutral-300">
+                          <td className="py-3 font-mono text-[11px] text-neutral-400">
+                            {new Date(sale.createdAt).toLocaleDateString()}
+                          </td>
+                          <td className="py-3 font-bold text-white">
+                            {sale.appName}
+                          </td>
+                          <td className="py-3 font-mono text-[11px]">
+                            {sale.customerName} ({sale.customerEmail})
+                          </td>
+                          <td className="py-3 font-mono font-bold text-neutral-100">
+                            {sale.grossAmount.toLocaleString()} {sale.currency}
+                          </td>
+                          <td className="py-3 font-mono text-rose-400">
+                            -{sale.adminCommissionAmount.toLocaleString()} {sale.currency}
+                          </td>
+                          <td className="py-3 font-mono font-black text-emerald-400">
+                            +{sale.developerNetAmount.toLocaleString()} {sale.currency}
+                          </td>
+                          <td className="py-3 text-[11px] text-neutral-400">
+                            {sale.paymentMethod}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
           </div>
         )}
       </main>

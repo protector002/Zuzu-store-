@@ -42,9 +42,26 @@ import {
   UserCheck,
   UserX,
   ArrowUp,
-  ArrowDown
+  ArrowDown,
+  Wallet,
+  DollarSign,
+  ArrowDownToLine,
+  Receipt,
+  CreditCard
 } from 'lucide-react';
-import { StoreApp, Platform, AppCategory, AdminUser, DeveloperAccountAdminView, AdminBroadcast, DeveloperStatus } from '../types';
+import {
+  StoreApp,
+  Platform,
+  AppCategory,
+  AdminUser,
+  DeveloperAccountAdminView,
+  AdminBroadcast,
+  DeveloperStatus,
+  AdminFinancialSummary,
+  AppSaleTransaction,
+  WithdrawalRequest,
+  AppPricingType
+} from '../types';
 import { saveApkBlob } from '../utils/fileStorage';
 import {
   verifyDirectUrl,
@@ -60,7 +77,12 @@ import {
   overrideAppMetadata,
   fetchBroadcast,
   saveAdminBroadcast,
-  adminReorderApps
+  adminReorderApps,
+  fetchAdminFinancials,
+  approveWithdrawalAdmin,
+  rejectWithdrawalAdmin,
+  disburseWithdrawalLivePay,
+  pingLivePay
 } from '../services/api';
 import { isTvApp, isPhoneApp, filterPhoneApps, filterTvApps } from '../utils/editionHelper';
 
@@ -279,6 +301,22 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
   const [broadcastToast, setBroadcastToast] = useState<string | null>(null);
 
   // ==========================================
+  // SUPER ADMIN FINANCIAL OPERATIONS STATE
+  // ==========================================
+  const [financials, setFinancials] = useState<AdminFinancialSummary | null>(null);
+  const [adminSales, setAdminSales] = useState<AppSaleTransaction[]>([]);
+  const [adminWithdrawals, setAdminWithdrawals] = useState<WithdrawalRequest[]>([]);
+  const [isLoadingFinancials, setIsLoadingFinancials] = useState(false);
+  const [actioningWithdrawalId, setActioningWithdrawalId] = useState<string | null>(null);
+  const [rejectWithdrawalModal, setRejectWithdrawalModal] = useState<WithdrawalRequest | null>(null);
+  const [rejectWithdrawalReason, setRejectWithdrawalReason] = useState('');
+  const [approveTxRefInput, setApproveTxRefInput] = useState<{ id: string; ref: string } | null>(null);
+  const [isPingingLivePay, setIsPingingLivePay] = useState(false);
+  const [livepayPingResult, setLivepayPingResult] = useState<string | null>(null);
+  const [actioningLivePayWithdrawalId, setActioningLivePayWithdrawalId] = useState<string | null>(null);
+  const [livepayCopyToast, setLivepayCopyToast] = useState(false);
+
+  // ==========================================
   // STOREFRONT & "FOR YOU" VISUAL CURATION STATE
   // ==========================================
   const [curatedApps, setCuratedApps] = useState<StoreApp[]>([]);
@@ -389,11 +427,96 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
     }
   };
 
+  const loadFinancials = async () => {
+    setIsLoadingFinancials(true);
+    try {
+      const data = await fetchAdminFinancials();
+      setFinancials(data.financials);
+      setAdminSales(data.recentSales || []);
+      setAdminWithdrawals(data.withdrawals || []);
+    } catch (e) {
+      console.warn('Failed to load platform financials:', e);
+    } finally {
+      setIsLoadingFinancials(false);
+    }
+  };
+
+  const handleApprovePayout = async (withdrawalId: string, customRef?: string) => {
+    setActioningWithdrawalId(withdrawalId);
+    try {
+      const res = await approveWithdrawalAdmin(
+        withdrawalId,
+        customRef || `PAYOUT-${Date.now().toString().slice(-6)}`
+      );
+      setSuccessMessage(res.message || 'Developer payout approved and marked as Paid!');
+      setApproveTxRefInput(null);
+      await loadFinancials();
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Failed to approve withdrawal.');
+    } finally {
+      setActioningWithdrawalId(null);
+    }
+  };
+
+  const handleRejectPayout = async () => {
+    if (!rejectWithdrawalModal) return;
+    setActioningWithdrawalId(rejectWithdrawalModal.id);
+    try {
+      const res = await rejectWithdrawalAdmin(
+        rejectWithdrawalModal.id,
+        rejectWithdrawalReason.trim() || 'Payout request rejected by administrator. Funds restored to your balance.'
+      );
+      setSuccessMessage(
+        res.message || 'Withdrawal rejected. Funds have been refunded back to developer available balance.'
+      );
+      setRejectWithdrawalModal(null);
+      setRejectWithdrawalReason('');
+      await loadFinancials();
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Failed to reject withdrawal.');
+    } finally {
+      setActioningWithdrawalId(null);
+    }
+  };
+
+  const handlePingLivePay = async () => {
+    setIsPingingLivePay(true);
+    setLivepayPingResult(null);
+    try {
+      const res = await pingLivePay();
+      setLivepayPingResult(
+        res.message || 'LivePay API Connected: Ready for real-time mobile money collections & payouts (Account: LP260805074398)'
+      );
+      setTimeout(() => setLivepayPingResult(null), 6000);
+    } catch (err: any) {
+      setLivepayPingResult(`LivePay Ping Notice: ${err.message}`);
+    } finally {
+      setIsPingingLivePay(false);
+    }
+  };
+
+  const handleDisburseViaLivePay = async (withdrawal: WithdrawalRequest) => {
+    setActioningLivePayWithdrawalId(withdrawal.id);
+    try {
+      const res = await disburseWithdrawalLivePay(withdrawal.id);
+      setSuccessMessage(
+        res.message ||
+          `Success! Sent ${withdrawal.amount.toLocaleString()} ${withdrawal.currency} directly to ${withdrawal.payoutDetails.accountNumber} via LivePay Mobile Money!`
+      );
+      await loadFinancials();
+    } catch (err: any) {
+      setErrorMessage(err.message || 'LivePay payout failed. Check account balance or network.');
+    } finally {
+      setActioningLivePayWithdrawalId(null);
+    }
+  };
+
   useEffect(() => {
     if (admin) {
       loadPending();
       loadDevelopers();
       loadBroadcastData();
+      loadFinancials();
     }
   }, [admin]);
 
@@ -554,6 +677,11 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
   const [appChangelog, setAppChangelog] = useState('Initial public APK release.');
   const [uploadedBinaryFile, setUploadedBinaryFile] = useState<File | null>(null);
   const [directDownloadUrl, setDirectDownloadUrl] = useState<string>('');
+  
+  // Pricing state for New App (Free vs Paid)
+  const [appPricingType, setAppPricingType] = useState<AppPricingType>('free');
+  const [appPrice, setAppPrice] = useState<number>(5000);
+  const [appCurrency, setAppCurrency] = useState<string>('UGX');
   
   // Icon state - defaults to the official ZuzuStore brand logo
   const [iconPreviewUrl, setIconPreviewUrl] = useState<string>('/zuzustore-logo.png');
@@ -948,6 +1076,10 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
         fd.append('apkFile', uploadedBinaryFile);
         fd.append('appEdition', targetEdition === 'tv' ? 'tv' : 'phone');
         fd.append('isTvCompatible', (targetEdition === 'tv' || appPlatform === 'Android TV' || appPlatform === 'Fire TV' || appPlatform === 'Smart TV') ? 'true' : 'false');
+        // Include pricing settings
+        fd.append('pricingType', appPricingType);
+        fd.append('price', String(appPricingType === 'paid' ? appPrice : 0));
+        fd.append('currency', appCurrency);
         // Include screenshots in FormData
         fd.append('screenshots', JSON.stringify(finalScreenshots));
         screenshotFiles.forEach((f) => {
@@ -971,7 +1103,12 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
           fileName: finalFileName,
           fileSize: finalFileSize,
           iconUrl: finalIcon,
-          screenshots: finalScreenshots
+          screenshots: finalScreenshots,
+          pricing: {
+            type: appPricingType,
+            price: appPricingType === 'paid' ? appPrice : 0,
+            currency: appCurrency
+          }
         };
       }
 
@@ -996,6 +1133,8 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
       setScreenshots([]);
       setScreenshotFiles([]);
       setCustomScreenshotUrl('');
+      setAppPricingType('free');
+      setAppPrice(5000);
 
       setTimeout(() => {
         setIsSubmitting(false);
@@ -1575,6 +1714,78 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
                     placeholder="Enter changelog (one line per item)&#10;- Initial public release&#10;- Fixed memory footprint"
                     className="w-full px-3.5 py-2.5 bg-neutral-950 border border-neutral-800 rounded-xl text-sm text-white placeholder-neutral-500 focus:outline-none focus:border-cyan-500"
                   />
+                </div>
+
+                {/* Monetization: Free vs Paid App */}
+                <div className="pt-2 border-t border-neutral-800/80 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                      <DollarSign className="w-3.5 h-3.5 text-amber-400" />
+                      <span>Monetization &amp; Pricing</span>
+                    </label>
+                    <span className="text-[11px] text-neutral-400">6% Super Admin Fee</span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setAppPricingType('free')}
+                      className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                        appPricingType === 'free'
+                          ? 'bg-amber-950/40 border-amber-500 text-amber-300 font-bold'
+                          : 'bg-neutral-950 border-neutral-800 text-neutral-400 hover:text-white'
+                      }`}
+                    >
+                      <div className="text-xs font-bold">Free APK</div>
+                      <div className="text-[10px] text-neutral-400 mt-0.5">Direct 1-click free download</div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setAppPricingType('paid')}
+                      className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                        appPricingType === 'paid'
+                          ? 'bg-amber-950/40 border-amber-500 text-amber-300 font-bold'
+                          : 'bg-neutral-950 border-neutral-800 text-neutral-400 hover:text-white'
+                      }`}
+                    >
+                      <div className="text-xs font-bold">Paid Premium APK</div>
+                      <div className="text-[10px] text-neutral-400 mt-0.5">Paid download checkout</div>
+                    </button>
+                  </div>
+
+                  {appPricingType === 'paid' && (
+                    <div className="p-3 bg-neutral-950 border border-neutral-800 rounded-xl space-y-2 animate-fade-in">
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-[11px] text-neutral-400 mb-1">Price Amount</label>
+                          <input
+                            type="number"
+                            min="500"
+                            step="100"
+                            value={appPrice}
+                            onChange={(e) => setAppPrice(Math.max(0, parseInt(e.target.value, 10) || 0))}
+                            className="w-full px-3 py-1.5 bg-neutral-900 border border-neutral-800 rounded-lg text-xs text-white font-mono outline-none"
+                            placeholder="5000"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[11px] text-neutral-400 mb-1">Currency</label>
+                          <select
+                            value={appCurrency}
+                            onChange={(e) => setAppCurrency(e.target.value)}
+                            className="w-full px-3 py-1.5 bg-neutral-900 border border-neutral-800 rounded-lg text-xs text-white outline-none"
+                          >
+                            <option value="UGX">UGX (Uganda)</option>
+                            <option value="USD">USD ($)</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div className="text-[10px] text-neutral-400 pt-1">
+                        Gross: <strong className="text-white font-mono">{appPrice.toLocaleString()} {appCurrency}</strong> • 6% Admin Fee: <strong className="text-amber-400 font-mono">{Math.round(appPrice * 0.06).toLocaleString()} {appCurrency}</strong> • Net: <strong className="text-emerald-400 font-mono">{(appPrice - Math.round(appPrice * 0.06)).toLocaleString()} {appCurrency}</strong>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -3532,6 +3743,445 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
                 })}
               </div>
             )}
+          </div>
+
+          {/* SUB-PANEL 5: FINANCIAL OPERATIONS, 6% STORE COMMISSION & DEVELOPER PAYOUTS */}
+          <div id="financials-section" className="p-6 bg-neutral-900/60 border border-neutral-800 rounded-3xl space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-neutral-800 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-400 shrink-0">
+                  <Wallet className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-base font-bold text-white">Financial Operations &amp; 6% Super Admin Commission</h3>
+                    <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-300">
+                      John Sseruwagi (Admin Mode)
+                    </span>
+                  </div>
+                  <p className="text-xs text-neutral-400 mt-0.5">
+                    Real sales revenue, 6% platform commission earnings, and 1-click developer payout approvals.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2.5 self-start sm:self-auto">
+                <button
+                  type="button"
+                  onClick={loadFinancials}
+                  disabled={isLoadingFinancials}
+                  className="px-3.5 py-2 text-xs font-semibold text-neutral-300 hover:text-white bg-neutral-900 border border-neutral-700/80 rounded-xl hover:bg-neutral-800 transition-colors flex items-center gap-2 cursor-pointer shadow-sm"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isLoadingFinancials ? 'animate-spin text-amber-400' : ''}`} />
+                  <span>Refresh Financials</span>
+                </button>
+              </div>
+            </div>
+
+            {/* LivePay Gateway Status Card */}
+            <div className="p-4 bg-gradient-to-r from-neutral-950 via-neutral-900/90 to-neutral-950 border border-amber-500/30 rounded-2xl space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/40">
+                    <Smartphone className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h4 className="text-sm font-bold text-white">LivePay Uganda Gateway</h4>
+                      <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-[10px] font-bold">
+                        Connected &amp; Active
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-neutral-400 mt-0.5">
+                      Account: <strong className="font-mono text-amber-300">LP260805074398</strong> • Rails: MTN Mobile Money &amp; Airtel Money (UGX)
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handlePingLivePay}
+                    disabled={isPingingLivePay}
+                    className="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-amber-300 hover:text-amber-200 border border-neutral-700 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    <RefreshCw className={`w-3 h-3 ${isPingingLivePay ? 'animate-spin' : ''}`} />
+                    <span>{isPingingLivePay ? 'Testing API...' : 'Test LivePay Connection'}</span>
+                  </button>
+                </div>
+              </div>
+
+              {livepayPingResult && (
+                <div className="p-2.5 rounded-xl bg-emerald-950/40 border border-emerald-800/60 text-xs text-emerald-300 flex items-center gap-2 animate-fade-in">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span>{livepayPingResult}</span>
+                </div>
+              )}
+
+              {/* Webhook Endpoint Info */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-2 border-t border-neutral-800/80 text-[11px]">
+                <div className="text-neutral-400 flex items-center gap-1.5">
+                  <Link2 className="w-3.5 h-3.5 text-neutral-500" />
+                  <span>Configured Webhook URL:</span>
+                  <code className="text-amber-400 font-mono text-[10px] bg-neutral-950 px-2 py-0.5 rounded border border-neutral-800">
+                    {typeof window !== 'undefined' ? `${window.location.origin}/api/webhooks/livepay` : '/api/webhooks/livepay'}
+                  </code>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const url = `${window.location.origin}/api/webhooks/livepay`;
+                    navigator.clipboard.writeText(url);
+                    setLivepayCopyToast(true);
+                    setTimeout(() => setLivepayCopyToast(false), 3000);
+                  }}
+                  className="text-xs text-neutral-300 hover:text-white font-medium self-start sm:self-auto cursor-pointer"
+                >
+                  {livepayCopyToast ? '✓ Copied URL' : 'Copy Webhook URL'}
+                </button>
+              </div>
+            </div>
+
+            {/* Financial Overview Cards */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
+              <div className="p-4 bg-gradient-to-br from-amber-950/40 via-neutral-950 to-neutral-950 border border-amber-500/40 rounded-2xl shadow-lg">
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-amber-400 block">
+                  ★ Super Admin 6% Profit
+                </span>
+                <div className="text-2xl font-black text-amber-300 mt-1 tabular-nums">
+                  {(financials?.totalAdminCommissionEarned || 0).toLocaleString()}{' '}
+                  <span className="text-xs font-mono text-amber-400/80">{financials?.currency || 'UGX'}</span>
+                </div>
+                <div className="text-[10px] text-amber-400/90 mt-1">
+                  6% commission cut on all store sales
+                </div>
+              </div>
+
+              <div className="p-4 bg-neutral-950 border border-neutral-800 rounded-2xl">
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-neutral-400 block">
+                  Total Gross Store Sales
+                </span>
+                <div className="text-xl font-black text-white mt-1 tabular-nums">
+                  {(financials?.totalGrossSales || 0).toLocaleString()}{' '}
+                  <span className="text-xs font-mono text-neutral-400">{financials?.currency || 'UGX'}</span>
+                </div>
+                <div className="text-[10px] text-neutral-500 mt-1">
+                  Real volume paid by all buyers
+                </div>
+              </div>
+
+              <div className="p-4 bg-emerald-950/20 border border-emerald-900/40 rounded-2xl">
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-emerald-400 block">
+                  Developer Net Earnings (94%)
+                </span>
+                <div className="text-xl font-black text-emerald-300 mt-1 tabular-nums">
+                  {(financials?.totalDeveloperNetEarnings || 0).toLocaleString()}{' '}
+                  <span className="text-xs font-mono text-emerald-400">{financials?.currency || 'UGX'}</span>
+                </div>
+                <div className="text-[10px] text-emerald-400/80 mt-1">
+                  Credited to developer wallets
+                </div>
+              </div>
+
+              <div className="p-4 bg-neutral-950 border border-neutral-800 rounded-2xl">
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-neutral-400 block">
+                  Disbursed Payouts
+                </span>
+                <div className="text-xl font-black text-white mt-1 tabular-nums">
+                  {(financials?.totalDisbursedWithdrawals || 0).toLocaleString()}{' '}
+                  <span className="text-xs font-mono text-neutral-400">{financials?.currency || 'UGX'}</span>
+                </div>
+                <div className="text-[10px] text-neutral-400 mt-1">
+                  Pending: <strong className="text-amber-400 font-mono">{(financials?.totalPendingWithdrawals || 0).toLocaleString()} {financials?.currency || 'UGX'}</strong>
+                </div>
+              </div>
+            </div>
+
+            {/* WITHDRAWAL PAYOUT REQUESTS LIST */}
+            <div className="space-y-3 pt-2">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                    <ArrowDownToLine className="w-4 h-4 text-amber-400" />
+                    <span>Developer Withdrawal Payout Requests</span>
+                  </h4>
+                  <p className="text-[11px] text-neutral-400">
+                    Review and approve developer payout disbursements (minimum withdrawal 1,000 UGX).
+                  </p>
+                </div>
+
+                <span className="text-xs text-neutral-400 font-mono bg-neutral-950 px-2.5 py-1 rounded-lg border border-neutral-800">
+                  {adminWithdrawals.filter((w) => w.status === 'pending').length} Pending Review
+                </span>
+              </div>
+
+              {adminWithdrawals.length === 0 ? (
+                <div className="p-8 text-center text-xs text-neutral-500 bg-neutral-950 rounded-2xl border border-neutral-800">
+                  No withdrawal requests submitted yet.
+                </div>
+              ) : (
+                <div className="overflow-x-auto bg-neutral-950 rounded-2xl border border-neutral-800/80">
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-neutral-800 text-[11px] font-semibold text-neutral-400 bg-neutral-900/60">
+                        <th className="p-3">Requested Date</th>
+                        <th className="p-3">Developer</th>
+                        <th className="p-3">Amount</th>
+                        <th className="p-3">Payout Method</th>
+                        <th className="p-3">Account Details</th>
+                        <th className="p-3">Status</th>
+                        <th className="p-3 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-neutral-800/60">
+                      {adminWithdrawals.map((w) => {
+                        const isPending = w.status === 'pending';
+                        const isActioning = actioningWithdrawalId === w.id;
+
+                        return (
+                          <tr key={w.id} className="text-neutral-300 hover:bg-neutral-900/40 transition-colors">
+                            <td className="p-3 font-mono text-[11px] text-neutral-400">
+                              {new Date(w.requestedAt).toLocaleDateString()}
+                            </td>
+                            <td className="p-3">
+                              <div className="font-bold text-white">{w.developerName}</div>
+                              <div className="text-[10px] text-neutral-400 font-mono">{w.developerEmail}</div>
+                            </td>
+                            <td className="p-3 font-bold text-amber-300 font-mono text-sm">
+                              {w.amount.toLocaleString()} {w.currency}
+                            </td>
+                            <td className="p-3 capitalize font-medium">
+                              {w.payoutMethod.replace(/_/g, ' ')}
+                            </td>
+                            <td className="p-3 font-mono text-[11px]">
+                              <div>{w.payoutDetails.accountName}</div>
+                              <div className="text-amber-400 font-semibold">{w.payoutDetails.accountNumber}</div>
+                              {w.payoutDetails.bankName && (
+                                <div className="text-neutral-500 text-[10px]">
+                                  {w.payoutDetails.bankName} {w.payoutDetails.swiftCode ? `(${w.payoutDetails.swiftCode})` : ''}
+                                </div>
+                              )}
+                            </td>
+                            <td className="p-3">
+                              {w.status === 'paid' || w.status === 'approved' ? (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 text-[10px] font-bold">
+                                  <Check className="w-3 h-3" />
+                                  <span>Paid</span>
+                                </span>
+                              ) : isPending ? (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/30 text-[10px] font-bold">
+                                  <Clock className="w-3 h-3 animate-pulse" />
+                                  <span>Pending Payout</span>
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-rose-500/10 text-rose-400 border border-rose-500/30 text-[10px] font-bold">
+                                  <X className="w-3 h-3" />
+                                  <span>Rejected</span>
+                                </span>
+                              )}
+                              {w.transactionRef && (
+                                <div className="text-[10px] font-mono text-neutral-500 mt-0.5">Ref: {w.transactionRef}</div>
+                              )}
+                              {w.rejectionReason && (
+                                <div className="text-[10px] text-rose-400 mt-0.5 max-w-xs">{w.rejectionReason}</div>
+                              )}
+                            </td>
+                            <td className="p-3 text-right">
+                              {isPending ? (
+                                <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                                  <button
+                                    type="button"
+                                    disabled={isActioning || actioningLivePayWithdrawalId === w.id}
+                                    onClick={() => handleDisburseViaLivePay(w)}
+                                    className="px-2.5 py-1.5 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-neutral-950 font-black text-[11px] rounded-lg shadow-sm transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                                    title="Disburse automatically via LivePay Mobile Money API"
+                                  >
+                                    {actioningLivePayWithdrawalId === w.id ? (
+                                      <>
+                                        <div className="w-3 h-3 border-2 border-neutral-950 border-t-transparent rounded-full animate-spin" />
+                                        <span>Sending MoMo...</span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <Sparkles className="w-3 h-3 text-neutral-950 fill-neutral-950" />
+                                        <span>⚡ Pay via LivePay</span>
+                                      </>
+                                    )}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={isActioning || actioningLivePayWithdrawalId === w.id}
+                                    onClick={() => handleApprovePayout(w.id)}
+                                    className="px-2.5 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-emerald-400 font-bold text-[11px] rounded-lg border border-neutral-700 transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                                    title="Manual mark paid"
+                                  >
+                                    <Check className="w-3 h-3" />
+                                    <span>Manual Paid</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={isActioning || actioningLivePayWithdrawalId === w.id}
+                                    onClick={() => {
+                                      setRejectWithdrawalModal(w);
+                                      setRejectWithdrawalReason('');
+                                    }}
+                                    className="px-2.5 py-1.5 bg-neutral-900 hover:bg-rose-950/60 text-rose-400 hover:text-rose-300 border border-neutral-800 rounded-lg font-bold text-[11px] transition-colors cursor-pointer disabled:opacity-50"
+                                  >
+                                    <X className="w-3 h-3" />
+                                    <span>Reject</span>
+                                  </button>
+                                </div>
+                              ) : (
+                                <span className="text-[11px] text-neutral-500">Processed</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* LIVE CUSTOMER APP SALES LEDGER */}
+            <div className="space-y-3 pt-2">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                    <Receipt className="w-4 h-4 text-amber-400" />
+                    <span>Real-Time Store Sales Transactions</span>
+                  </h4>
+                  <p className="text-[11px] text-neutral-400">
+                    All completed purchases across the website showing 6% Super Admin commission and 94% developer net.
+                  </p>
+                </div>
+                <span className="text-xs text-neutral-400 font-mono bg-neutral-950 px-2.5 py-1 rounded-lg border border-neutral-800">
+                  {adminSales.length} Total Sales
+                </span>
+              </div>
+
+              {adminSales.length === 0 ? (
+                <div className="p-8 text-center text-xs text-neutral-500 bg-neutral-950 rounded-2xl border border-neutral-800">
+                  No app sales recorded yet. When users purchase paid apps on Zuzu Store, transactions will appear here.
+                </div>
+              ) : (
+                <div className="overflow-x-auto bg-neutral-950 rounded-2xl border border-neutral-800/80">
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-neutral-800 text-[11px] font-semibold text-neutral-400 bg-neutral-900/60">
+                        <th className="p-3">Date</th>
+                        <th className="p-3">Application</th>
+                        <th className="p-3">Buyer</th>
+                        <th className="p-3">Gross Paid</th>
+                        <th className="p-3">Admin 6% Cut</th>
+                        <th className="p-3">Developer 94% Net</th>
+                        <th className="p-3">Payment Method</th>
+                        <th className="p-3">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-neutral-800/60">
+                      {adminSales.map((sale) => (
+                        <tr key={sale.id} className="text-neutral-300 hover:bg-neutral-900/40 transition-colors">
+                          <td className="p-3 font-mono text-[11px] text-neutral-400">
+                            {new Date(sale.createdAt).toLocaleString()}
+                          </td>
+                          <td className="p-3 font-bold text-white">
+                            {sale.appName}
+                          </td>
+                          <td className="p-3 font-mono text-[11px]">
+                            <div>{sale.customerName}</div>
+                            <div className="text-neutral-500">{sale.customerEmail}</div>
+                          </td>
+                          <td className="p-3 font-mono font-bold text-white">
+                            {sale.grossAmount.toLocaleString()} {sale.currency}
+                          </td>
+                          <td className="p-3 font-mono font-bold text-amber-400">
+                            +{sale.adminCommissionAmount.toLocaleString()} {sale.currency}
+                          </td>
+                          <td className="p-3 font-mono text-emerald-400">
+                            {sale.developerNetAmount.toLocaleString()} {sale.currency}
+                          </td>
+                          <td className="p-3 text-[11px] text-neutral-400">
+                            {sale.paymentMethod}
+                          </td>
+                          <td className="p-3">
+                            <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 text-[10px] font-bold">
+                              Completed
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* REJECT WITHDRAWAL MODAL */}
+      {rejectWithdrawalModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-fade-in">
+          <div
+            className="w-full max-w-md bg-neutral-900 border border-neutral-800 rounded-3xl p-6 shadow-2xl text-neutral-100 space-y-4"
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className="flex items-center justify-between border-b border-neutral-800 pb-3">
+              <div className="flex items-center gap-2.5 text-rose-400">
+                <ShieldAlert className="w-5 h-5" />
+                <h3 className="text-base font-bold text-white">Reject Withdrawal Payout</h3>
+              </div>
+              <button
+                onClick={() => setRejectWithdrawalModal(null)}
+                className="p-1 text-neutral-400 hover:text-white rounded-lg cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="text-xs text-neutral-300 space-y-1">
+              <p>
+                Rejecting payout of <strong className="text-white font-bold">{rejectWithdrawalModal.amount.toLocaleString()} {rejectWithdrawalModal.currency}</strong> for developer <strong className="text-amber-400 font-bold">{rejectWithdrawalModal.developerName}</strong>.
+              </p>
+              <p className="text-neutral-400 text-[11px]">
+                Upon rejection, the full amount will be refunded back to the developer's available balance immediately.
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-neutral-300 mb-1.5">
+                Reason for Rejection <span className="text-red-400">*</span>
+              </label>
+              <textarea
+                rows={3}
+                required
+                value={rejectWithdrawalReason}
+                onChange={(e) => setRejectWithdrawalReason(e.target.value)}
+                placeholder="e.g. Invalid MoMo phone number, name does not match, or temporary bank routing failure..."
+                className="w-full bg-neutral-950 border border-neutral-800 focus:border-rose-500 rounded-xl p-3 text-xs text-white placeholder-neutral-500 outline-none"
+              />
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-neutral-800">
+              <button
+                type="button"
+                onClick={() => setRejectWithdrawalModal(null)}
+                className="px-4 py-2 text-xs font-semibold text-neutral-400 hover:text-white bg-neutral-800 rounded-xl cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={!rejectWithdrawalReason.trim() || actioningWithdrawalId === rejectWithdrawalModal.id}
+                onClick={handleRejectPayout}
+                className="px-4 py-2 text-xs font-bold text-white bg-rose-600 hover:bg-rose-500 rounded-xl shadow-md transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                {actioningWithdrawalId === rejectWithdrawalModal.id ? 'Processing...' : 'Confirm Rejection & Refund'}
+              </button>
+            </div>
           </div>
         </div>
       )}

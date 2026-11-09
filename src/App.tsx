@@ -32,8 +32,10 @@ import {
   downloadWithProgress,
   parseFileSizeToBytes,
   formatBytes,
-  fetchBroadcast
+  fetchBroadcast,
+  getCachedPurchaseToken
 } from './services/api';
+import { PurchaseModal } from './components/PurchaseModal';
 import { StoreApp, AppRelease, Platform, AdminUser, DeveloperUser, DownloadProgressState, AdminBroadcast } from './types';
 import { getApkBlob, deleteApkBlob } from './utils/fileStorage';
 import { filterPhoneApps, filterTvApps, getPhoneRelease, getTvRelease } from './utils/editionHelper';
@@ -43,6 +45,7 @@ import { CheckCircle2, ArrowRight, Megaphone } from 'lucide-react';
 
 export default function App() {
   const [apps, setApps] = useState<StoreApp[]>([]);
+  const [purchasingApp, setPurchasingApp] = useState<StoreApp | null>(null);
   const [loading, setLoading] = useState(true);
   const [currentView, setCurrentView] = useState<'store' | 'upload' | 'detail' | 'tv' | 'developer_console'>('store');
   const [detailSourceView, setDetailSourceView] = useState<'store' | 'tv'>('store');
@@ -220,6 +223,14 @@ export default function App() {
     const fileName =
       targetRelease?.fileName || `${targetApp.slug || 'app'}-v${targetRelease?.version || '1.0.0'}.apk`;
 
+    // Check if this is a paid application requiring purchase
+    const isPaid = targetApp.pricing && targetApp.pricing.type === 'paid' && targetApp.pricing.price > 0;
+    const cachedPurchaseToken = getCachedPurchaseToken(targetApp.id);
+    if (isPaid && !cachedPurchaseToken) {
+      setPurchasingApp(targetApp);
+      return;
+    }
+
     // Save active download target for retry support
     activeDownloadTargetRef.current = { appId, releaseId };
 
@@ -342,6 +353,7 @@ export default function App() {
     if (targetApp.packageId) queryParams.append('packageId', targetApp.packageId);
     if (targetRelease?.version) queryParams.append('version', targetRelease.version);
     if (targetRelease?.fileSize) queryParams.append('fileSize', targetRelease.fileSize);
+    if (cachedPurchaseToken) queryParams.append('token', cachedPurchaseToken);
     const downloadUrl = `/api/apps/${targetApp.id}/download?${queryParams.toString()}`;
 
     if (downloadAbortRef.current) {
@@ -953,6 +965,20 @@ export default function App() {
           onClose={() => setIsQrOpen(false)}
           app={qrApp}
           release={qrRelease}
+        />
+      )}
+
+      {/* Paid App Checkout & Purchase Modal */}
+      {purchasingApp && (
+        <PurchaseModal
+          app={purchasingApp}
+          onClose={() => setPurchasingApp(null)}
+          onSuccess={(_tx, _token) => {
+            const purchasedTarget = purchasingApp;
+            setPurchasingApp(null);
+            showToast(`Payment confirmed for ${purchasedTarget.name}! Starting download...`);
+            handleDownload(purchasedTarget.id);
+          }}
         />
       )}
 

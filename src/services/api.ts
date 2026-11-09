@@ -1,4 +1,16 @@
-import { StoreApp, AdminUser, DeveloperUser, DeveloperAccountAdminView, AdminBroadcast, DeveloperStatus } from '../types';
+import {
+  StoreApp,
+  AdminUser,
+  DeveloperUser,
+  DeveloperAccountAdminView,
+  AdminBroadcast,
+  DeveloperStatus,
+  AppSaleTransaction,
+  DeveloperWallet,
+  WithdrawalRequest,
+  AdminFinancialSummary,
+  AppPriceConfig
+} from '../types';
 import {
   getAppsFromFirestore,
   saveAppToFirestore,
@@ -1331,3 +1343,218 @@ export async function adminReorderApps(
   return data;
 }
 
+// ==========================================
+// PAID APPS, COMMISSIONS & WITHDRAWALS API
+// ==========================================
+
+export async function purchaseApp(
+  appId: string,
+  purchaseData: {
+    customerName: string;
+    customerEmail: string;
+    paymentMethod: string;
+    phoneNumber?: string;
+    currency?: string;
+  }
+): Promise<{
+  success: boolean;
+  transaction: AppSaleTransaction;
+  downloadToken: string;
+  directDownloadUrl: string;
+  message: string;
+  livepay?: {
+    initiated: boolean;
+    reference: string;
+    internalReference?: string;
+    message?: string;
+  };
+}> {
+  const res = await fetch(`/api/apps/${appId}/purchase`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(purchaseData)
+  });
+
+  const data = await res.json();
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || 'Failed to complete app purchase.');
+  }
+
+  // Cache purchase token to localStorage for instant download recognition
+  try {
+    const purchased = JSON.parse(localStorage.getItem('zuzu_purchased_tokens') || '{}');
+    purchased[appId] = data.downloadToken;
+    localStorage.setItem('zuzu_purchased_tokens', JSON.stringify(purchased));
+  } catch (_) {}
+
+  return data;
+}
+
+export async function verifyAppPurchase(appId: string, token: string): Promise<boolean> {
+  try {
+    const res = await fetch(`/api/apps/${appId}/verify-purchase?token=${encodeURIComponent(token)}`);
+    const data = await res.json();
+    return Boolean(data.valid);
+  } catch (_) {
+    return false;
+  }
+}
+
+export function getCachedPurchaseToken(appId: string): string | null {
+  try {
+    const purchased = JSON.parse(localStorage.getItem('zuzu_purchased_tokens') || '{}');
+    return purchased[appId] || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+export async function fetchDeveloperWallet(): Promise<DeveloperWallet> {
+  const res = await fetch('/api/developer/wallet', {
+    headers: { ...getDeveloperAuthHeaders() }
+  });
+
+  const data = await res.json();
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || 'Failed to fetch developer wallet.');
+  }
+
+  return data.wallet;
+}
+
+export async function requestDeveloperWithdrawal(payload: {
+  amount: number;
+  payoutMethod: 'mobile_money_mtn' | 'mobile_money_airtel' | 'bank_transfer' | 'paypal';
+  payoutDetails: {
+    accountName: string;
+    accountNumber: string;
+    bankName?: string;
+    swiftCode?: string;
+    notes?: string;
+  };
+  currency?: string;
+}): Promise<{ success: boolean; withdrawal: WithdrawalRequest; wallet: DeveloperWallet; message: string }> {
+  const res = await fetch('/api/developer/withdraw', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getDeveloperAuthHeaders()
+    },
+    body: JSON.stringify(payload)
+  });
+
+  const data = await res.json();
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || 'Failed to request withdrawal.');
+  }
+
+  return data;
+}
+
+export async function fetchDeveloperWithdrawals(): Promise<WithdrawalRequest[]> {
+  const res = await fetch('/api/developer/withdrawals', {
+    headers: { ...getDeveloperAuthHeaders() }
+  });
+
+  const data = await res.json();
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || 'Failed to fetch withdrawals.');
+  }
+
+  return data.withdrawals || [];
+}
+
+export async function fetchAdminFinancials(): Promise<{
+  financials: AdminFinancialSummary;
+  recentSales: AppSaleTransaction[];
+  withdrawals: WithdrawalRequest[];
+}> {
+  const res = await fetch('/api/admin/financials', {
+    headers: { ...getAuthHeaders() }
+  });
+
+  const data = await res.json();
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || 'Failed to fetch platform financials.');
+  }
+
+  return data;
+}
+
+export async function approveWithdrawalAdmin(
+  id: string,
+  transactionRef?: string
+): Promise<{ success: boolean; withdrawal: WithdrawalRequest; message: string }> {
+  const res = await fetch(`/api/admin/withdrawals/${id}/approve`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeaders()
+    },
+    body: JSON.stringify({ transactionRef })
+  });
+
+  const data = await res.json();
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || 'Failed to approve withdrawal.');
+  }
+
+  return data;
+}
+
+export async function rejectWithdrawalAdmin(
+  id: string,
+  reason: string
+): Promise<{ success: boolean; withdrawal: WithdrawalRequest; message: string }> {
+  const res = await fetch(`/api/admin/withdrawals/${id}/reject`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeaders()
+    },
+    body: JSON.stringify({ reason })
+  });
+
+  const data = await res.json();
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || 'Failed to reject withdrawal.');
+  }
+
+  return data;
+}
+
+export async function disburseWithdrawalLivePay(
+  id: string
+): Promise<{ success: boolean; withdrawal: WithdrawalRequest; message: string }> {
+  const res = await fetch(`/api/admin/withdrawals/${id}/disburse-livepay`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeaders()
+    }
+  });
+
+  const data = await res.json();
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || 'Failed to disburse payout via LivePay.');
+  }
+
+  return data;
+}
+
+export async function pingLivePay(): Promise<{ success: boolean; message: string; data?: any }> {
+  const res = await fetch('/api/admin/livepay/ping', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeaders()
+    }
+  });
+
+  const data = await res.json();
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || 'LivePay connection check failed.');
+  }
+
+  return data;
+}

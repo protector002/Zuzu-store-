@@ -1,152 +1,187 @@
-# Implementation Plan - Super Admin God Mode & Developer Oversight Panel
+# Implementation Plan: Paid Apps, 6% Admin Commission & Developer Withdrawal Wallet
 
-## 1. Overview & Architecture
-This plan implements total administrator control (**God Mode**) for the Super Admin (`sseruwagijohn452@gmail.com`) over all developers, uploaded applications, and global store states. Based on the user's requirements:
-- **Developer Oversight**: Full directory of all registered developers, their uploaded APKs, and instant **Ban / Freeze / Unban / Delete** controls.
-- **Storefront Moderation**: Instant **Soft Takedown** (unpublishing live apps without deleting them), with full options to **Restore** or **Permanently Delete** with cryptographic tombstones.
-- **Developer Broadcast System**: Live broadcast announcements and alert banners sent by the Super Admin, appearing across developer consoles and storefront notices.
-- **Direct App Overrides**: Direct administrative editing of any developer's app metadata, packages, and priority ranking badges.
+This plan introduces a complete commercial marketplace model into ZuzuStore, allowing developers to publish apps as either **Free** or **Paid**, automatically deducting a **6% Super Admin commission** on every sale, providing developers with a transparent financial dashboard showing gross revenue, 6% fee deduction, and net balance, and enabling automated withdrawal requests with a **minimum threshold of 1,000**.
 
 ---
 
-## 2. User Preference Alignments (From Clarifications)
-1. **Developer Account Controls**: Full control with ban, freeze, unban, and edit powers.
-2. **App Moderation Style**: Soft unpublish (takedown from public view while preserving files in admin archive) with option to permanently delete.
-3. **Live Broadcast System**: Live broadcast banner system managed by Super Admin and displayed to developers and store visitors.
+## 1. Marketplace Architecture & Financial Mathematics
+
+### Pricing & Commission Breakdown
+- When submitting or editing an app, developers select **Pricing Model**:
+  - **Free App**: Downloadable directly by any visitor with 1 click (no payment required).
+  - **Paid App**: Developer specifies a sale price (e.g. `1,000`, `5,000`, `15,000` or `$2.99`, `$9.99`).
+- On every completed sale:
+  - **Gross Amount**: $100\%$ of customer payment.
+  - **Super Admin Platform Cut (6%)**: $\text{Gross} \times 0.06$ routed to the Super Admin's platform balance.
+  - **Developer Net Earnings (94%)**: $\text{Gross} \times 0.94$ credited to the developer's available wallet balance.
+- **Minimum Withdrawal Rule**:
+  - Developers can request withdrawals when their available net balance reaches **at least 1,000**.
+  - Payout destination options: **Mobile Money (MTN Mobile Money / Airtel Money)**, **Bank Transfer**, or **PayPal**.
 
 ---
 
-## 3. Data Models & Type Extensions (`src/types.ts`)
+## 2. Data Models & Type Extensions (`src/types.ts`)
 
-1. **Developer Account Extended State**:
-   ```typescript
-   export type DeveloperStatus = 'active' | 'frozen' | 'banned';
+```typescript
+export type AppPricingType = 'free' | 'paid';
 
-   export interface DeveloperAccountAdminView {
-     id: string;
-     name: string;
-     email: string;
-     companyName?: string;
-     status: DeveloperStatus;
-     bannedAt?: string;
-     banReason?: string;
-     createdAt: string;
-     appCount: number;
-     totalDownloads: number;
-   }
-   ```
+export interface AppPriceConfig {
+  type: AppPricingType;
+  price: number; // 0 for free, > 0 for paid
+  currency: string; // e.g. 'UGX' | 'USD'
+  discountPrice?: number;
+}
 
-2. **StoreApp Moderation Fields**:
-   ```typescript
-   // Extends StoreApp
-   isTakenDown?: boolean;
-   takedownReason?: string;
-   takenDownAt?: string;
-   takenDownBy?: string;
-   ```
+// Extends StoreApp in src/types.ts and server.ts
+export interface StoreApp {
+  // ... existing properties
+  pricing?: AppPriceConfig;
+}
 
-3. **Admin Broadcast Message**:
-   ```typescript
-   export interface AdminBroadcast {
-     id: string;
-     message: string;
-     level: 'info' | 'warning' | 'alert';
-     active: boolean;
-     createdAt: string;
-     updatedAt: string;
-   }
-   ```
+// Sale & Commission Transaction Record
+export interface AppSaleTransaction {
+  id: string;
+  appId: string;
+  appName: string;
+  developerId: string;
+  developerEmail: string;
+  customerName: string;
+  customerEmail: string;
+  grossAmount: number;
+  adminCommissionPercent: number; // 6
+  adminCommissionAmount: number; // gross * 0.06
+  developerNetAmount: number; // gross * 0.94
+  currency: string;
+  paymentMethod: string;
+  status: 'completed' | 'refunded';
+  createdAt: string;
+}
 
----
+// Developer Financial Wallet
+export interface DeveloperWallet {
+  developerId: string;
+  totalGrossRevenue: number;
+  totalAdminFeesPaid: number; // 6% sum
+  totalNetEarnings: number; // 94% sum
+  totalWithdrawn: number;
+  availableBalance: number; // totalNetEarnings - totalWithdrawn - pendingWithdrawals
+  pendingWithdrawals: number;
+  currency: string;
+  updatedAt: string;
+}
 
-## 4. Backend Endpoints (`server.ts`)
-
-All endpoints are protected by `requireAdmin` (strictly matching `ADMIN_EMAIL: sseruwagijohn452@gmail.com`).
-
-1. **Developer Directory & Account Enforcement**:
-   - `GET /api/admin/developers`: Lists all registered developer accounts, aggregated with their submitted apps count and status.
-   - `POST /api/admin/developers/:id/status`: Updates developer status (`'active' | 'frozen' | 'banned'`) with optional reason.
-   - `DELETE /api/admin/developers/:id`: Deletes developer account from `developers.json`.
-   - `GET /api/admin/developers/:id/apps`: Returns all apps (approved, pending, or taken down) uploaded by a specific developer.
-   - *Middleware Update*: Update `requireDeveloper` to reject frozen or banned developers immediately with specific HTTP 403 status and reason.
-
-2. **App Moderation & Takedown Endpoints**:
-   - `POST /api/admin/apps/:id/takedown`: Soft unpublishes an app (`isTakenDown = true`), instantly removing it from public store listings, search, and downloads without deleting the files.
-   - `POST /api/admin/apps/:id/restore`: Restores a taken-down app back to live storefront (`isTakenDown = false`).
-   - `PATCH /api/admin/apps/:id/override`: God Mode direct override for any app's metadata (name, category, tagline, description, package ID).
-
-3. **Broadcast System Endpoints**:
-   - `GET /api/broadcast`: Public & developer endpoint returning the active announcement (if active).
-   - `POST /api/admin/broadcast`: Super Admin endpoint to create, update, or disable the broadcast banner.
-
----
-
-## 5. Frontend & UI Implementation
-
-1. **Publisher Portal - God Mode Tab (`src/components/PublisherPortal.tsx`)**:
-   - Add a dedicated **"God Mode & Developers"** tab in the Super Admin console navigation bar (styled with amber & red crown icon).
-   - **Section A: Developer Master Roster**:
-     - Real-time search/filter by developer name, studio, or email.
-     - Metrics: Total Registered Developers, Active, Frozen/Banned.
-     - Table / Card view showing: Name, Studio, Email, Joined date, Apps count, Status (🟢 Active / 🟡 Frozen / 🔴 Banned).
-     - Action buttons:
-       - **Inspect Apps**: Opens modal showing all apps submitted by this specific developer.
-       - **Freeze / Unfreeze**: Blocks developer from publishing updates temporarily.
-       - **Ban**: Complete account lock with custom reason.
-       - **Delete Account**: Removes developer profile.
-   - **Section B: Live App Takedown & Store Moderation**:
-     - Dedicated controls on every app card in Live Catalog to "Soft Takedown" with feedback note, or "Restore Live".
-   - **Section C: Platform Broadcast Console**:
-     - Input field, priority selector (Info / Warning / Critical Alert), and Toggle (Active / Inactive).
-     - Live preview of how the banner appears to developers and visitors.
-
-2. **Developer Console Integration (`src/components/DeveloperConsole.tsx`)**:
-   - Display active Super Admin broadcast banners prominently at the top of the dashboard.
-   - If the developer account is frozen or banned, render an immovable security shield overlay explaining that their account has been suspended by the Super Admin, disabling submission forms.
-
-3. **Storefront Broadcast Banner (`src/components/Header.tsx` or `src/App.tsx`)**:
-   - Discreet, beautiful dismissible broadcast ribbon at the top of the store when an active platform announcement is published.
+// Withdrawal Request Record
+export interface WithdrawalRequest {
+  id: string;
+  developerId: string;
+  developerName: string;
+  developerEmail: string;
+  amount: number; // Minimum 1000
+  currency: string;
+  payoutMethod: 'mobile_money_mtn' | 'mobile_money_airtel' | 'bank_transfer' | 'paypal';
+  payoutDetails: {
+    accountName: string;
+    accountNumber: string; // Phone number for MoMo or Bank Account
+    bankName?: string;
+    swiftCode?: string;
+    notes?: string;
+  };
+  status: 'pending' | 'approved' | 'paid' | 'rejected';
+  rejectionReason?: string;
+  transactionRef?: string;
+  requestedAt: string;
+  processedAt?: string;
+  processedBy?: string;
+}
+```
 
 ---
 
-## 6. Verification & Test Plan
+## 3. Backend Endpoints & Cloud Firestore Persistence (`server.ts`)
 
-1. **Authentication & Authorization**:
-   - Verify non-admins cannot access `/api/admin/developers` or `/api/admin/broadcast`.
-   - Verify frozen/banned developers receive clear status banners and cannot submit apps.
-2. **Developer Management**:
-   - Create a test developer account.
-   - In God Mode panel, freeze the account and verify submission fails.
-   - Unfreeze and verify submission succeeds.
-3. **Soft Takedown & Restoration**:
-   - Take down an approved live app.
-   - Verify the app vanishes instantly from public store, search, and download APIs.
-   - Restore the app and verify it reappears with ratings and downloads intact.
-4. **Broadcast Messaging**:
-   - Set an alert broadcast in the Super Admin panel.
-   - Verify it renders live in Developer Console and on the storefront.
-5. **Codebase Health**:
-   - Execute `compile_applet` and `lint_applet` together to verify 0 syntax or TypeScript errors.
-   - Verify dev server starts and operates cleanly on port 3000.
+All financial mutations are backed by transactions in memory and synchronized with **Cloud Firestore** (`sales`, `wallets`, and `withdrawals` collections) so that records are permanent and never lost.
+
+1. **Purchases & Checkout**:
+   - `POST /api/apps/:id/purchase`:
+     - Creates verified `AppSaleTransaction`.
+     - Calculates:
+       - `adminCommissionAmount = Math.round(grossAmount * 0.06)`
+       - `developerNetAmount = grossAmount - adminCommissionAmount`
+     - Updates developer wallet: increments `totalGrossRevenue`, `totalAdminFeesPaid`, and `availableBalance`.
+     - Generates an instant **Download Access Token** and receipt for the buyer.
+   - `GET /api/apps/:id/verify-purchase?token=...`: Authorizes instant APK download for paid apps.
+
+2. **Developer Financial Console**:
+   - `GET /api/developer/wallet`: Returns real-time financial stats:
+     - Total Gross Sales (Real money generated)
+     - 6% Super Admin System Commission deducted
+     - Current Available Balance (Net 94%)
+     - Sales history log with timestamps and individual fee deductions.
+   - `POST /api/developer/withdraw`:
+     - Validates `amount >= 1000`.
+     - Validates `amount <= wallet.availableBalance`.
+     - Freezes the requested amount into `pendingWithdrawals` and creates a `WithdrawalRequest`.
+   - `GET /api/developer/withdrawals`: Returns developer's past withdrawal history and status.
+
+3. **Super Admin God Mode Financial Hub**:
+   - `GET /api/admin/financials`: Aggregated platform overview:
+     - Total Store Gross Sales
+     - Total 6% Admin Commissions Collected (Profit)
+     - Total Payouts Disbursed
+     - Total Pending Developer Withdrawals
+   - `GET /api/admin/withdrawals`: Lists all pending and processed withdrawal requests across all developers.
+   - `POST /api/admin/withdrawals/:id/approve`: Approves a withdrawal and records payout reference.
+   - `POST /api/admin/withdrawals/:id/reject`: Rejects with feedback, automatically restoring the funds to developer's available balance.
 
 ---
 
-## 7. Storefront & "For You" Curation System (Completed)
+## 4. Frontend & User Experience Updates
 
-1. **User Requirement & Clarification Answers**:
-   - Reorder method: **Move Up and Move Down buttons with quick Save**
-   - Number one app: **Set as both the main Hero banner and number one in For You**
+### A. Developer Submission & Edit Form (`PublisherPortal.tsx` & `DeveloperConsole.tsx`)
+- Add a **Pricing & Monetization Toggle**:
+  - `Free (Direct Public Download)`
+  - `Paid App (Sell for a Set Price)`
+- When "Paid" is selected:
+  - Input for Price (with live calculator preview):
+    - *Example: Price 10,000 UGX $\rightarrow$ 600 UGX (6% Platform Fee) $\rightarrow$ 9,400 UGX (Your Net Earnings).*
 
-2. **Data & Schema Additions**:
-   - `StoreApp` interface: `displayOrder?: number; isFeatured?: boolean; isPinnedToTop?: boolean;`
-   - Updated `firebase-blueprint.json` with `displayOrder`, `isFeatured`, and `isPinnedToTop` properties.
+### B. Developer Dashboard: "Earnings & Wallet" Tab (`DeveloperConsole.tsx`)
+- **Key Financial Cards**:
+  1. **Gross App Sales**: Total actual money paid by customers.
+  2. **Admin Commission (6%)**: Exact amount deducted by the system for the platform fee.
+  3. **Available Net Balance**: Real money ready for withdrawal.
+- **Make a Withdrawal Section**:
+  - Form with minimum amount validation ($1,000$ minimum threshold).
+  - Method selector: MTN Mobile Money, Airtel Money, Bank Transfer, PayPal.
+  - Clear breakdown: Amount requested, payout account, and remaining balance.
+- **Recent Sales & Payout History Table**:
+  - Live ledger of each customer sale with gross, 6% fee, and net columns.
 
-3. **Backend & Firestore Synchronization**:
-   - `POST /api/admin/apps/reorder`: Protected by Super Admin session, updates `displayOrder` and `isFeatured` for all apps in memory and directly updates `apps/{appId}` in Firestore.
-   - `GET /api/apps` and `syncFromFirestore()`: Automatically sort by `displayOrder` ascending (where #1 is top/Hero), preserving total downloads as secondary order.
+### C. Public Storefront & Purchase Flow (`AppCatalog.tsx`, `HeroZuzu.tsx`, `AppDetailView.tsx`)
+- Free apps retain the prominent **"Get APK / Free Download"** button.
+- Paid apps display a stylish **Price Badge** (e.g. `UGX 5,000` or `$2.99`) and **"Buy & Download"** button.
+- Clicking "Buy & Download" opens the **Secure Checkout Modal**:
+  - Buyer enters Name, Email, and confirms payment.
+  - Instantly unlocks the high-speed APK download with an on-screen receipt and purchase verification code.
 
-4. **Frontend Curation Module**:
-   - In `PublisherPortal.tsx`: **SUB-PANEL 4: Storefront & "For You" App Ranking** with position badges, Move Up (↑), Move Down (↓), one-click "Make #1 Spotlight", and "Quick Save & Publish Order".
-   - In `PublisherPortal.tsx` (Live Catalog tab): Added quick access button `"Curate & Reorder 'For You'"`.
-   - In `AppCatalog.tsx`: Added `"Recommended For You"` top shelf rendered in exact Super Admin display order.
-   - In `App.tsx`: `featuredPhoneApp` prioritizes the #1 designated spotlight app.
+### D. Super Admin God Mode: "Platform Earnings & Payouts" (`PublisherPortal.tsx`)
+- Super Admin receives a dedicated **Financials & Withdrawals** sub-panel:
+  - Real-time tally of all 6% commissions earned by `sseruwagijohn452@gmail.com`.
+  - Pending withdrawals queue with 1-click **Approve Payout** or **Reject & Refund**.
+  - Searchable global audit log of every purchase and payout on the platform.
+
+---
+
+## 5. Verification & Security Plan
+
+1. **Financial Precision**:
+   - Math check: Ensure $6\%$ admin cut and $94\%$ developer cut always equal $100\%$ without rounding discrepancies.
+2. **Withdrawal Guardrails**:
+   - Attempting withdrawal $< 1000$ returns an immediate validation error.
+   - Attempting withdrawal exceeding available balance is strictly rejected.
+3. **Double-Spend Prevention**:
+   - Funds are locked into `pendingWithdrawals` upon request so developers cannot double-withdraw.
+4. **Cloud Firestore Sync**:
+   - Verify all sales, wallets, and withdrawal documents persist permanently in Firestore database `ai-studio-animeapkhub-74ad66d4-4e48-46f3-b3c2-15f1949dfe83`.
+5. **Compilation & Build**:
+   - Ensure `compile_applet` and `lint_applet` pass with 0 errors.

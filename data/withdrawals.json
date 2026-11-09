@@ -1,0 +1,38 @@
+[
+  {
+    "id": "wdr-1794225136437-aavoy",
+    "developerId": "dev-1794224084386-2nucd",
+    "developerName": "Monetized Dev",
+    "developerEmail": "dev_monetize_test@zuzustore.com",
+    "amount": 2000,
+    "currency": "UGX",
+    "payoutMethod": "mobile_money_mtn",
+    "payoutDetails": {
+      "accountName": "Ronald Mugisha",
+      "accountNumber": "0772000000"
+    },
+    "status": "paid",
+    "requestedAt": "2026-11-09T11:52:16.437Z",
+    "transactionRef": "MOMO-DIRECT-APPROVED",
+    "processedAt": "2026-11-09T11:52:16.730Z",
+    "processedBy": "sseruwagijohn452@gmail.com"
+  },
+  {
+    "payoutMethod": "mobile_money_mtn",
+    "requestedAt": "2026-11-09T11:40:57.126Z",
+    "currency": "UGX",
+    "developerId": "dev-1794224084386-2nucd",
+    "processedAt": "2026-11-09T11:40:57.150Z",
+    "developerEmail": "dev_monetize_test@zuzustore.com",
+    "amount": 2500,
+    "transactionRef": "MTN-MOMO-TX-4488219",
+    "processedBy": "sseruwagijohn452@gmail.com",
+    "id": "wdr-1794224457126-kvtii",
+    "status": "paid",
+    "payoutDetails": {
+      "accountName": "Hakim Mukasa",
+      "accountNumber": "+256771234567"
+    },
+    "developerName": "Monetized Dev"
+  }
+]

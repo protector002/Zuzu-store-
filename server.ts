@@ -37,6 +37,9 @@ const APPS_FILE = path.join(DATA_DIR, 'apps.json');
 const SESSIONS_FILE = path.join(DATA_DIR, 'sessions.json');
 const DEVELOPERS_FILE = path.join(DATA_DIR, 'developers.json');
 const BROADCAST_FILE = path.join(DATA_DIR, 'broadcast.json');
+const SALES_FILE = path.join(DATA_DIR, 'sales.json');
+const WALLETS_FILE = path.join(DATA_DIR, 'wallets.json');
+const WITHDRAWALS_FILE = path.join(DATA_DIR, 'withdrawals.json');
 
 // Admin credentials specified by the user
 const ADMIN_EMAIL = 'sseruwagijohn452@gmail.com';
@@ -110,6 +113,7 @@ export interface StoreApp {
   displayOrder?: number;
   isFeatured?: boolean;
   isPinnedToTop?: boolean;
+  pricing?: AppPriceConfig;
   approvalStatus?: 'approved' | 'pending_approval' | 'rejected';
   isTakenDown?: boolean;
   takedownReason?: string;
@@ -126,6 +130,77 @@ export interface StoreApp {
   rejectionReason?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export type AppPricingType = 'free' | 'paid';
+
+export interface AppPriceConfig {
+  type: AppPricingType;
+  price: number; // 0 for free, > 0 for paid
+  currency: string; // 'UGX' | 'USD'
+  discountPrice?: number;
+}
+
+export interface AppSaleTransaction {
+  id: string;
+  appId: string;
+  appName: string;
+  appIcon?: string;
+  developerId: string;
+  developerEmail: string;
+  customerName: string;
+  customerEmail: string;
+  grossAmount: number;
+  adminCommissionPercent: number; // 6%
+  adminCommissionAmount: number; // gross * 0.06
+  developerNetAmount: number; // gross * 0.94
+  currency: string;
+  paymentMethod: string;
+  phoneNumber?: string;
+  livepayReference?: string;
+  livepayInternalRef?: string;
+  livepayNetwork?: string;
+  livepayStatus?: string;
+  status: 'completed' | 'refunded';
+  downloadToken?: string;
+  createdAt: string;
+}
+
+export interface DeveloperWallet {
+  developerId: string;
+  totalGrossRevenue: number;
+  totalAdminFeesPaid: number; // 6% sum
+  totalNetEarnings: number; // 94% sum
+  totalWithdrawn: number;
+  availableBalance: number;
+  pendingWithdrawals: number;
+  currency: string;
+  updatedAt: string;
+}
+
+export interface WithdrawalRequest {
+  id: string;
+  developerId: string;
+  developerName: string;
+  developerEmail: string;
+  amount: number; // Minimum 1000
+  currency: string;
+  payoutMethod: 'mobile_money_mtn' | 'mobile_money_airtel' | 'bank_transfer' | 'paypal';
+  payoutDetails: {
+    accountName: string;
+    accountNumber: string; // Phone number or Bank Account
+    bankName?: string;
+    swiftCode?: string;
+    notes?: string;
+  };
+  status: 'pending' | 'approved' | 'paid' | 'rejected';
+  payoutChannel?: 'livepay' | 'manual';
+  rejectionReason?: string;
+  transactionRef?: string;
+  livepayInternalRef?: string;
+  requestedAt: string;
+  processedAt?: string;
+  processedBy?: string;
 }
 
 // Initial seed apps - start empty so only authentic admin-published APKs appear
@@ -349,6 +424,12 @@ try {
   }
 } catch (err) {
   console.warn('[Firestore Server] Init warning:', err);
+}
+
+// Helper to remove any undefined fields before sending to Firestore
+function cleanForFirestore<T>(data: T): any {
+  if (data === undefined || data === null) return {};
+  return JSON.parse(JSON.stringify(data));
 }
 
 // In-memory cache for developers & broadcasts
@@ -587,9 +668,142 @@ async function syncFromFirestore() {
       saveApps(cloudApps);
       console.log(`[Firestore Server] Synchronized ${cloudApps.length} store apps.`);
     }
+
+    // 4. Sync sales
+    const salesSnap = await getDocs(collection(firestoreDb, 'sales'));
+    const cloudSales: AppSaleTransaction[] = [];
+    salesSnap.forEach((d) => {
+      const sale = d.data() as AppSaleTransaction;
+      if (sale && sale.id) cloudSales.push(sale);
+    });
+    if (cloudSales.length > 0) {
+      cloudSales.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+      memorySales = cloudSales;
+      saveSales(cloudSales);
+    }
+
+    // 5. Sync wallets
+    const walletsSnap = await getDocs(collection(firestoreDb, 'wallets'));
+    const cloudWallets: Record<string, DeveloperWallet> = {};
+    walletsSnap.forEach((d) => {
+      const wallet = d.data() as DeveloperWallet;
+      if (wallet && wallet.developerId) cloudWallets[wallet.developerId] = wallet;
+    });
+    if (Object.keys(cloudWallets).length > 0) {
+      memoryWallets = { ...getWallets(), ...cloudWallets };
+      saveWallets(memoryWallets);
+    }
+
+    // 6. Sync withdrawals
+    const withdrawalsSnap = await getDocs(collection(firestoreDb, 'withdrawals'));
+    const cloudWithdrawals: WithdrawalRequest[] = [];
+    withdrawalsSnap.forEach((d) => {
+      const w = d.data() as WithdrawalRequest;
+      if (w && w.id) cloudWithdrawals.push(w);
+    });
+    if (cloudWithdrawals.length > 0) {
+      cloudWithdrawals.sort((a, b) => new Date(b.requestedAt || 0).getTime() - new Date(a.requestedAt || 0).getTime());
+      memoryWithdrawals = cloudWithdrawals;
+      saveWithdrawals(cloudWithdrawals);
+    }
   } catch (err) {
     console.warn('[Firestore Server] Initial sync notice:', err);
   }
+}
+
+// In-memory financial data caches
+let memorySales: AppSaleTransaction[] = [];
+let memoryWallets: Record<string, DeveloperWallet> = {};
+let memoryWithdrawals: WithdrawalRequest[] = [];
+
+function getSales(): AppSaleTransaction[] {
+  try {
+    if (!fs.existsSync(SALES_FILE)) {
+      fs.writeFileSync(SALES_FILE, '[]', 'utf-8');
+      return [];
+    }
+    const data = fs.readFileSync(SALES_FILE, 'utf-8');
+    return JSON.parse(data);
+  } catch (err) {
+    return memorySales || [];
+  }
+}
+
+function saveSales(sales: AppSaleTransaction[]) {
+  memorySales = sales;
+  try {
+    fs.writeFileSync(SALES_FILE, JSON.stringify(sales, null, 2), 'utf-8');
+  } catch (err) {
+    console.error('Error saving sales file:', err);
+  }
+}
+
+function getWallets(): Record<string, DeveloperWallet> {
+  try {
+    if (!fs.existsSync(WALLETS_FILE)) {
+      fs.writeFileSync(WALLETS_FILE, '{}', 'utf-8');
+      return {};
+    }
+    const data = fs.readFileSync(WALLETS_FILE, 'utf-8');
+    return JSON.parse(data);
+  } catch (err) {
+    return memoryWallets || {};
+  }
+}
+
+function saveWallets(wallets: Record<string, DeveloperWallet>) {
+  memoryWallets = wallets;
+  try {
+    fs.writeFileSync(WALLETS_FILE, JSON.stringify(wallets, null, 2), 'utf-8');
+  } catch (err) {
+    console.error('Error saving wallets file:', err);
+  }
+}
+
+function getWithdrawals(): WithdrawalRequest[] {
+  try {
+    if (!fs.existsSync(WITHDRAWALS_FILE)) {
+      fs.writeFileSync(WITHDRAWALS_FILE, '[]', 'utf-8');
+      return [];
+    }
+    const data = fs.readFileSync(WITHDRAWALS_FILE, 'utf-8');
+    return JSON.parse(data);
+  } catch (err) {
+    return memoryWithdrawals || [];
+  }
+}
+
+function saveWithdrawals(withdrawals: WithdrawalRequest[]) {
+  memoryWithdrawals = withdrawals;
+  try {
+    fs.writeFileSync(WITHDRAWALS_FILE, JSON.stringify(withdrawals, null, 2), 'utf-8');
+  } catch (err) {
+    console.error('Error saving withdrawals file:', err);
+  }
+}
+
+function getOrCreateWallet(devId: string): DeveloperWallet {
+  const wallets = getWallets();
+  if (wallets[devId]) {
+    return wallets[devId];
+  }
+  const newWallet: DeveloperWallet = {
+    developerId: devId,
+    totalGrossRevenue: 0,
+    totalAdminFeesPaid: 0,
+    totalNetEarnings: 0,
+    totalWithdrawn: 0,
+    availableBalance: 0,
+    pendingWithdrawals: 0,
+    currency: 'UGX',
+    updatedAt: new Date().toISOString()
+  };
+  wallets[devId] = newWallet;
+  saveWallets(wallets);
+  if (firestoreDb) {
+    setDoc(doc(firestoreDb, 'wallets', devId), newWallet, { merge: true }).catch(() => {});
+  }
+  return newWallet;
 }
 
 syncFromFirestore().catch(() => {});
@@ -1740,6 +1954,19 @@ app.post(
         releases: [newRelease],
         reviews: [],
         isOfficial: true,
+        pricing: (() => {
+          if (req.body.pricing) {
+            try {
+              return typeof req.body.pricing === 'string' ? JSON.parse(req.body.pricing) : req.body.pricing;
+            } catch (_) {}
+          }
+          const isPaid = req.body.pricingType === 'paid' || Number(req.body.price) > 0;
+          return {
+            type: isPaid ? 'paid' : 'free',
+            price: isPaid ? Math.max(0, Number(req.body.price) || 0) : 0,
+            currency: req.body.currency ? String(req.body.currency).toUpperCase() : 'UGX'
+          };
+        })(),
         appEdition: (req.body.appEdition as any) || (targetPlatform === 'Android TV' || targetPlatform === 'Fire TV' || targetPlatform === 'Smart TV' ? 'tv' : 'phone'),
         isTvCompatible: req.body.isTvCompatible === true || req.body.isTvCompatible === 'true' || targetPlatform === 'Android TV' || targetPlatform === 'Fire TV' || targetPlatform === 'Smart TV',
         createdAt: new Date().toISOString(),
@@ -2217,6 +2444,19 @@ app.post(
         releases: [newRelease],
         reviews: [],
         isOfficial: false,
+        pricing: (() => {
+          if (req.body.pricing) {
+            try {
+              return typeof req.body.pricing === 'string' ? JSON.parse(req.body.pricing) : req.body.pricing;
+            } catch (_) {}
+          }
+          const isPaid = req.body.pricingType === 'paid' || Number(req.body.price) > 0;
+          return {
+            type: isPaid ? 'paid' : 'free',
+            price: isPaid ? Math.max(0, Number(req.body.price) || 0) : 0,
+            currency: req.body.currency ? String(req.body.currency).toUpperCase() : 'UGX'
+          };
+        })(),
         appEdition: (req.body.appEdition as any) || (targetPlatform === 'Android TV' || targetPlatform === 'Fire TV' || targetPlatform === 'Smart TV' ? 'tv' : 'phone'),
         isTvCompatible: req.body.isTvCompatible === true || req.body.isTvCompatible === 'true' || targetPlatform === 'Android TV' || targetPlatform === 'Fire TV' || targetPlatform === 'Smart TV',
         approvalStatus: 'pending_approval',
@@ -2235,7 +2475,7 @@ app.post(
       saveApps(apps);
 
       if (firestoreDb) {
-        setDoc(doc(firestoreDb, 'apps', newApp.id), newApp, { merge: true }).catch((e) => {
+        setDoc(doc(firestoreDb, 'apps', newApp.id), cleanForFirestore(newApp), { merge: true }).catch((e) => {
           console.warn('[Firestore] Error saving submitted app to cloud:', e);
         });
       }
@@ -2297,6 +2537,122 @@ app.delete('/api/developer/apps/:id', requireDeveloper, (req, res) => {
 });
 
 // ==========================================
+// DEVELOPER FINANCIAL WALLET & WITHDRAWALS
+// ==========================================
+
+// Developer: Get own financial wallet and sales history
+app.get('/api/developer/wallet', requireDeveloper, (req, res) => {
+  const dev = (req as any).developer;
+  const wallet = getOrCreateWallet(dev.id);
+  const sales = getSales().filter(
+    (s) => s.developerId === dev.id || s.developerEmail?.toLowerCase() === dev.email?.toLowerCase()
+  );
+
+  return res.json({
+    success: true,
+    wallet: {
+      ...wallet,
+      recentSales: sales.slice(0, 50)
+    }
+  });
+});
+
+// Developer: Submit withdrawal request (minimum 1,000 threshold enforced)
+app.post('/api/developer/withdraw', requireDeveloper, (req, res) => {
+  const dev = (req as any).developer;
+  const {
+    amount,
+    payoutMethod,
+    payoutDetails: nestedDetails,
+    accountNumber,
+    accountName,
+    bankName,
+    swiftCode,
+    notes,
+    currency = 'UGX'
+  } = req.body;
+  const numAmount = Number(amount);
+
+  // STRICT RULE: Minimum withdrawal amount must start from 1,000
+  if (!numAmount || isNaN(numAmount) || numAmount < 1000) {
+    return res.status(400).json({ error: 'Minimum withdrawal amount is 1,000.' });
+  }
+
+  const wallet = getOrCreateWallet(dev.id);
+  if (wallet.availableBalance < numAmount) {
+    return res.status(400).json({
+      error: `Insufficient available balance. You have ${wallet.availableBalance.toLocaleString()} ${wallet.currency || 'UGX'} available.`
+    });
+  }
+
+  const payoutDetails = nestedDetails || {
+    accountName: accountName || dev.name,
+    accountNumber: accountNumber || '',
+    bankName,
+    swiftCode,
+    notes
+  };
+
+  if (!payoutDetails.accountNumber) {
+    return res.status(400).json({ error: 'Valid payout phone number or bank account number is required.' });
+  }
+
+  const withdrawalId = `wdr-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  const withdrawal: WithdrawalRequest = {
+    id: withdrawalId,
+    developerId: dev.id,
+    developerName: dev.name,
+    developerEmail: dev.email,
+    amount: numAmount,
+    currency: wallet.currency || currency || 'UGX',
+    payoutMethod: payoutMethod || 'mobile_money_mtn',
+    payoutDetails: {
+      accountName: payoutDetails.accountName || dev.name,
+      accountNumber: payoutDetails.accountNumber,
+      bankName: payoutDetails.bankName,
+      swiftCode: payoutDetails.swiftCode,
+      notes: payoutDetails.notes
+    },
+    status: 'pending',
+    requestedAt: new Date().toISOString()
+  };
+
+  // Lock amount into pendingWithdrawals
+  wallet.availableBalance -= numAmount;
+  wallet.pendingWithdrawals = (wallet.pendingWithdrawals || 0) + numAmount;
+  wallet.updatedAt = new Date().toISOString();
+
+  const wallets = getWallets();
+  wallets[dev.id] = wallet;
+  saveWallets(wallets);
+
+  const withdrawals = getWithdrawals();
+  withdrawals.unshift(withdrawal);
+  saveWithdrawals(withdrawals);
+
+  if (firestoreDb) {
+    setDoc(doc(firestoreDb, 'wallets', dev.id), cleanForFirestore(wallet), { merge: true }).catch(() => {});
+    setDoc(doc(firestoreDb, 'withdrawals', withdrawal.id), cleanForFirestore(withdrawal)).catch(() => {});
+  }
+
+  return res.json({
+    success: true,
+    message: `Withdrawal request of ${numAmount.toLocaleString()} ${withdrawal.currency} submitted successfully! Super Admin will disburse your payout.`,
+    withdrawal,
+    wallet
+  });
+});
+
+// Developer: Get own withdrawal history
+app.get('/api/developer/withdrawals', requireDeveloper, (req, res) => {
+  const dev = (req as any).developer;
+  const list = getWithdrawals().filter(
+    (w) => w.developerId === dev.id || w.developerEmail?.toLowerCase() === dev.email?.toLowerCase()
+  );
+  return res.json({ success: true, withdrawals: list });
+});
+
+// ==========================================
 // SUPER ADMIN REVIEW QUEUE & APPROVAL
 // ==========================================
 
@@ -2326,7 +2682,7 @@ app.post('/api/admin/submissions/:id/approve', requireAdmin, (req, res) => {
   saveApps(apps);
 
   if (firestoreDb) {
-    setDoc(doc(firestoreDb, 'apps', appItem.id), appItem, { merge: true }).catch(() => {});
+    setDoc(doc(firestoreDb, 'apps', appItem.id), cleanForFirestore(appItem), { merge: true }).catch(() => {});
   }
 
   return res.json({
@@ -2356,7 +2712,7 @@ app.post('/api/admin/submissions/:id/reject', requireAdmin, (req, res) => {
   saveApps(apps);
 
   if (firestoreDb) {
-    setDoc(doc(firestoreDb, 'apps', appItem.id), appItem, { merge: true }).catch(() => {});
+    setDoc(doc(firestoreDb, 'apps', appItem.id), cleanForFirestore(appItem), { merge: true }).catch(() => {});
   }
 
   return res.json({
@@ -2558,7 +2914,7 @@ app.post('/api/admin/apps/:id/takedown', requireAdmin, (req, res) => {
   saveApps(apps);
 
   if (firestoreDb) {
-    setDoc(doc(firestoreDb, 'apps', appItem.id), appItem, { merge: true }).catch(() => {});
+    setDoc(doc(firestoreDb, 'apps', appItem.id), cleanForFirestore(appItem), { merge: true }).catch(() => {});
   }
 
   return res.json({
@@ -2587,7 +2943,7 @@ app.post('/api/admin/apps/:id/restore', requireAdmin, (req, res) => {
   saveApps(apps);
 
   if (firestoreDb) {
-    setDoc(doc(firestoreDb, 'apps', appItem.id), appItem, { merge: true }).catch(() => {});
+    setDoc(doc(firestoreDb, 'apps', appItem.id), cleanForFirestore(appItem), { merge: true }).catch(() => {});
   }
 
   return res.json({
@@ -2626,7 +2982,7 @@ app.patch('/api/admin/apps/:id/override', requireAdmin, (req, res) => {
   saveApps(apps);
 
   if (firestoreDb) {
-    setDoc(doc(firestoreDb, 'apps', updatedApp.id), updatedApp, { merge: true }).catch(() => {});
+    setDoc(doc(firestoreDb, 'apps', updatedApp.id), cleanForFirestore(updatedApp), { merge: true }).catch(() => {});
   }
 
   return res.json({
@@ -2691,6 +3047,570 @@ app.post('/api/admin/apps/reorder', requireAdmin, async (req, res) => {
     message: 'Storefront and For You ranking successfully saved and published!',
     apps
   });
+});
+
+// ==========================================
+// LIVEPAY UGANDA / AFRICA INTEGRATION
+// Account: LP260805074398
+// ==========================================
+
+const LIVEPAY_BASE_URL = process.env.LIVEPAY_BASE_URL || 'https://livepay.me/api';
+const LIVEPAY_API_KEY =
+  process.env.LIVEPAY_API_KEY ||
+  'cc32614dc4866f6e.78f262b1d208943a66bd3a9eed04aa9f66f7872db70ec83d1d65c583fa719f07';
+const LIVEPAY_WEBHOOK_SECRET =
+  process.env.LIVEPAY_WEBHOOK_SECRET ||
+  '3d7d9f2a412192c3160e09532408f22146477b3f065e2e80c8d3c5724dceecef';
+const LIVEPAY_ACCOUNT_NUMBER =
+  process.env.LIVEPAY_ACCOUNT_NUMBER || 'LP260805074398';
+
+function normalizeUgandaPhone(phone?: string): string {
+  if (!phone) return '';
+  let cleaned = phone.replace(/[^0-9]/g, '');
+  if (cleaned.startsWith('256') && cleaned.length >= 12) {
+    cleaned = '0' + cleaned.substring(3);
+  }
+  return cleaned;
+}
+
+// LivePay Collect Money API (Instant Mobile Money Prompt on Customer Phone)
+async function callLivePayCollect({
+  phoneNumber,
+  amount,
+  currency = 'UGX',
+  reference,
+  description
+}: {
+  phoneNumber: string;
+  amount: number;
+  currency?: string;
+  reference: string;
+  description: string;
+}) {
+  const normPhone = normalizeUgandaPhone(phoneNumber);
+  try {
+    const res = await fetch(`${LIVEPAY_BASE_URL}/collect-money`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${LIVEPAY_API_KEY}`
+      },
+      body: JSON.stringify({
+        accountNumber: LIVEPAY_ACCOUNT_NUMBER,
+        phoneNumber: normPhone,
+        amount,
+        currency,
+        reference,
+        description: description.substring(0, 30)
+      })
+    });
+
+    const data = await res.json().catch(() => ({}));
+    return {
+      ok: res.ok,
+      status: res.status,
+      data
+    };
+  } catch (err: any) {
+    console.error('[LivePay Collect Error]:', err);
+    return {
+      ok: false,
+      status: 500,
+      error: err.message
+    };
+  }
+}
+
+// LivePay Send Money API (Direct Payout to Developer Mobile Money)
+async function callLivePayPayout({
+  phoneNumber,
+  amount,
+  currency = 'UGX',
+  reference,
+  description
+}: {
+  phoneNumber: string;
+  amount: number;
+  currency?: string;
+  reference: string;
+  description: string;
+}) {
+  const normPhone = normalizeUgandaPhone(phoneNumber);
+  try {
+    const res = await fetch(`${LIVEPAY_BASE_URL}/send-money`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${LIVEPAY_API_KEY}`
+      },
+      body: JSON.stringify({
+        accountNumber: LIVEPAY_ACCOUNT_NUMBER,
+        phoneNumber: normPhone,
+        amount,
+        currency,
+        reference: reference.substring(0, 30),
+        description: description.substring(0, 30)
+      })
+    });
+
+    const data = await res.json().catch(() => ({}));
+    return {
+      ok: res.ok,
+      status: res.status,
+      data
+    };
+  } catch (err: any) {
+    console.error('[LivePay Payout Error]:', err);
+    return {
+      ok: false,
+      status: 500,
+      error: err.message
+    };
+  }
+}
+
+// ==========================================
+// APP PURCHASE & CHECKOUT (6% ADMIN FEE)
+// ==========================================
+
+app.post('/api/apps/:id/purchase', async (req, res) => {
+  const { id } = req.params;
+  const { customerName, customerEmail, paymentMethod, phoneNumber, currency = 'UGX' } = req.body;
+  const apps = getApps();
+  const appItem = apps.find((a) => a.id === id || a.slug === id);
+
+  if (!appItem) {
+    return res.status(404).json({ error: 'Application not found.' });
+  }
+
+  const priceConfig = appItem.pricing;
+  const isPaid = priceConfig && priceConfig.type === 'paid' && Number(priceConfig.price) > 0;
+  const grossAmount = isPaid ? Number(priceConfig.price) : 0;
+
+  // 6% Super Admin commission calculation
+  const adminCommissionPercent = 6;
+  const adminCommissionAmount = Math.round(grossAmount * 0.06);
+  const developerNetAmount = grossAmount - adminCommissionAmount;
+
+  const saleId = `sale-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  const downloadToken = crypto.randomBytes(24).toString('hex');
+
+  const developerId = appItem.submittedBy?.id || appItem.developer?.email || 'admin';
+  const developerEmail = appItem.submittedBy?.email || appItem.developer?.email || ADMIN_EMAIL;
+
+  // Trigger LivePay Collect API if phone number or mobile money method provided
+  let livepayResult: any = null;
+  const cleanPhone = normalizeUgandaPhone(phoneNumber || '');
+  if (grossAmount > 0 && cleanPhone) {
+    const livepayRef = `ZUZU${Date.now().toString().slice(-8)}`;
+    console.log(`[LivePay Collection] Requesting ${grossAmount} UGX from ${cleanPhone} on account ${LIVEPAY_ACCOUNT_NUMBER}...`);
+    livepayResult = await callLivePayCollect({
+      phoneNumber: cleanPhone,
+      amount: grossAmount,
+      currency: priceConfig?.currency || currency || 'UGX',
+      reference: livepayRef,
+      description: `ZUZU:${appItem.name.substring(0, 18)}`
+    });
+    console.log('[LivePay Collection Response]:', livepayResult);
+  }
+
+  const transaction: AppSaleTransaction = {
+    id: saleId,
+    appId: appItem.id,
+    appName: appItem.name,
+    appIcon: appItem.iconUrl,
+    developerId,
+    developerEmail,
+    customerName: customerName ? String(customerName).trim() : 'Customer',
+    customerEmail: customerEmail ? String(customerEmail).trim() : 'customer@zuzustore.com',
+    grossAmount,
+    adminCommissionPercent,
+    adminCommissionAmount,
+    developerNetAmount,
+    currency: priceConfig?.currency || currency || 'UGX',
+    paymentMethod: paymentMethod || 'LivePay Mobile Money (MTN / Airtel)',
+    phoneNumber: cleanPhone || undefined,
+    livepayReference: livepayResult?.data?.reference || `LP-${Date.now()}`,
+    livepayInternalRef: livepayResult?.data?.internal_reference,
+    livepayNetwork: livepayResult?.data?.network,
+    livepayStatus: livepayResult?.ok ? 'initiated' : 'completed',
+    status: 'completed',
+    downloadToken,
+    createdAt: new Date().toISOString()
+  };
+
+  // 1. Save sale
+  const sales = getSales();
+  sales.unshift(transaction);
+  saveSales(sales);
+
+  // 2. Update Developer Wallet
+  const wallets = getWallets();
+  const wallet = getOrCreateWallet(developerId);
+  wallet.totalGrossRevenue += grossAmount;
+  wallet.totalAdminFeesPaid += adminCommissionAmount;
+  wallet.totalNetEarnings += developerNetAmount;
+  wallet.availableBalance += developerNetAmount;
+  wallet.currency = transaction.currency;
+  wallet.updatedAt = new Date().toISOString();
+  wallets[developerId] = wallet;
+  saveWallets(wallets);
+
+  // Increment total downloads
+  appItem.downloadsTotal = (appItem.downloadsTotal || 0) + 1;
+  saveApps(apps);
+
+  // 3. Persist to Firestore
+  if (firestoreDb) {
+    setDoc(doc(firestoreDb, 'sales', transaction.id), cleanForFirestore(transaction)).catch(() => {});
+    setDoc(doc(firestoreDb, 'wallets', developerId), cleanForFirestore(wallet), { merge: true }).catch(() => {});
+    setDoc(doc(firestoreDb, 'apps', appItem.id), { downloadsTotal: appItem.downloadsTotal }, { merge: true }).catch(() => {});
+  }
+
+  return res.json({
+    success: true,
+    message: livepayResult?.data?.message
+      ? `LivePay: ${livepayResult.data.message}. Check your phone to enter your PIN.`
+      : `Payment successful! You have purchased ${appItem.name}.`,
+    transaction,
+    sale: transaction,
+    downloadToken,
+    directDownloadUrl: `/api/apps/${appItem.id}/download?token=${downloadToken}`,
+    livepay: {
+      initiated: Boolean(livepayResult?.ok),
+      reference: livepayResult?.data?.reference,
+      internalReference: livepayResult?.data?.internal_reference,
+      network: livepayResult?.data?.network,
+      message: livepayResult?.data?.message || 'Payment prompt processed.'
+    }
+  });
+});
+
+// Verify purchase token
+app.get('/api/apps/:id/verify-purchase', (req, res) => {
+  const { id } = req.params;
+  const { token } = req.query;
+  if (!token) {
+    return res.status(400).json({ valid: false, error: 'Download token required.' });
+  }
+
+  const sales = getSales();
+  const sale = sales.find((s) => (s.appId === id || s.id === id) && s.downloadToken === token);
+  if (!sale) {
+    return res.status(404).json({ valid: false, error: 'Invalid or expired purchase token.' });
+  }
+
+  return res.json({ valid: true, purchased: true, sale });
+});
+
+// ==========================================
+// SUPER ADMIN FINANCIAL GOD MODE & PAYOUTS
+// ==========================================
+
+// Super Admin: Platform-wide financial summary (Total Sales, 6% Commission, Payouts)
+app.get('/api/admin/financials', requireAdmin, (req, res) => {
+  const sales = getSales();
+  const withdrawals = getWithdrawals();
+
+  const totalGrossSales = sales.reduce((sum, s) => sum + (s.grossAmount || 0), 0);
+  const totalAdminCommissionEarned = sales.reduce((sum, s) => sum + (s.adminCommissionAmount || 0), 0);
+  const totalDeveloperNetEarnings = sales.reduce((sum, s) => sum + (s.developerNetAmount || 0), 0);
+
+  const totalDisbursedWithdrawals = withdrawals
+    .filter((w) => w.status === 'paid' || w.status === 'approved')
+    .reduce((sum, w) => sum + (w.amount || 0), 0);
+
+  const totalPendingWithdrawals = withdrawals
+    .filter((w) => w.status === 'pending')
+    .reduce((sum, w) => sum + (w.amount || 0), 0);
+
+  const host = req.get('host') || 'localhost:3000';
+  const protocol = req.protocol || 'https';
+
+  return res.json({
+    success: true,
+    financials: {
+      totalGrossSales,
+      totalAdminCommissionEarned, // 6% pure profit for admin!
+      totalDeveloperNetEarnings, // 94%
+      totalDisbursedWithdrawals,
+      totalPendingWithdrawals,
+      totalPaidTransactionsCount: sales.length,
+      currency: 'UGX',
+      livepayConfig: {
+        accountNumber: LIVEPAY_ACCOUNT_NUMBER,
+        active: true,
+        webhookUrl: `${protocol}://${host}/api/webhooks/livepay`,
+        supportedCurrencies: ['UGX', 'USD', 'KES'],
+        supportedNetworks: ['MTN Mobile Money', 'Airtel Money']
+      }
+    },
+    recentSales: sales.slice(0, 50),
+    withdrawals
+  });
+});
+
+// Super Admin: List all withdrawal requests
+app.get('/api/admin/withdrawals', requireAdmin, (req, res) => {
+  const withdrawals = getWithdrawals();
+  return res.json({ success: true, withdrawals });
+});
+
+// Super Admin: Approve & Disburse withdrawal payout
+app.post('/api/admin/withdrawals/:id/approve', requireAdmin, (req, res) => {
+  const { id } = req.params;
+  const { transactionRef } = req.body;
+  const withdrawals = getWithdrawals();
+  const index = withdrawals.findIndex((w) => w.id === id);
+
+  if (index === -1) {
+    return res.status(404).json({ error: 'Withdrawal request not found.' });
+  }
+
+  const item = withdrawals[index];
+  item.status = 'paid';
+  item.transactionRef = transactionRef || `PAYOUT-${Date.now().toString(36).toUpperCase()}`;
+  item.processedAt = new Date().toISOString();
+  item.processedBy = ADMIN_EMAIL;
+  withdrawals[index] = item;
+  saveWithdrawals(withdrawals);
+
+  // Update wallet: deduct from pendingWithdrawals and add to totalWithdrawn
+  const wallets = getWallets();
+  const wallet = getOrCreateWallet(item.developerId);
+  wallet.pendingWithdrawals = Math.max(0, (wallet.pendingWithdrawals || 0) - item.amount);
+  wallet.totalWithdrawn = (wallet.totalWithdrawn || 0) + item.amount;
+  wallet.updatedAt = new Date().toISOString();
+  wallets[item.developerId] = wallet;
+  saveWallets(wallets);
+
+  if (firestoreDb) {
+    setDoc(doc(firestoreDb, 'withdrawals', item.id), cleanForFirestore(item), { merge: true }).catch(() => {});
+    setDoc(doc(firestoreDb, 'wallets', item.developerId), cleanForFirestore(wallet), { merge: true }).catch(() => {});
+  }
+
+  return res.json({
+    success: true,
+    message: `Withdrawal of ${item.amount.toLocaleString()} ${item.currency} approved and marked paid.`,
+    withdrawal: item
+  });
+});
+
+// Super Admin: Reject withdrawal request and restore developer balance
+app.post('/api/admin/withdrawals/:id/reject', requireAdmin, (req, res) => {
+  const { id } = req.params;
+  const { reason } = req.body;
+  const withdrawals = getWithdrawals();
+  const index = withdrawals.findIndex((w) => w.id === id);
+
+  if (index === -1) {
+    return res.status(404).json({ error: 'Withdrawal request not found.' });
+  }
+
+  const item = withdrawals[index];
+  item.status = 'rejected';
+  item.rejectionReason = reason || 'Declined by Super Admin';
+  item.processedAt = new Date().toISOString();
+  item.processedBy = ADMIN_EMAIL;
+  withdrawals[index] = item;
+  saveWithdrawals(withdrawals);
+
+  // Restore funds back to developer availableBalance
+  const wallets = getWallets();
+  const wallet = getOrCreateWallet(item.developerId);
+  wallet.pendingWithdrawals = Math.max(0, (wallet.pendingWithdrawals || 0) - item.amount);
+  wallet.availableBalance += item.amount;
+  wallet.updatedAt = new Date().toISOString();
+  wallets[item.developerId] = wallet;
+  saveWallets(wallets);
+
+  if (firestoreDb) {
+    setDoc(doc(firestoreDb, 'withdrawals', item.id), cleanForFirestore(item), { merge: true }).catch(() => {});
+    setDoc(doc(firestoreDb, 'wallets', item.developerId), cleanForFirestore(wallet), { merge: true }).catch(() => {});
+  }
+
+  return res.json({
+    success: true,
+    message: `Withdrawal rejected. Funds (${item.amount.toLocaleString()} ${item.currency}) restored to developer wallet.`,
+    withdrawal: item
+  });
+});
+
+// ==========================================
+// LIVEPAY DISBURSEMENTS & WEBHOOKS
+// ==========================================
+
+// Super Admin: Instant LivePay Mobile Money Disburse to Developer
+app.post('/api/admin/withdrawals/:id/disburse-livepay', requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const withdrawals = getWithdrawals();
+  const index = withdrawals.findIndex((w) => w.id === id);
+
+  if (index === -1) {
+    return res.status(404).json({ error: 'Withdrawal request not found.' });
+  }
+
+  const item = withdrawals[index];
+  if (item.status === 'paid') {
+    return res.status(400).json({ error: 'This withdrawal has already been disbursed and marked paid.' });
+  }
+
+  const recipientPhone = item.payoutDetails?.accountNumber;
+  if (!recipientPhone) {
+    return res.status(400).json({ error: 'Developer has not provided a valid mobile money phone number.' });
+  }
+
+  const livepayRef = `WDR${Date.now().toString().slice(-8)}`;
+  console.log(`[LivePay Payout] Initiating disbursement of ${item.amount} ${item.currency} to ${recipientPhone} from account ${LIVEPAY_ACCOUNT_NUMBER}...`);
+
+  const payoutResult = await callLivePayPayout({
+    phoneNumber: recipientPhone,
+    amount: item.amount,
+    currency: item.currency || 'UGX',
+    reference: livepayRef,
+    description: `Payout to ${item.developerName}`
+  });
+
+  if (!payoutResult.ok) {
+    const errorMsg =
+      payoutResult.data?.error ||
+      payoutResult.data?.message ||
+      payoutResult.error ||
+      'LivePay API error';
+    return res.status(400).json({
+      error: `LivePay Payout Failed: ${errorMsg}. Ensure LivePay account ${LIVEPAY_ACCOUNT_NUMBER} has sufficient balance, or use manual approval.`
+    });
+  }
+
+  const txRef = payoutResult.data?.internal_reference || payoutResult.data?.reference || `LP-OUT-${Date.now()}`;
+
+  item.status = 'paid';
+  item.payoutChannel = 'livepay';
+  item.transactionRef = `LivePay: ${txRef}`;
+  item.livepayInternalRef = payoutResult.data?.internal_reference;
+  item.processedAt = new Date().toISOString();
+  item.processedBy = ADMIN_EMAIL;
+  withdrawals[index] = item;
+  saveWithdrawals(withdrawals);
+
+  // Update wallet: deduct from pendingWithdrawals and add to totalWithdrawn
+  const wallets = getWallets();
+  const wallet = getOrCreateWallet(item.developerId);
+  wallet.pendingWithdrawals = Math.max(0, (wallet.pendingWithdrawals || 0) - item.amount);
+  wallet.totalWithdrawn = (wallet.totalWithdrawn || 0) + item.amount;
+  wallet.updatedAt = new Date().toISOString();
+  wallets[item.developerId] = wallet;
+  saveWallets(wallets);
+
+  if (firestoreDb) {
+    setDoc(doc(firestoreDb, 'withdrawals', item.id), cleanForFirestore(item), { merge: true }).catch(() => {});
+    setDoc(doc(firestoreDb, 'wallets', item.developerId), cleanForFirestore(wallet), { merge: true }).catch(() => {});
+  }
+
+  return res.json({
+    success: true,
+    message: `Success! ${item.amount.toLocaleString()} ${item.currency} sent directly to ${recipientPhone} via LivePay Mobile Money!`,
+    withdrawal: item,
+    livepayResponse: payoutResult.data
+  });
+});
+
+// Super Admin: LivePay Configuration & Status check
+app.get('/api/admin/livepay/status', requireAdmin, (req, res) => {
+  const host = req.get('host') || 'localhost:3000';
+  const protocol = req.protocol || 'https';
+  const webhookUrl = `${protocol}://${host}/api/webhooks/livepay`;
+
+  return res.json({
+    success: true,
+    config: {
+      accountNumber: LIVEPAY_ACCOUNT_NUMBER,
+      active: true,
+      webhookUrl,
+      supportedCurrencies: ['UGX', 'USD', 'KES'],
+      supportedNetworks: ['MTN Mobile Money', 'Airtel Money']
+    }
+  });
+});
+
+// Super Admin: Ping LivePay API to test credentials
+app.post('/api/admin/livepay/ping', requireAdmin, async (req, res) => {
+  try {
+    const pingRes = await fetch(`${LIVEPAY_BASE_URL}/collect-money`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${LIVEPAY_API_KEY}`
+      },
+      body: JSON.stringify({
+        accountNumber: LIVEPAY_ACCOUNT_NUMBER,
+        phoneNumber: '0770000000',
+        amount: 500,
+        currency: 'UGX',
+        reference: `PING${Date.now().toString().slice(-6)}`,
+        description: 'ZuzuStore Health Check'
+      })
+    });
+
+    const data = await pingRes.json().catch(() => ({}));
+    return res.json({
+      success: true,
+      status: pingRes.status,
+      message: 'LivePay API is connected and responding.',
+      accountNumber: LIVEPAY_ACCOUNT_NUMBER,
+      livepayResponse: data
+    });
+  } catch (err: any) {
+    return res.status(500).json({
+      success: false,
+      error: `LivePay ping error: ${err.message}`
+    });
+  }
+});
+
+// LivePay Asynchronous Webhook Receiver
+app.post('/api/webhooks/livepay', (req, res) => {
+  try {
+    const event = req.body || {};
+    const sigHeader = req.headers['x-webhook-signature'];
+    console.log('[LivePay Webhook Received]:', {
+      status: event.status,
+      customer_reference: event.customer_reference,
+      internal_reference: event.internal_reference,
+      amount: event.amount,
+      msisdn: event.msisdn,
+      provider: event.provider,
+      hasSignature: !!sigHeader
+    });
+
+    const customerRef = event.customer_reference || event.reference;
+    if (customerRef) {
+      const sales = getSales();
+      const saleIndex = sales.findIndex(
+        (s) => s.livepayReference === customerRef || s.id === customerRef
+      );
+
+      if (saleIndex !== -1) {
+        const sale = sales[saleIndex];
+        if (event.status === 'Success' || event.status === 'completed') {
+          sale.status = 'completed';
+          sale.livepayStatus = 'completed';
+          sale.livepayInternalRef = event.internal_reference || sale.livepayInternalRef;
+          saveSales(sales);
+
+          if (firestoreDb) {
+            setDoc(doc(firestoreDb, 'sales', sale.id), cleanForFirestore(sale), { merge: true }).catch(() => {});
+          }
+        }
+      }
+    }
+
+    // Must return 200 OK within 10 seconds per LivePay webhook spec
+    return res.status(200).json({ status: 'ok', received: true });
+  } catch (err) {
+    console.error('[LivePay Webhook Error]:', err);
+    return res.status(200).json({ status: 'error_logged' });
+  }
 });
 
 // Frontend Admin direct route handler (supports visiting /admin, /login, /publisher directly)

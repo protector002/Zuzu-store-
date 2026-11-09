@@ -230,6 +230,8 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
             const fileSize = phoneRel?.fileSize || '32 MB';
             const isCurrentlyDownloading = downloadingId === app.id;
             const devName = app.submittedBy?.name || app.developer?.name || 'Publisher';
+            const isPaid = app.pricing && app.pricing.type === 'paid' && (app.pricing.price || 0) > 0;
+            const priceLabel = isPaid ? `${app.pricing?.price.toLocaleString()} ${app.pricing?.currency || 'UGX'}` : 'Free';
 
             return (
               <div
@@ -250,7 +252,11 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
                         e.currentTarget.src = '/zuzustore-logo.png';
                       }}
                     />
-                    {app.isOfficial && (
+                    {isPaid ? (
+                      <span className="absolute top-1.5 right-1.5 px-1.5 py-0.5 rounded-md bg-amber-400 text-neutral-950 font-black text-[9px] shadow-sm">
+                        {app.pricing?.currency || 'UGX'}
+                      </span>
+                    ) : app.isOfficial && (
                       <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-amber-400 ring-2 ring-neutral-950" title="Verified Publisher" />
                     )}
                   </div>
@@ -265,14 +271,16 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
                     {devName}
                   </p>
 
-                  {/* Rating & Size */}
-                  <div className="flex items-center gap-1.5 text-[11px] text-neutral-400 mt-1">
+                  {/* Rating & Size & Price */}
+                  <div className="flex items-center gap-1 text-[11px] text-neutral-400 mt-1 flex-wrap">
                     <span className="flex items-center gap-0.5 font-semibold text-neutral-200">
                       <span>{app.rating.toFixed(1)}</span>
                       <Star className="w-2.5 h-2.5 fill-amber-400 text-amber-400" />
                     </span>
                     <span>·</span>
-                    <span>{fileSize}</span>
+                    <span className={isPaid ? 'text-amber-400 font-bold' : 'text-emerald-400 font-medium'}>
+                      {isPaid ? priceLabel : 'Free'}
+                    </span>
                   </div>
                 </div>
 
@@ -295,7 +303,7 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
                   ) : (
                     <>
                       <Download className="w-3 h-3" />
-                      <span>Get APK</span>
+                      <span>{isPaid ? 'Buy APK' : 'Get APK'}</span>
                     </>
                   )}
                 </button>
@@ -423,6 +431,8 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
                 const fileSize = phoneRel?.fileSize || '32 MB';
                 const isCurrentlyDownloading = downloadingId === app.id;
                 const devName = app.submittedBy?.name || app.developer?.name || 'Publisher';
+                const isPaid = app.pricing && app.pricing.type === 'paid' && (app.pricing.price || 0) > 0;
+                const priceLabel = isPaid ? `${app.pricing?.price.toLocaleString()} ${app.pricing?.currency || 'UGX'}` : 'Free';
 
                 return (
                   <div
@@ -431,7 +441,7 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
                     className="group bg-neutral-900/70 hover:bg-neutral-900 border border-neutral-800 hover:border-amber-500/40 rounded-2xl p-3 transition-all cursor-pointer flex flex-col justify-between shadow-sm hover:shadow-lg hover:-translate-y-0.5"
                   >
                     <div>
-                      <div className="aspect-square w-full rounded-2xl bg-neutral-950 border border-neutral-800/80 overflow-hidden flex items-center justify-center p-2 shadow-xs group-hover:border-amber-500/30">
+                      <div className="relative aspect-square w-full rounded-2xl bg-neutral-950 border border-neutral-800/80 overflow-hidden flex items-center justify-center p-2 shadow-xs group-hover:border-amber-500/30">
                         <img
                           src={app.iconUrl || '/zuzustore-logo.png'}
                           alt={app.name}
@@ -441,6 +451,11 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
                             e.currentTarget.src = '/zuzustore-logo.png';
                           }}
                         />
+                        {isPaid && (
+                          <span className="absolute top-1.5 right-1.5 px-1.5 py-0.5 rounded-md bg-amber-400 text-neutral-950 font-black text-[9px] shadow-sm">
+                            {app.pricing?.currency || 'UGX'}
+                          </span>
+                        )}
                       </div>
                       <h4 className="text-xs sm:text-sm font-bold text-white group-hover:text-amber-400 transition-colors line-clamp-1 mt-2.5">
                         {app.name}
@@ -448,13 +463,15 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
                       <p className="text-[11px] text-neutral-400 line-clamp-1 mt-0.5">
                         {devName}
                       </p>
-                      <div className="flex items-center gap-1.5 text-[11px] text-neutral-400 mt-1">
+                      <div className="flex items-center gap-1 text-[11px] text-neutral-400 mt-1 flex-wrap">
                         <span className="flex items-center gap-0.5 font-semibold text-neutral-200">
                           <span>{app.rating.toFixed(1)}</span>
                           <Star className="w-2.5 h-2.5 fill-amber-400 text-amber-400" />
                         </span>
                         <span>·</span>
-                        <span>{fileSize}</span>
+                        <span className={isPaid ? 'text-amber-400 font-bold' : 'text-emerald-400 font-medium'}>
+                          {isPaid ? priceLabel : 'Free'}
+                        </span>
                       </div>
                     </div>
 
@@ -469,7 +486,7 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
                       }`}
                     >
                       <Download className="w-3 h-3" />
-                      <span>{isCurrentlyDownloading ? 'Downloading' : 'Get APK'}</span>
+                      <span>{isCurrentlyDownloading ? 'Downloading' : (isPaid ? 'Buy APK' : 'Get APK')}</span>
                     </button>
                   </div>
                 );
@@ -605,6 +622,8 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
                   const isCurrentlyDownloading = downloadingId === app.id;
                   const rankNumber = index + 1;
                   const devName = app.submittedBy?.name || app.developer?.name || 'Publisher';
+                  const isPaid = app.pricing && app.pricing.type === 'paid' && (app.pricing.price || 0) > 0;
+                  const priceLabel = isPaid ? `${app.pricing?.price.toLocaleString()} ${app.pricing?.currency || 'UGX'}` : 'Free';
 
                   return (
                     <div
@@ -648,7 +667,7 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
                           <p className="text-[11px] text-neutral-400 truncate mt-0.5">
                             {app.category} · {devName}
                           </p>
-                          <div className="flex items-center gap-1.5 text-[11px] text-neutral-400 mt-0.5">
+                          <div className="flex items-center gap-1.5 text-[11px] text-neutral-400 mt-0.5 flex-wrap">
                             <span className="flex items-center gap-0.5 font-semibold text-neutral-200">
                               <span>{app.rating.toFixed(1)}</span>
                               <Star className="w-2.5 h-2.5 fill-amber-400 text-amber-400" />
@@ -656,7 +675,9 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
                             <span>·</span>
                             <span>{app.downloadsTotal.toLocaleString()} dl</span>
                             <span>·</span>
-                            <span>{fileSize}</span>
+                            <span className={isPaid ? 'text-amber-400 font-bold' : 'text-emerald-400 font-medium'}>
+                              {isPaid ? priceLabel : 'Free'}
+                            </span>
                           </div>
                         </div>
                       </div>
@@ -684,7 +705,7 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
                               : 'bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 active:scale-95'
                           }`}
                         >
-                          {isCurrentlyDownloading ? 'Streaming' : 'Install'}
+                          {isCurrentlyDownloading ? 'Streaming' : (isPaid ? 'Buy APK' : 'Install')}
                         </button>
                       </div>
                     </div>
@@ -722,6 +743,10 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
                   const fileSize = phoneRel?.fileSize || '32 MB';
                   const isCurrentlyDownloading = downloadingId === app.id;
                   const devName = app.submittedBy?.name || app.developer?.name || 'Publisher';
+                  const isPaid = app.pricing && app.pricing.type === 'paid' && (app.pricing.price || 0) > 0;
+                  const priceLabel = isPaid
+                    ? `${app.pricing?.currency || 'UGX'} ${app.pricing?.price.toLocaleString()}`
+                    : 'Free';
 
                   return (
                     <div
@@ -730,7 +755,7 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
                       className="group bg-neutral-900/60 hover:bg-neutral-900 border border-neutral-800/80 hover:border-amber-500/40 rounded-2xl p-3 transition-all cursor-pointer flex flex-col justify-between shadow-sm hover:shadow-lg hover:-translate-y-0.5"
                     >
                       <div>
-                        <div className="aspect-square w-full rounded-2xl bg-neutral-950 border border-neutral-800/80 overflow-hidden flex items-center justify-center p-2 shadow-xs group-hover:border-amber-500/30">
+                        <div className="relative aspect-square w-full rounded-2xl bg-neutral-950 border border-neutral-800/80 overflow-hidden flex items-center justify-center p-2 shadow-xs group-hover:border-amber-500/30">
                           <img
                             src={app.iconUrl || '/zuzustore-logo.png'}
                             alt={app.name}
@@ -740,6 +765,15 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
                               e.currentTarget.src = '/zuzustore-logo.png';
                             }}
                           />
+                          <span
+                            className={`absolute top-2 right-2 text-[10px] font-bold px-2 py-0.5 rounded-full backdrop-blur-md shadow-xs ${
+                              isPaid
+                                ? 'bg-amber-500 text-neutral-950 font-black'
+                                : 'bg-neutral-900/80 text-neutral-300 border border-neutral-700/60'
+                            }`}
+                          >
+                            {isPaid ? priceLabel : 'Free'}
+                          </span>
                         </div>
                         <h4 className="text-xs sm:text-sm font-bold text-white group-hover:text-amber-400 transition-colors line-clamp-1 mt-2.5">
                           {app.name}
@@ -768,7 +802,7 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
                         }`}
                       >
                         <Download className="w-3 h-3" />
-                        <span>{isCurrentlyDownloading ? 'Downloading' : 'Get APK'}</span>
+                        <span>{isCurrentlyDownloading ? 'Downloading' : (isPaid ? 'Buy APK' : 'Get APK')}</span>
                       </button>
                     </div>
                   );

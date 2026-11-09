@@ -205,9 +205,20 @@ export const AppDetailView: React.FC<AppDetailViewProps> = ({
               )}
             </div>
 
-            <h1 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
-              {app.name}
-            </h1>
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <h1 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
+                {app.name}
+              </h1>
+              {app.pricing && app.pricing.type === 'paid' && (app.pricing.price || 0) > 0 ? (
+                <span className="px-2.5 py-0.5 text-xs font-black uppercase tracking-wider bg-amber-400 text-neutral-950 rounded-full shadow-md">
+                  {app.pricing.price.toLocaleString()} {app.pricing.currency || 'UGX'}
+                </span>
+              ) : (
+                <span className="px-2.5 py-0.5 text-xs font-bold uppercase tracking-wider bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-full">
+                  100% Free
+                </span>
+              )}
+            </div>
             <p className="text-sm sm:text-base text-neutral-300 mt-1 leading-relaxed">
               {app.tagline}
             </p>
@@ -285,7 +296,11 @@ export const AppDetailView: React.FC<AppDetailViewProps> = ({
                 ) : (
                   <>
                     <Download className="w-4 h-4" />
-                    <span>Download {primaryRelease?.platform === 'Android TV' ? 'Smart TV' : 'Phone'} APK ({primaryRelease?.fileSize || '34 MB'})</span>
+                    <span>
+                      {app.pricing && app.pricing.type === 'paid' && (app.pricing.price || 0) > 0
+                        ? `Buy & Download APK (${app.pricing.price.toLocaleString()} ${app.pricing.currency || 'UGX'})`
+                        : `Download ${primaryRelease?.platform === 'Android TV' ? 'Smart TV' : 'Phone'} APK (${primaryRelease?.fileSize || '34 MB'})`}
+                    </span>
                   </>
                 )}
               </button>

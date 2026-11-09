@@ -81,6 +81,7 @@ export interface StoreApp {
   displayOrder?: number;
   isFeatured?: boolean;
   isPinnedToTop?: boolean;
+  pricing?: AppPriceConfig;
   approvalStatus?: 'approved' | 'pending_approval' | 'rejected';
   isTakenDown?: boolean;
   takedownReason?: string;
@@ -181,6 +182,101 @@ export interface DownloadProgressState {
   errorMessage?: string;
   blobUrl?: string;
   packageId?: string;
+}
+
+// ==========================================
+// MONETIZATION, COMMISSIONS & WALLET TYPES
+// ==========================================
+
+export type AppPricingType = 'free' | 'paid';
+
+export interface AppPriceConfig {
+  type: AppPricingType;
+  price: number; // 0 for free, > 0 for paid
+  currency: string; // 'UGX' | 'USD'
+  discountPrice?: number;
+}
+
+export interface AppSaleTransaction {
+  id: string;
+  appId: string;
+  appName: string;
+  appIcon?: string;
+  developerId: string;
+  developerEmail: string;
+  customerName: string;
+  customerEmail: string;
+  grossAmount: number;
+  adminCommissionPercent: number; // 6%
+  adminCommissionAmount: number; // gross * 0.06
+  developerNetAmount: number; // gross * 0.94
+  currency: string;
+  paymentMethod: string;
+  phoneNumber?: string;
+  livepayReference?: string;
+  livepayInternalRef?: string;
+  livepayNetwork?: string;
+  livepayStatus?: string;
+  status: 'completed' | 'refunded';
+  downloadToken?: string;
+  createdAt: string;
+}
+
+export interface DeveloperWallet {
+  developerId: string;
+  totalGrossRevenue: number;
+  totalAdminFeesPaid: number; // 6% sum
+  totalNetEarnings: number; // 94% sum
+  totalWithdrawn: number;
+  availableBalance: number;
+  pendingWithdrawals: number;
+  currency: string;
+  recentSales?: AppSaleTransaction[];
+  updatedAt: string;
+}
+
+export interface WithdrawalRequest {
+  id: string;
+  developerId: string;
+  developerName: string;
+  developerEmail: string;
+  amount: number; // Minimum 1000
+  currency: string;
+  payoutMethod: 'mobile_money_mtn' | 'mobile_money_airtel' | 'bank_transfer' | 'paypal';
+  payoutDetails: {
+    accountName: string;
+    accountNumber: string; // Phone number or Bank Account
+    bankName?: string;
+    swiftCode?: string;
+    notes?: string;
+  };
+  status: 'pending' | 'approved' | 'paid' | 'rejected';
+  payoutChannel?: 'livepay' | 'manual';
+  rejectionReason?: string;
+  transactionRef?: string;
+  livepayInternalRef?: string;
+  requestedAt: string;
+  processedAt?: string;
+  processedBy?: string;
+}
+
+export interface LivePayConfigStatus {
+  accountNumber: string;
+  active: boolean;
+  webhookUrl: string;
+  supportedCurrencies: string[];
+  supportedNetworks: string[];
+}
+
+export interface AdminFinancialSummary {
+  totalGrossSales: number;
+  totalAdminCommissionEarned: number; // 6%
+  totalDeveloperNetEarnings: number; // 94%
+  totalDisbursedWithdrawals: number;
+  totalPendingWithdrawals: number;
+  totalPaidTransactionsCount: number;
+  currency: string;
+  livepayConfig?: LivePayConfigStatus;
 }
 
 

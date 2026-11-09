@@ -1,0 +1,24 @@
+{
+  "dev-1794041845641-tjovs": {
+    "pendingWithdrawals": 0,
+    "totalGrossRevenue": 0,
+    "availableBalance": 0,
+    "totalWithdrawn": 0,
+    "currency": "UGX",
+    "totalAdminFeesPaid": 0,
+    "developerId": "dev-1794041845641-tjovs",
+    "totalNetEarnings": 0,
+    "updatedAt": "2026-11-08T10:21:07.440Z"
+  },
+  "dev-1794224084386-2nucd": {
+    "totalGrossRevenue": 35000,
+    "totalWithdrawn": 4500,
+    "totalNetEarnings": 32900,
+    "updatedAt": "2026-11-09T11:52:16.730Z",
+    "totalAdminFeesPaid": 2100,
+    "developerId": "dev-1794224084386-2nucd",
+    "pendingWithdrawals": 0,
+    "currency": "UGX",
+    "availableBalance": 28400
+  }
+}

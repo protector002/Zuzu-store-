@@ -73,6 +73,10 @@
           "type": "boolean",
           "description": "Whether explicitly pinned to the top of the catalog"
         },
+        "pricing": {
+          "type": "object",
+          "description": "Monetization model whether free or paid with price and currency"
+        },
         "createdAt": {
           "type": "string",
           "description": "ISO timestamp of creation"
@@ -173,6 +177,63 @@
         }
       },
       "required": ["message", "active"]
+    },
+    "AppSaleTransaction": {
+      "title": "AppSaleTransaction",
+      "description": "Sale record of paid application with 6 percent admin commission deduction",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "appId": { "type": "string" },
+        "appName": { "type": "string" },
+        "developerId": { "type": "string" },
+        "developerEmail": { "type": "string" },
+        "customerName": { "type": "string" },
+        "customerEmail": { "type": "string" },
+        "grossAmount": { "type": "number" },
+        "adminCommissionPercent": { "type": "number" },
+        "adminCommissionAmount": { "type": "number" },
+        "developerNetAmount": { "type": "number" },
+        "currency": { "type": "string" },
+        "paymentMethod": { "type": "string" },
+        "status": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "appId", "developerId", "grossAmount", "adminCommissionAmount", "developerNetAmount"]
+    },
+    "DeveloperWallet": {
+      "title": "DeveloperWallet",
+      "description": "Developer financial wallet balance, gross sales, 6 percent fee total, and net available balance",
+      "type": "object",
+      "properties": {
+        "developerId": { "type": "string" },
+        "totalGrossRevenue": { "type": "number" },
+        "totalAdminFeesPaid": { "type": "number" },
+        "totalNetEarnings": { "type": "number" },
+        "totalWithdrawn": { "type": "number" },
+        "availableBalance": { "type": "number" },
+        "pendingWithdrawals": { "type": "number" },
+        "currency": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["developerId", "availableBalance"]
+    },
+    "WithdrawalRequest": {
+      "title": "WithdrawalRequest",
+      "description": "Developer payout request with minimum 1000 threshold and mobile money or bank details",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "developerId": { "type": "string" },
+        "developerName": { "type": "string" },
+        "developerEmail": { "type": "string" },
+        "amount": { "type": "number" },
+        "currency": { "type": "string" },
+        "payoutMethod": { "type": "string" },
+        "status": { "type": "string" },
+        "requestedAt": { "type": "string" }
+      },
+      "required": ["id", "developerId", "amount", "payoutMethod", "status"]
     }
   },
   "firestore": {
@@ -193,6 +254,24 @@
         "$ref": "#/entities/AdminBroadcast"
       },
       "description": "Live broadcast notices issued by Super Admin"
+    },
+    "/sales/{saleId}": {
+      "schema": {
+        "$ref": "#/entities/AppSaleTransaction"
+      },
+      "description": "Financial sales ledger documenting gross revenue and 6 percent platform fees"
+    },
+    "/wallets/{walletId}": {
+      "schema": {
+        "$ref": "#/entities/DeveloperWallet"
+      },
+      "description": "Permanent developer wallet balances and net earnings"
+    },
+    "/withdrawals/{withdrawalId}": {
+      "schema": {
+        "$ref": "#/entities/WithdrawalRequest"
+      },
+      "description": "Developer payout requests subject to minimum 1000 threshold and admin approval"
     }
   }
 }
