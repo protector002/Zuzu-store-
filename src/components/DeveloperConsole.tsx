@@ -27,7 +27,8 @@ import {
   CheckCircle2,
   Receipt,
   CreditCard,
-  RefreshCw
+  RefreshCw,
+  Percent
 } from 'lucide-react';
 import { DeveloperUser, StoreApp, AdminBroadcast, DeveloperWallet, WithdrawalRequest, AppPricingType } from '../types';
 import {
@@ -38,7 +39,8 @@ import {
   fetchBroadcast,
   fetchDeveloperWallet,
   requestDeveloperWithdrawal,
-  fetchDeveloperWithdrawals
+  fetchDeveloperWithdrawals,
+  fetchStoreCommission
 } from '../services/api';
 
 interface DeveloperConsoleProps {
@@ -72,6 +74,9 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
   const [payoutSwiftCode, setPayoutSwiftCode] = useState('');
   const [payoutNotes, setPayoutNotes] = useState('');
   const [isSubmittingWithdrawal, setIsSubmittingWithdrawal] = useState(false);
+  // Live Platform Commission & Fee Rates (Dynamic)
+  const [adminCommissionPercent, setAdminCommissionPercent] = useState<number>(6);
+  const [feeRatePer1000, setFeeRatePer1000] = useState<number>(100);
 
   const isFrozen = developer.status === 'frozen';
   const isBanned = developer.status === 'banned';
@@ -139,6 +144,12 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
   useEffect(() => {
     loadMyApps();
     loadWallet();
+    fetchStoreCommission().then((data) => {
+      if (data) {
+        setAdminCommissionPercent(data.adminCommissionPercent ?? 6);
+        setFeeRatePer1000(data.withdrawalTransferFeePer1000 ?? 100);
+      }
+    });
     fetchBroadcast().then((b) => {
       if (b && b.active) setBroadcast(b);
     });
@@ -870,7 +881,7 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
                     {/* Commission Split Live Preview */}
                     <div className="p-3.5 bg-neutral-900/80 rounded-xl border border-neutral-800 space-y-2">
                       <div className="text-[11px] font-bold text-amber-400 uppercase tracking-wider">
-                        Real Money Earnings &amp; 6% Super Admin Commission Breakdown
+                        Real Money Earnings &amp; {adminCommissionPercent}% Super Admin Commission Breakdown
                       </div>
                       <div className="grid grid-cols-3 gap-2 pt-1 text-center">
                         <div className="p-2 bg-neutral-950 rounded-lg border border-neutral-800">
@@ -880,20 +891,20 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
                           </span>
                         </div>
                         <div className="p-2 bg-rose-950/30 rounded-lg border border-rose-900/40">
-                          <span className="text-[10px] text-rose-300 block">Super Admin 6% Fee</span>
+                          <span className="text-[10px] text-rose-300 block">Super Admin {adminCommissionPercent}% Fee</span>
                           <span className="text-xs font-black text-rose-400 font-mono">
-                            -{Math.round(price * 0.06).toLocaleString()} {currency}
+                            -{Math.round((price * adminCommissionPercent) / 100).toLocaleString()} {currency}
                           </span>
                         </div>
                         <div className="p-2 bg-emerald-950/30 rounded-lg border border-emerald-900/40">
-                          <span className="text-[10px] text-emerald-300 block">Your Net Take-Home (94%)</span>
+                          <span className="text-[10px] text-emerald-300 block">Your Net Take-Home ({Math.max(0, 100 - adminCommissionPercent)}%)</span>
                           <span className="text-xs font-black text-emerald-400 font-mono">
-                            {(price - Math.round(price * 0.06)).toLocaleString()} {currency}
+                            {(price - Math.round((price * adminCommissionPercent) / 100)).toLocaleString()} {currency}
                           </span>
                         </div>
                       </div>
                       <p className="text-[10px] text-neutral-400 pt-1">
-                        When users buy your app, you see the real money sold for and your net balance after the 6% Super Admin commission is credited directly to your Developer Wallet.
+                        When users buy your app, you see the real money sold for and your net balance after the {adminCommissionPercent}% Super Admin commission is credited directly to your Developer Wallet.
                       </p>
                     </div>
                   </div>
@@ -1375,6 +1386,46 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
                   </div>
                 )}
 
+                {/* Live Sending Network Charge & Net Handset Payout Calculation */}
+                {withdrawAmount >= 1000 && (
+                  <div className="p-3.5 bg-neutral-950/80 rounded-xl border border-neutral-800 space-y-2 animate-fade-in">
+                    <div className="flex items-center justify-between text-xs font-bold">
+                      <span className="text-neutral-300 flex items-center gap-1.5">
+                        <ArrowDownToLine className="w-3.5 h-3.5 text-amber-400" />
+                        <span>Withdrawal Payout &amp; Sending Fee Breakdown</span>
+                      </span>
+                      <span className="text-[10px] text-amber-400/90 font-mono">
+                        Rule: 100 UGX deducted per 1,000 UGX
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-center pt-1 font-mono text-xs">
+                      <div className="p-2 bg-neutral-900 rounded-lg border border-neutral-800">
+                        <span className="text-[10px] text-neutral-400 block font-sans">Requested Gross</span>
+                        <span className="font-bold text-white">
+                          {withdrawAmount.toLocaleString()} UGX
+                        </span>
+                      </div>
+                      <div className="p-2 bg-rose-950/30 rounded-lg border border-rose-900/40">
+                        <span className="text-[10px] text-rose-300 block font-sans">Network Sending Charge</span>
+                        <span className="font-bold text-rose-400">
+                          -{Math.round((withdrawAmount / 1000) * feeRatePer1000).toLocaleString()} UGX
+                        </span>
+                      </div>
+                      <div className="p-2 bg-emerald-950/40 rounded-lg border border-emerald-800/60">
+                        <span className="text-[10px] text-emerald-300 block font-sans font-bold">Net Cash to Handset</span>
+                        <span className="font-black text-emerald-400 text-sm">
+                          {Math.max(0, withdrawAmount - Math.round((withdrawAmount / 1000) * feeRatePer1000)).toLocaleString()} UGX
+                        </span>
+                      </div>
+                    </div>
+
+                    <p className="text-[10px] text-neutral-400">
+                      The 100 UGX sending charge on every 1,000 UGX is automatically deducted to cover mobile money network distribution costs when sending the payout to your phone number.
+                    </p>
+                  </div>
+                )}
+
                 <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-3 border-t border-neutral-800">
                   <span className="text-[11px] text-neutral-400">
                     Payouts are reviewed by Super Admin and credited directly to your destination account.
@@ -1418,7 +1469,9 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
                     <thead>
                       <tr className="border-b border-neutral-800 text-[11px] font-semibold text-neutral-400">
                         <th className="pb-2.5">Date</th>
-                        <th className="pb-2.5">Amount</th>
+                        <th className="pb-2.5">Gross Requested</th>
+                        <th className="pb-2.5">Sending Fee</th>
+                        <th className="pb-2.5">Net to Handset</th>
                         <th className="pb-2.5">Method</th>
                         <th className="pb-2.5">Account Details</th>
                         <th className="pb-2.5">Status</th>
@@ -1426,20 +1479,30 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-neutral-800/60">
-                      {withdrawals.map((w) => (
-                        <tr key={w.id} className="text-neutral-300">
-                          <td className="py-3 font-mono text-[11px] text-neutral-400">
-                            {new Date(w.requestedAt).toLocaleDateString()}
-                          </td>
-                          <td className="py-3 font-bold text-white font-mono">
-                            {w.amount.toLocaleString()} {w.currency}
-                          </td>
-                          <td className="py-3 capitalize">
-                            {w.payoutMethod.replace(/_/g, ' ')}
-                          </td>
-                          <td className="py-3 font-mono text-[11px]">
-                            {w.payoutDetails.accountName} • {w.payoutDetails.accountNumber}
-                          </td>
+                      {withdrawals.map((w) => {
+                        const fee = w.transferFee !== undefined ? w.transferFee : Math.round((w.amount / 1000) * 100);
+                        const netAmount = w.netPayoutAmount !== undefined ? w.netPayoutAmount : Math.max(0, w.amount - fee);
+
+                        return (
+                          <tr key={w.id} className="text-neutral-300">
+                            <td className="py-3 font-mono text-[11px] text-neutral-400 whitespace-nowrap">
+                              {new Date(w.requestedAt).toLocaleDateString()}
+                            </td>
+                            <td className="py-3 font-bold text-white font-mono whitespace-nowrap">
+                              {w.amount.toLocaleString()} {w.currency}
+                            </td>
+                            <td className="py-3 font-mono text-rose-400 text-xs whitespace-nowrap">
+                              -{fee.toLocaleString()} {w.currency}
+                            </td>
+                            <td className="py-3 font-black text-amber-300 font-mono text-sm whitespace-nowrap">
+                              {netAmount.toLocaleString()} {w.currency}
+                            </td>
+                            <td className="py-3 capitalize whitespace-nowrap">
+                              {w.payoutMethod.replace(/_/g, ' ')}
+                            </td>
+                            <td className="py-3 font-mono text-[11px]">
+                              {w.payoutDetails.accountName} • {w.payoutDetails.accountNumber}
+                            </td>
                           <td className="py-3">
                             {w.status === 'paid' || w.status === 'approved' ? (
                               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 text-[10px] font-bold">
@@ -1465,9 +1528,10 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
                             {w.transactionRef || '—'}
                           </td>
                         </tr>
-                      ))}
+                      );
+                    })}
                     </tbody>
-                  </table>
+                    </table>
                 </div>
               )}
             </div>

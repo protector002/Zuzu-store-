@@ -12,7 +12,8 @@ import {
   Package,
   ArrowRight,
   ExternalLink,
-  Code2
+  Code2,
+  Crown
 } from 'lucide-react';
 import { StoreApp, AdminUser, DeveloperUser } from '../types';
 import { getPhoneRelease, getTvRelease } from '../utils/editionHelper';
@@ -359,6 +360,27 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Right Action Zone */}
         <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
+          {/* Admin God Mode Button: ALWAYS visible on Mobile, Tablet & Desktop when admin is authenticated */}
+          {admin && (
+            <button
+              type="button"
+              onClick={() => onNavigate('upload')}
+              className={`group relative px-2 sm:px-3 py-1 sm:py-1.5 rounded-xl font-black flex items-center gap-1 sm:gap-1.5 transition-all duration-300 cursor-pointer overflow-hidden border whitespace-nowrap shrink-0 active:scale-95 ${
+                currentView === 'upload'
+                  ? 'bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 border-amber-300 text-neutral-950 shadow-md shadow-amber-500/30 ring-2 ring-amber-400/80'
+                  : 'bg-amber-950/40 hover:bg-amber-900/60 border-amber-500/60 text-amber-300 hover:text-white shadow-xs'
+              }`}
+              title="Super Admin God Mode & Platform Operations"
+              aria-label="Open Super Admin God Mode"
+            >
+              <Crown className="w-3.5 h-3.5 text-amber-400 group-hover:rotate-12 transition-transform fill-current shrink-0" />
+              <span className="text-[11px] sm:text-xs tracking-tight font-black">
+                <span className="hidden sm:inline">👑 God Mode</span>
+                <span className="sm:hidden">👑 God Mode</span>
+              </span>
+            </button>
+          )}
+
           {/* Become a Developer / Get Console Button (Visible & fully functional on Mobile, Tablet, and Desktop) */}
           <button
             type="button"

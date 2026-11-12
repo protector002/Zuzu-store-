@@ -47,7 +47,8 @@ import {
   DollarSign,
   ArrowDownToLine,
   Receipt,
-  CreditCard
+  CreditCard,
+  Percent
 } from 'lucide-react';
 import {
   StoreApp,
@@ -82,7 +83,8 @@ import {
   approveWithdrawalAdmin,
   rejectWithdrawalAdmin,
   disburseWithdrawalLivePay,
-  pingLivePay
+  pingLivePay,
+  updateAdminCommission
 } from '../services/api';
 import { isTvApp, isPhoneApp, filterPhoneApps, filterTvApps } from '../utils/editionHelper';
 
@@ -316,6 +318,12 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
   const [actioningLivePayWithdrawalId, setActioningLivePayWithdrawalId] = useState<string | null>(null);
   const [livepayCopyToast, setLivepayCopyToast] = useState(false);
 
+  // Commission Percentage State (Editable 0-100%)
+  const [commissionPercentInput, setCommissionPercentInput] = useState<string>('6');
+  const [transferFeePer1000Input, setTransferFeePer1000Input] = useState<string>('100');
+  const [isSavingCommission, setIsSavingCommission] = useState(false);
+  const [commissionToast, setCommissionToast] = useState<string | null>(null);
+
   // ==========================================
   // STOREFRONT & "FOR YOU" VISUAL CURATION STATE
   // ==========================================
@@ -434,10 +442,38 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
       setFinancials(data.financials);
       setAdminSales(data.recentSales || []);
       setAdminWithdrawals(data.withdrawals || []);
+      if (data.financials?.adminCommissionPercent !== undefined) {
+        setCommissionPercentInput(String(data.financials.adminCommissionPercent));
+      }
+      if (data.financials?.withdrawalTransferFeePer1000 !== undefined) {
+        setTransferFeePer1000Input(String(data.financials.withdrawalTransferFeePer1000));
+      }
     } catch (e) {
       console.warn('Failed to load platform financials:', e);
     } finally {
       setIsLoadingFinancials(false);
+    }
+  };
+
+  const handleSaveCommissionRate = async (newPercent?: number) => {
+    const targetPercent = newPercent !== undefined ? newPercent : Number(commissionPercentInput);
+    if (isNaN(targetPercent) || targetPercent < 0 || targetPercent > 100) {
+      setErrorMessage('Super Admin commission rate must be between 0% and 100%.');
+      return;
+    }
+    const targetFee = Number(transferFeePer1000Input) || 100;
+
+    setIsSavingCommission(true);
+    try {
+      const res = await updateAdminCommission(targetPercent, targetFee);
+      setCommissionPercentInput(String(targetPercent));
+      setCommissionToast(res.message || `Commission rate successfully set to ${targetPercent}%!`);
+      setTimeout(() => setCommissionToast(null), 4000);
+      await loadFinancials();
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Failed to update commission rate.');
+    } finally {
+      setIsSavingCommission(false);
     }
   };
 
@@ -1243,74 +1279,76 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
           </p>
         </div>
 
-        {/* Tab switcher */}
-        <div className="flex items-center gap-1.5 p-1 bg-neutral-900 border border-neutral-800 rounded-xl self-start sm:self-auto">
-          <button
-            onClick={() => setActiveTab('upload-new')}
-            className={`px-3.5 py-2 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 ${
-              activeTab === 'upload-new'
-                ? 'bg-neutral-800 text-white shadow-sm'
-                : 'text-neutral-400 hover:text-neutral-200'
-            }`}
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span>Upload New APK</span>
-          </button>
-          <button
-            onClick={() => setActiveTab('update-existing')}
-            className={`px-3.5 py-2 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 ${
-              activeTab === 'update-existing'
-                ? 'bg-neutral-800 text-white shadow-sm'
-                : 'text-neutral-400 hover:text-neutral-200'
-            }`}
-          >
-            <Layers className="w-3.5 h-3.5" />
-            <span>Add Version Release</span>
-          </button>
-          <button
-            onClick={() => setActiveTab('manage')}
-            className={`px-3.5 py-2 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 ${
-              activeTab === 'manage'
-                ? 'bg-neutral-800 text-white shadow-sm'
-                : 'text-neutral-400 hover:text-neutral-200'
-            }`}
-          >
-            <span>Live Catalog ({apps.length})</span>
-          </button>
-          <button
-            onClick={() => {
-              setActiveTab('submissions');
-              loadPending();
-            }}
-            className={`px-3.5 py-2 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 ${
-              activeTab === 'submissions'
-                ? 'bg-gradient-to-r from-amber-500 to-amber-600 text-neutral-950 shadow-md'
-                : 'text-neutral-400 hover:text-white'
-            }`}
-          >
-            <Clock className="w-3.5 h-3.5" />
-            <span>Review Queue</span>
-            {pendingSubmissions.length > 0 && (
-              <span className="ml-0.5 px-1.5 py-0.2 bg-red-600 text-white font-black text-[10px] rounded-full animate-pulse shadow">
-                {pendingSubmissions.length}
-              </span>
-            )}
-          </button>
-          <button
-            onClick={() => {
-              setActiveTab('god-mode');
-              loadDevelopers();
-              loadBroadcastData();
-            }}
-            className={`px-3.5 py-2 text-xs font-black rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
-              activeTab === 'god-mode'
-                ? 'bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 text-neutral-950 shadow-lg shadow-amber-500/20'
-                : 'text-amber-400 hover:text-amber-300 hover:bg-neutral-800'
-            }`}
-          >
-            <Crown className="w-3.5 h-3.5 text-amber-500 shrink-0 fill-current" />
-            <span>God Mode &amp; Developers</span>
-          </button>
+        {/* Tab switcher: Fully responsive & horizontally scrollable on all mobile viewports */}
+        <div className="w-full sm:w-auto overflow-x-auto pb-1 sm:pb-0 scrollbar-none">
+          <div className="flex items-center gap-1.5 p-1 bg-neutral-900 border border-neutral-800 rounded-xl min-w-max">
+            <button
+              onClick={() => setActiveTab('upload-new')}
+              className={`px-3 sm:px-3.5 py-2 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
+                activeTab === 'upload-new'
+                  ? 'bg-neutral-800 text-white shadow-sm'
+                  : 'text-neutral-400 hover:text-neutral-200'
+              }`}
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Upload New APK</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('update-existing')}
+              className={`px-3 sm:px-3.5 py-2 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
+                activeTab === 'update-existing'
+                  ? 'bg-neutral-800 text-white shadow-sm'
+                  : 'text-neutral-400 hover:text-neutral-200'
+              }`}
+            >
+              <Layers className="w-3.5 h-3.5" />
+              <span>Add Version Release</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('manage')}
+              className={`px-3 sm:px-3.5 py-2 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
+                activeTab === 'manage'
+                  ? 'bg-neutral-800 text-white shadow-sm'
+                  : 'text-neutral-400 hover:text-neutral-200'
+              }`}
+            >
+              <span>Live Catalog ({apps.length})</span>
+            </button>
+            <button
+              onClick={() => {
+                setActiveTab('submissions');
+                loadPending();
+              }}
+              className={`px-3 sm:px-3.5 py-2 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
+                activeTab === 'submissions'
+                  ? 'bg-gradient-to-r from-amber-500 to-amber-600 text-neutral-950 shadow-md'
+                  : 'text-neutral-400 hover:text-white'
+              }`}
+            >
+              <Clock className="w-3.5 h-3.5" />
+              <span>Review Queue</span>
+              {pendingSubmissions.length > 0 && (
+                <span className="ml-0.5 px-1.5 py-0.2 bg-red-600 text-white font-black text-[10px] rounded-full animate-pulse shadow">
+                  {pendingSubmissions.length}
+                </span>
+              )}
+            </button>
+            <button
+              onClick={() => {
+                setActiveTab('god-mode');
+                loadDevelopers();
+                loadBroadcastData();
+              }}
+              className={`px-3.5 sm:px-4 py-2 text-xs font-black rounded-lg transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 ${
+                activeTab === 'god-mode'
+                  ? 'bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 text-neutral-950 shadow-lg shadow-amber-500/30 ring-1 ring-amber-300'
+                  : 'text-amber-300 bg-amber-950/40 hover:bg-amber-900/60 border border-amber-500/40'
+              }`}
+            >
+              <Crown className="w-3.5 h-3.5 text-amber-400 shrink-0 fill-current" />
+              <span>👑 God Mode &amp; Developers</span>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -3842,18 +3880,132 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
               </div>
             </div>
 
+            {/* COMMISSION RATE CONFIGURATION CARD (Configurable % and 100/1000 Sending Fee) */}
+            <div className="p-4 sm:p-5 bg-gradient-to-r from-neutral-950 via-amber-950/20 to-neutral-950 border border-amber-500/40 rounded-2xl shadow-xl space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 rounded-xl bg-amber-500/20 text-amber-300 border border-amber-500/40 shrink-0">
+                    <Percent className="w-5 h-5 text-amber-400" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h4 className="text-sm font-bold text-white">Super Admin Commission Percentage</h4>
+                      <span className="px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-300 text-[10px] font-bold">
+                        Current Rate: {commissionPercentInput}%
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-neutral-400 mt-0.5">
+                      Set your exact cut on every app sold. Also configures the mobile money sending network charge (100 UGX per 1,000 UGX).
+                    </p>
+                  </div>
+                </div>
+
+                {commissionToast && (
+                  <div className="px-3 py-1.5 rounded-xl bg-emerald-950/60 border border-emerald-800 text-emerald-300 text-xs font-semibold flex items-center gap-1.5 animate-fade-in self-start sm:self-auto">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                    <span>{commissionToast}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Commission Editor Form & Quick Selectors */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-neutral-800/80">
+                {/* Commission % Input */}
+                <div className="space-y-2">
+                  <label className="text-xs font-semibold text-neutral-300 flex items-center justify-between">
+                    <span>Admin Commission Percentage (0% - 100%)</span>
+                    <span className="text-amber-400 font-mono font-bold text-xs">{commissionPercentInput}%</span>
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <div className="relative flex-1">
+                      <input
+                        type="number"
+                        min="0"
+                        max="100"
+                        step="0.5"
+                        value={commissionPercentInput}
+                        onChange={(e) => setCommissionPercentInput(e.target.value)}
+                        placeholder="e.g. 6"
+                        className="w-full px-3.5 py-2.5 bg-neutral-900 border border-neutral-700 focus:border-amber-400 rounded-xl text-sm font-bold text-white outline-hidden pr-8 font-mono"
+                      />
+                      <span className="absolute right-3 top-2.5 text-neutral-400 font-bold text-sm">%</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleSaveCommissionRate()}
+                      disabled={isSavingCommission}
+                      className="px-4 py-2.5 bg-gradient-to-r from-amber-400 via-amber-500 to-orange-500 hover:from-amber-300 hover:to-orange-400 text-neutral-950 font-black text-xs rounded-xl shadow-md transition-all cursor-pointer whitespace-nowrap disabled:opacity-50 flex items-center gap-1.5"
+                    >
+                      {isSavingCommission ? (
+                        <>
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                          <span>Saving...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Check className="w-3.5 h-3.5 stroke-[3]" />
+                          <span>Save Rate</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  {/* Quick percentage chips */}
+                  <div className="flex items-center gap-1.5 flex-wrap pt-1">
+                    <span className="text-[11px] text-neutral-400 font-medium mr-1">Quick Select:</span>
+                    {[3, 5, 6, 8, 10, 12, 15, 20].map((pct) => (
+                      <button
+                        key={pct}
+                        type="button"
+                        onClick={() => {
+                          setCommissionPercentInput(String(pct));
+                          handleSaveCommissionRate(pct);
+                        }}
+                        className={`px-2 py-0.5 rounded-lg text-[11px] font-bold border transition-all cursor-pointer ${
+                          Number(commissionPercentInput) === pct
+                            ? 'bg-amber-400 text-neutral-950 border-amber-300 shadow-xs'
+                            : 'bg-neutral-900 text-neutral-300 hover:text-white border-neutral-700 hover:border-amber-400'
+                        }`}
+                      >
+                        {pct}%
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Network Sending Charge Preview */}
+                <div className="p-3.5 rounded-xl bg-neutral-900/90 border border-neutral-800 space-y-1.5">
+                  <div className="text-xs font-bold text-white flex items-center gap-1.5">
+                    <ArrowDownToLine className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Developer Withdrawal Sending Network Charge</span>
+                  </div>
+                  <p className="text-[11px] text-neutral-400 leading-relaxed">
+                    A sending network charge of <strong className="text-amber-300 font-mono">100 UGX</strong> is automatically deducted on every <strong className="text-amber-300 font-mono">1,000 UGX</strong> withdrawn by a developer to pay mobile money handset routing fees.
+                  </p>
+                  <div className="flex items-center gap-3 pt-1 text-[11px] text-neutral-300 font-mono">
+                    <span className="bg-neutral-950 px-2 py-1 rounded border border-neutral-800">
+                      1,000 UGX → -100 fee (900 net)
+                    </span>
+                    <span className="bg-neutral-950 px-2 py-1 rounded border border-neutral-800">
+                      5,000 UGX → -500 fee (4,500 net)
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             {/* Financial Overview Cards */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
               <div className="p-4 bg-gradient-to-br from-amber-950/40 via-neutral-950 to-neutral-950 border border-amber-500/40 rounded-2xl shadow-lg">
                 <span className="text-[11px] font-semibold uppercase tracking-wider text-amber-400 block">
-                  ★ Super Admin 6% Profit
+                  ★ Super Admin ({commissionPercentInput}%) Profit
                 </span>
                 <div className="text-2xl font-black text-amber-300 mt-1 tabular-nums">
                   {(financials?.totalAdminCommissionEarned || 0).toLocaleString()}{' '}
                   <span className="text-xs font-mono text-amber-400/80">{financials?.currency || 'UGX'}</span>
                 </div>
                 <div className="text-[10px] text-amber-400/90 mt-1">
-                  6% commission cut on all store sales
+                  {commissionPercentInput}% commission cut on all store sales
                 </div>
               </div>
 
@@ -3872,7 +4024,7 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
 
               <div className="p-4 bg-emerald-950/20 border border-emerald-900/40 rounded-2xl">
                 <span className="text-[11px] font-semibold uppercase tracking-wider text-emerald-400 block">
-                  Developer Net Earnings (94%)
+                  Developer Net Earnings ({Math.max(0, 100 - Number(commissionPercentInput))}%)
                 </span>
                 <div className="text-xl font-black text-emerald-300 mt-1 tabular-nums">
                   {(financials?.totalDeveloperNetEarnings || 0).toLocaleString()}{' '}
@@ -3926,7 +4078,9 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
                       <tr className="border-b border-neutral-800 text-[11px] font-semibold text-neutral-400 bg-neutral-900/60">
                         <th className="p-3">Requested Date</th>
                         <th className="p-3">Developer</th>
-                        <th className="p-3">Amount</th>
+                        <th className="p-3">Requested Gross</th>
+                        <th className="p-3">Sending Fee</th>
+                        <th className="p-3">Net Disbursed</th>
                         <th className="p-3">Payout Method</th>
                         <th className="p-3">Account Details</th>
                         <th className="p-3">Status</th>
@@ -3937,20 +4091,30 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
                       {adminWithdrawals.map((w) => {
                         const isPending = w.status === 'pending';
                         const isActioning = actioningWithdrawalId === w.id;
+                        const fee = w.transferFee !== undefined ? w.transferFee : Math.round((w.amount / 1000) * 100);
+                        const netAmount = w.netPayoutAmount !== undefined ? w.netPayoutAmount : Math.max(0, w.amount - fee);
 
                         return (
                           <tr key={w.id} className="text-neutral-300 hover:bg-neutral-900/40 transition-colors">
-                            <td className="p-3 font-mono text-[11px] text-neutral-400">
+                            <td className="p-3 font-mono text-[11px] text-neutral-400 whitespace-nowrap">
                               {new Date(w.requestedAt).toLocaleDateString()}
                             </td>
                             <td className="p-3">
-                              <div className="font-bold text-white">{w.developerName}</div>
+                              <div className="font-bold text-white whitespace-nowrap">{w.developerName}</div>
                               <div className="text-[10px] text-neutral-400 font-mono">{w.developerEmail}</div>
                             </td>
-                            <td className="p-3 font-bold text-amber-300 font-mono text-sm">
+                            <td className="p-3 font-bold text-white font-mono text-xs whitespace-nowrap">
                               {w.amount.toLocaleString()} {w.currency}
                             </td>
-                            <td className="p-3 capitalize font-medium">
+                            <td className="p-3 font-mono text-xs text-rose-400 whitespace-nowrap">
+                              -{fee.toLocaleString()} {w.currency}
+                              <span className="block text-[9px] text-neutral-500 font-sans">100/1000 fee</span>
+                            </td>
+                            <td className="p-3 font-black text-amber-300 font-mono text-sm whitespace-nowrap">
+                              {netAmount.toLocaleString()} {w.currency}
+                              <span className="block text-[9px] text-emerald-400 font-sans">To handset</span>
+                            </td>
+                            <td className="p-3 capitalize font-medium whitespace-nowrap">
                               {w.payoutMethod.replace(/_/g, ' ')}
                             </td>
                             <td className="p-3 font-mono text-[11px]">
