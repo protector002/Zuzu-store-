@@ -1,24 +1,68 @@
 {
   "dev-1794041845641-tjovs": {
-    "pendingWithdrawals": 0,
-    "totalGrossRevenue": 0,
-    "availableBalance": 0,
-    "totalWithdrawn": 0,
-    "currency": "UGX",
-    "totalAdminFeesPaid": 0,
     "developerId": "dev-1794041845641-tjovs",
+    "updatedAt": "2026-11-08T10:21:07.440Z",
+    "pendingWithdrawals": 0,
+    "currency": "UGX",
     "totalNetEarnings": 0,
-    "updatedAt": "2026-11-08T10:21:07.440Z"
+    "totalAdminFeesPaid": 0,
+    "totalWithdrawn": 0,
+    "availableBalance": 0,
+    "totalGrossRevenue": 0
   },
   "dev-1794224084386-2nucd": {
-    "totalGrossRevenue": 35000,
     "totalWithdrawn": 4500,
-    "totalNetEarnings": 32900,
-    "updatedAt": "2026-11-09T11:52:16.730Z",
+    "totalGrossRevenue": 35000,
     "totalAdminFeesPaid": 2100,
+    "updatedAt": "2026-11-09T11:52:16.730Z",
+    "currency": "UGX",
     "developerId": "dev-1794224084386-2nucd",
     "pendingWithdrawals": 0,
-    "currency": "UGX",
+    "totalNetEarnings": 32900,
     "availableBalance": 28400
+  },
+  "dev-1794235751906-4zz5s": {
+    "availableBalance": 0,
+    "currency": "UGX",
+    "totalNetEarnings": 0,
+    "totalAdminFeesPaid": 0,
+    "developerId": "dev-1794235751906-4zz5s",
+    "updatedAt": "2026-11-09T14:49:14.094Z",
+    "totalWithdrawn": 0,
+    "totalGrossRevenue": 0,
+    "pendingWithdrawals": 0
+  },
+  "dev-1794238697139-n0g3u": {
+    "totalNetEarnings": 0,
+    "totalWithdrawn": 0,
+    "updatedAt": "2026-11-09T15:38:20.202Z",
+    "currency": "UGX",
+    "totalAdminFeesPaid": 0,
+    "availableBalance": 0,
+    "totalGrossRevenue": 0,
+    "developerId": "dev-1794238697139-n0g3u",
+    "pendingWithdrawals": 0
+  },
+  "dev-1794475972832-4m44r": {
+    "pendingWithdrawals": 0,
+    "currency": "UGX",
+    "developerId": "dev-1794475972832-4m44r",
+    "totalGrossRevenue": 0,
+    "totalAdminFeesPaid": 0,
+    "totalNetEarnings": 0,
+    "updatedAt": "2026-11-12T09:32:54.958Z",
+    "totalWithdrawn": 0,
+    "availableBalance": 0
+  },
+  "dev-1794476608250-raonw": {
+    "developerId": "dev-1794476608250-raonw",
+    "totalGrossRevenue": 0,
+    "totalAdminFeesPaid": 0,
+    "totalNetEarnings": 0,
+    "totalWithdrawn": 0,
+    "availableBalance": 0,
+    "pendingWithdrawals": 0,
+    "currency": "UGX",
+    "updatedAt": "2026-11-12T09:43:28.261Z"
   }
 }

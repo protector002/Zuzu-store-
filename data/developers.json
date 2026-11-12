@@ -51,5 +51,41 @@
     "passwordHash": "18f6094f45aba3f18c012260fb6e9b25ef33ea94f034d0fc765991dba8c85e3e",
     "status": "active",
     "createdAt": "2026-11-09T11:34:44.386Z"
+  },
+  "dev-1794238697139-n0g3u": {
+    "id": "dev-1794238697139-n0g3u",
+    "passwordHash": "3144d7cb23f163e7db236f6982f83ac30c35902a8113402115915f14f140d1de",
+    "name": "Bonane Kabene",
+    "companyName": "Kreative Minds",
+    "status": "active",
+    "createdAt": "2026-11-09T15:38:17.139Z",
+    "email": "bonanekabene67@gmail.com",
+    "updatedAt": "2026-11-09T15:38:19.472Z"
+  },
+  "dev-1794247485074-hdqfg": {
+    "status": "active",
+    "updatedAt": "2026-11-11T15:01:22.123Z",
+    "createdAt": "2026-11-09T18:04:45.074Z",
+    "email": "kintujoshua123@gmail.com",
+    "name": "Bold",
+    "id": "dev-1794247485074-hdqfg"
+  },
+  "dev-1794475972832-4m44r": {
+    "email": "ugandansoul1@gmail.com",
+    "status": "active",
+    "updatedAt": "2026-11-12T09:32:53.296Z",
+    "name": "CeoSmithDev",
+    "companyName": "CEO SMITH APKS",
+    "createdAt": "2026-11-12T09:32:52.833Z",
+    "passwordHash": "7db593a94ee6b20da1c82581e8327c0cecd4d30c0d4dcbf086d452092c4b2473",
+    "id": "dev-1794475972832-4m44r"
+  },
+  "dev-1794476608250-raonw": {
+    "id": "dev-1794476608250-raonw",
+    "name": "Audit Tester",
+    "email": "testdev_1794476608098@example.com",
+    "passwordHash": "18f6094f45aba3f18c012260fb6e9b25ef33ea94f034d0fc765991dba8c85e3e",
+    "status": "active",
+    "createdAt": "2026-11-12T09:43:28.250Z"
   }
 }

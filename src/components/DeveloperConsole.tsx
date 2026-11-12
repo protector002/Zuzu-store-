@@ -67,11 +67,9 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
 
   // Withdrawal Request Form State
   const [withdrawAmount, setWithdrawAmount] = useState<number>(1000);
-  const [withdrawMethod, setWithdrawMethod] = useState<'mobile_money_mtn' | 'mobile_money_airtel' | 'bank_transfer' | 'paypal'>('mobile_money_mtn');
+  const [withdrawMethod, setWithdrawMethod] = useState<'mobile_money_mtn' | 'mobile_money_airtel'>('mobile_money_mtn');
   const [payoutAccountName, setPayoutAccountName] = useState('');
   const [payoutAccountNumber, setPayoutAccountNumber] = useState('');
-  const [payoutBankName, setPayoutBankName] = useState('');
-  const [payoutSwiftCode, setPayoutSwiftCode] = useState('');
   const [payoutNotes, setPayoutNotes] = useState('');
   const [isSubmittingWithdrawal, setIsSubmittingWithdrawal] = useState(false);
   // Live Platform Commission & Fee Rates (Dynamic)
@@ -303,8 +301,6 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
         payoutDetails: {
           accountName: payoutAccountName.trim(),
           accountNumber: payoutAccountNumber.trim(),
-          bankName: payoutBankName.trim() || undefined,
-          swiftCode: payoutSwiftCode.trim() || undefined,
           notes: payoutNotes.trim() || undefined
         },
         currency: 'UGX'
@@ -1310,10 +1306,8 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
                       onChange={(e) => setWithdrawMethod(e.target.value as any)}
                       className="w-full bg-neutral-950 border border-neutral-800 focus:border-amber-500 rounded-xl py-2.5 px-3.5 text-xs text-white outline-none"
                     >
-                      <option value="mobile_money_mtn">MTN Mobile Money (⚡ Instant LivePay)</option>
-                      <option value="mobile_money_airtel">Airtel Money (⚡ Instant LivePay)</option>
-                      <option value="bank_transfer">Bank Wire Transfer</option>
-                      <option value="paypal">PayPal</option>
+                      <option value="mobile_money_mtn">MTN Mobile Money (⚡ Instant LivePay Payout)</option>
+                      <option value="mobile_money_airtel">Airtel Money (⚡ Instant LivePay Payout)</option>
                     </select>
                   </div>
                 </div>
@@ -1336,55 +1330,18 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
 
                   <div>
                     <label className="block text-xs font-semibold text-neutral-300 mb-1.5">
-                      {withdrawMethod === 'mobile_money_mtn' || withdrawMethod === 'mobile_money_airtel'
-                        ? 'Mobile Money Phone Number'
-                        : withdrawMethod === 'paypal'
-                        ? 'PayPal Email'
-                        : 'Bank Account Number'}{' '}
-                      <span className="text-red-400">*</span>
+                      {withdrawMethod === 'mobile_money_mtn' ? 'MTN Mobile Money Phone Number' : 'Airtel Money Phone Number'} <span className="text-red-400">*</span>
                     </label>
                     <input
-                      type="text"
+                      type="tel"
                       required
                       value={payoutAccountNumber}
                       onChange={(e) => setPayoutAccountNumber(e.target.value)}
-                      placeholder={
-                        withdrawMethod === 'mobile_money_mtn' || withdrawMethod === 'mobile_money_airtel'
-                          ? '0770000000 or +256...'
-                          : withdrawMethod === 'paypal'
-                          ? 'user@example.com'
-                          : '1234567890'
-                      }
+                      placeholder="e.g. 0770 000 000 or 0750 000 000"
                       className="w-full bg-neutral-950 border border-neutral-800 focus:border-amber-500 rounded-xl py-2 px-3 text-xs text-white outline-none font-mono"
                     />
                   </div>
                 </div>
-
-                {/* Optional Bank Fields */}
-                {withdrawMethod === 'bank_transfer' && (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1 animate-fade-in">
-                    <div>
-                      <label className="block text-xs font-semibold text-neutral-300 mb-1.5">Bank Name</label>
-                      <input
-                        type="text"
-                        value={payoutBankName}
-                        onChange={(e) => setPayoutBankName(e.target.value)}
-                        placeholder="e.g. Stanbic Bank Uganda"
-                        className="w-full bg-neutral-950 border border-neutral-800 focus:border-amber-500 rounded-xl py-2 px-3 text-xs text-white outline-none"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold text-neutral-300 mb-1.5">SWIFT / Branch Code</label>
-                      <input
-                        type="text"
-                        value={payoutSwiftCode}
-                        onChange={(e) => setPayoutSwiftCode(e.target.value)}
-                        placeholder="e.g. SBICUGKX"
-                        className="w-full bg-neutral-950 border border-neutral-800 focus:border-amber-500 rounded-xl py-2 px-3 text-xs text-white outline-none font-mono"
-                      />
-                    </div>
-                  </div>
-                )}
 
                 {/* Live Sending Network Charge & Net Handset Payout Calculation */}
                 {withdrawAmount >= 1000 && (

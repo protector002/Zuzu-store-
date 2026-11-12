@@ -241,45 +241,34 @@ export const PurchaseModal: React.FC<PurchaseModalProps> = ({ app, onClose, onSu
 
             {/* Payment Method Selector */}
             <div className="space-y-2.5">
-              <label className="block text-xs font-bold text-neutral-300">Select Payment Method</label>
-              <div className="grid grid-cols-3 gap-2.5">
+              <label className="block text-xs font-bold text-neutral-300">Select Mobile Money Network</label>
+              <div className="grid grid-cols-2 gap-3">
                 <button
                   type="button"
                   onClick={() => setPaymentMethod('mtn')}
-                  className={`p-3 rounded-xl border text-center transition-all cursor-pointer flex flex-col items-center gap-1.5 ${
+                  className={`p-3.5 rounded-xl border text-center transition-all cursor-pointer flex flex-col items-center gap-1.5 ${
                     paymentMethod === 'mtn'
-                      ? 'bg-amber-950/60 border-amber-500 text-amber-300 font-bold shadow-md'
+                      ? 'bg-amber-950/60 border-amber-500 text-amber-300 font-bold shadow-md ring-1 ring-amber-500/50'
                       : 'bg-neutral-950 hover:bg-neutral-800/60 border-neutral-800 text-neutral-400'
                   }`}
                 >
-                  <Smartphone className="w-4 h-4 text-amber-400" />
-                  <span className="text-[11px]">MTN MoMo</span>
+                  <Smartphone className="w-5 h-5 text-amber-400" />
+                  <span className="text-xs font-bold">MTN Mobile Money</span>
+                  <span className="text-[10px] text-amber-400/80 font-mono">⚡ Instant LivePay Prompt</span>
                 </button>
 
                 <button
                   type="button"
                   onClick={() => setPaymentMethod('airtel')}
-                  className={`p-3 rounded-xl border text-center transition-all cursor-pointer flex flex-col items-center gap-1.5 ${
+                  className={`p-3.5 rounded-xl border text-center transition-all cursor-pointer flex flex-col items-center gap-1.5 ${
                     paymentMethod === 'airtel'
-                      ? 'bg-rose-950/60 border-rose-500 text-rose-300 font-bold shadow-md'
+                      ? 'bg-rose-950/60 border-rose-500 text-rose-300 font-bold shadow-md ring-1 ring-rose-500/50'
                       : 'bg-neutral-950 hover:bg-neutral-800/60 border-neutral-800 text-neutral-400'
                   }`}
                 >
-                  <Smartphone className="w-4 h-4 text-rose-400" />
-                  <span className="text-[11px]">Airtel Money</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setPaymentMethod('card')}
-                  className={`p-3 rounded-xl border text-center transition-all cursor-pointer flex flex-col items-center gap-1.5 ${
-                    paymentMethod === 'card'
-                      ? 'bg-cyan-950/60 border-cyan-500 text-cyan-300 font-bold shadow-md'
-                      : 'bg-neutral-950 hover:bg-neutral-800/60 border-neutral-800 text-neutral-400'
-                  }`}
-                >
-                  <CreditCard className="w-4 h-4 text-cyan-400" />
-                  <span className="text-[11px]">Card Online</span>
+                  <Smartphone className="w-5 h-5 text-rose-400" />
+                  <span className="text-xs font-bold">Airtel Money</span>
+                  <span className="text-[10px] text-rose-400/80 font-mono">⚡ Instant LivePay Prompt</span>
                 </button>
               </div>
 
@@ -308,11 +297,11 @@ export const PurchaseModal: React.FC<PurchaseModalProps> = ({ app, onClose, onSu
               )}
             </div>
 
-            {/* Platform Guarantee & 6% Commission Notice */}
+            {/* Platform Guarantee & LivePay Mobile Money Notice */}
             <div className="p-3 bg-neutral-950 rounded-xl border border-neutral-800/80 text-[11px] text-neutral-400 flex items-center gap-2">
               <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
               <span>
-                Processed securely via <strong>LivePay Uganda</strong>. 6% platform fee retained by Super Admin, 94% credited to developer wallet.
+                Processed securely via <strong>LivePay Uganda Mobile Money</strong> (Account: LP260805074398). Instant automatic unlock upon PIN verification.
               </span>
             </div>
 
