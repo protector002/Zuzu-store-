@@ -173,6 +173,9 @@ export interface DeveloperUser {
   status?: DeveloperStatus;
   banReason?: string;
   bannedAt?: string;
+  agreementsAccepted?: boolean;
+  agreementsAcceptedAt?: string;
+  agreementsVersion?: string;
   createdAt: string;
 }
 

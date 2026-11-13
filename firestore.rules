@@ -56,6 +56,11 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    // Protector Technologies user & developer agreement acceptances
+    match /agreements/{acceptanceId} {
+      allow read, write: if true;
+    }
+
     match /test/{docId} {
       allow read, write: if true;
     }

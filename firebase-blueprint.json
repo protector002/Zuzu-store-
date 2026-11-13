@@ -126,6 +126,18 @@
           "type": "string",
           "description": "ISO timestamp when moderated"
         },
+        "agreementsAccepted": {
+          "type": "boolean",
+          "description": "Whether developer accepted Protector Technologies Developer and Payment Agreements"
+        },
+        "agreementsAcceptedAt": {
+          "type": "string",
+          "description": "ISO timestamp when developer accepted agreements"
+        },
+        "agreementsVersion": {
+          "type": "string",
+          "description": "Version identifier of accepted terms and payment agreements"
+        },
         "createdAt": {
           "type": "string",
           "description": "ISO timestamp of registration"
@@ -257,6 +269,20 @@
         "completedAt": { "type": "string" }
       },
       "required": ["id", "appId", "sellerId", "askingPrice", "adminFeePercent", "status"]
+    },
+    "AgreementAcceptance": {
+      "title": "AgreementAcceptance",
+      "description": "Audit record of user or developer acceptance of Protector Technologies Terms, Conditions, and Payment Agreements",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "role": { "type": "string", "enum": ["user", "buyer", "developer"] },
+        "version": { "type": "string" },
+        "developerId": { "type": "string" },
+        "email": { "type": "string" },
+        "acceptedAt": { "type": "string" }
+      },
+      "required": ["id", "role", "version", "acceptedAt"]
     }
   },
   "firestore": {
@@ -301,6 +327,12 @@
         "$ref": "#/entities/AppTransferListing"
       },
       "description": "Developer-to-developer paid app ownership sale listings and completed ownership transfers"
+    },
+    "/agreements/{acceptanceId}": {
+      "schema": {
+        "$ref": "#/entities/AgreementAcceptance"
+      },
+      "description": "User and developer acceptances of Protector Technologies Terms and Payment Agreements"
     }
   }
 }

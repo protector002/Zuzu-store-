@@ -2,12 +2,14 @@ import React, { useState } from 'react';
 import { X, Code2, ShieldAlert, AlertCircle, ArrowRight, CheckCircle2, User, Mail, Lock, Building2 } from 'lucide-react';
 import { developerLogin, developerRegister } from '../services/api';
 import { DeveloperUser } from '../types';
+import { AGREEMENTS_VERSION, LegalTab } from './LegalAgreementsModal';
 
 interface DeveloperAuthModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess: (dev: DeveloperUser) => void;
   initialMode?: 'login' | 'register';
+  onOpenLegal?: (tab: LegalTab) => void;
 }
 
 export const DeveloperAuthModal: React.FC<DeveloperAuthModalProps> = ({
@@ -15,12 +17,14 @@ export const DeveloperAuthModal: React.FC<DeveloperAuthModalProps> = ({
   onClose,
   onSuccess,
   initialMode = 'register',
+  onOpenLegal,
 }) => {
   const [mode, setMode] = useState<'login' | 'register'>(initialMode);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [companyName, setCompanyName] = useState('');
+  const [agreedToDevTerms, setAgreedToDevTerms] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
@@ -43,12 +47,17 @@ export const DeveloperAuthModal: React.FC<DeveloperAuthModalProps> = ({
         if (password.length < 6) {
           throw new Error('Password must be at least 6 characters.');
         }
+        if (!agreedToDevTerms) {
+          throw new Error('Please agree to Protector Technologies Developer Terms & Payment Agreement.');
+        }
 
         const res = await developerRegister({
           name: name.trim(),
           email: email.trim(),
           password,
-          companyName: companyName.trim() || undefined
+          companyName: companyName.trim() || undefined,
+          acceptedAgreements: true,
+          agreementsVersion: AGREEMENTS_VERSION
         });
 
         setSuccessMsg('Developer account created! Opening Developer Console...');
@@ -221,28 +230,57 @@ export const DeveloperAuthModal: React.FC<DeveloperAuthModalProps> = ({
           </div>
 
           {mode === 'register' && (
-            <div>
-              <label className="block text-xs font-medium text-neutral-300 mb-1">
-                Company / Studio (Optional)
-              </label>
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-neutral-500">
-                  <Building2 className="w-4 h-4" />
+            <>
+              <div>
+                <label className="block text-xs font-medium text-neutral-300 mb-1">
+                  Company / Studio (Optional)
+                </label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-neutral-500">
+                    <Building2 className="w-4 h-4" />
+                  </div>
+                  <input
+                    type="text"
+                    value={companyName}
+                    onChange={(e) => setCompanyName(e.target.value)}
+                    placeholder="e.g. AnimeApps Inc"
+                    className="w-full bg-neutral-950 border border-neutral-800 focus:border-amber-500 focus:ring-1 focus:ring-amber-500 rounded-xl py-2.5 pl-10 pr-3.5 text-xs text-white placeholder-neutral-500 transition-colors outline-none"
+                  />
                 </div>
-                <input
-                  type="text"
-                  value={companyName}
-                  onChange={(e) => setCompanyName(e.target.value)}
-                  placeholder="e.g. AnimeApps Inc"
-                  className="w-full bg-neutral-950 border border-neutral-800 focus:border-amber-500 focus:ring-1 focus:ring-amber-500 rounded-xl py-2.5 pl-10 pr-3.5 text-xs text-white placeholder-neutral-500 transition-colors outline-none"
-                />
               </div>
-            </div>
+
+              <label className="flex items-start gap-2.5 p-3 rounded-xl bg-neutral-950/70 border border-neutral-800 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={agreedToDevTerms}
+                  onChange={(e) => setAgreedToDevTerms(e.target.checked)}
+                  className="mt-0.5 w-4 h-4 rounded border-neutral-700 bg-neutral-950 text-amber-500 focus:ring-amber-500 cursor-pointer shrink-0"
+                />
+                <span className="text-[11px] text-neutral-300 leading-relaxed">
+                  I agree to{' '}
+                  {onOpenLegal ? (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        onOpenLegal('developer-payment');
+                      }}
+                      className="text-amber-400 font-semibold hover:underline cursor-pointer"
+                    >
+                      Protector Technologies Developer Terms &amp; Payment Agreement
+                    </button>
+                  ) : (
+                    <strong className="text-white">Protector Technologies Developer Terms &amp; Payment Agreement</strong>
+                  )}{' '}
+                  (6% platform fee on app sales, 10% fee on ownership transfers, and 100 UGX per 1,000 UGX withdrawal charge).
+                </span>
+              </label>
+            </>
           )}
 
           <button
             type="submit"
-            disabled={isLoading}
+            disabled={isLoading || (mode === 'register' && !agreedToDevTerms)}
             className="w-full py-3 px-4 mt-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-neutral-950 font-bold text-xs rounded-xl shadow-lg transition-transform active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
             {isLoading ? (

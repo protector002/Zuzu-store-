@@ -33,9 +33,16 @@ import {
   parseFileSizeToBytes,
   formatBytes,
   fetchBroadcast,
-  getCachedPurchaseToken
+  getCachedPurchaseToken,
+  acceptPlatformAgreements
 } from './services/api';
 import { PurchaseModal } from './components/PurchaseModal';
+import {
+  LegalAgreementsModal,
+  LegalTab,
+  AGREEMENTS_STORAGE_KEY,
+  AGREEMENTS_VERSION
+} from './components/LegalAgreementsModal';
 import { StoreApp, AppRelease, Platform, AdminUser, DeveloperUser, DownloadProgressState, AdminBroadcast } from './types';
 import { getApkBlob, deleteApkBlob } from './utils/fileStorage';
 import { filterPhoneApps, filterTvApps, getPhoneRelease, getTvRelease } from './utils/editionHelper';
@@ -82,6 +89,35 @@ export default function App() {
 
   // Toast Notification
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // Protector Technologies Terms, Conditions & Payment Agreements State
+  const [hasAcceptedAgreements, setHasAcceptedAgreements] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(AGREEMENTS_STORAGE_KEY) === AGREEMENTS_VERSION;
+    } catch (_) {
+      return false;
+    }
+  });
+  const [isLegalModalOpen, setIsLegalModalOpen] = useState(false);
+  const [legalInitialTab, setLegalInitialTab] = useState<LegalTab>('rights');
+
+  const openLegalViewer = (tab: LegalTab = 'rights') => {
+    setLegalInitialTab(tab);
+    setIsLegalModalOpen(true);
+  };
+
+  const handleAcceptSiteAgreements = () => {
+    try {
+      localStorage.setItem(AGREEMENTS_STORAGE_KEY, AGREEMENTS_VERSION);
+    } catch (_) {}
+    setHasAcceptedAgreements(true);
+    acceptPlatformAgreements({
+      role: developer ? 'developer' : 'user',
+      version: AGREEMENTS_VERSION,
+      email: developer?.email
+    });
+    showToast('Terms & Payment Agreements accepted. Welcome to ZuzuStore by Protector Technologies.');
+  };
 
 
   // In-App Download Progress Modal State
@@ -946,6 +982,11 @@ export default function App() {
                   setCurrentView('store');
                   window.scrollTo({ top: 0, behavior: 'smooth' });
                 }}
+                onDeveloperUpdated={(updatedDev) => {
+                  setDeveloper(updatedDev);
+                  showToast('Developer Payment Agreement accepted.');
+                }}
+                onOpenLegal={openLegalViewer}
               />
             )}
           </>
@@ -975,6 +1016,7 @@ export default function App() {
           }
         }}
         onSecretAdminTrigger={handleOpenSecretAdmin}
+        onOpenLegal={openLegalViewer}
       />
 
       {/* Admin Login Modal (Blank inputs, no prefilled or displayed email) */}
@@ -998,6 +1040,7 @@ export default function App() {
           window.scrollTo({ top: 0, behavior: 'smooth' });
           showToast(`Welcome, ${dev.name}! Developer Console is ready.`);
         }}
+        onOpenLegal={openLegalViewer}
       />
 
       {/* QR Code Modal for Phone Download */}
@@ -1021,8 +1064,18 @@ export default function App() {
             showToast(`Payment confirmed for ${purchasedTarget.name}! Starting download...`);
             handleDownload(purchasedTarget.id);
           }}
+          onOpenLegal={openLegalViewer}
         />
       )}
+
+      {/* Mandatory First-Use Agreements Gate (after opening splash) & On-Demand Legal Viewer */}
+      <LegalAgreementsModal
+        isOpen={(!hasAcceptedAgreements && !showSplash) || isLegalModalOpen}
+        requireAcceptance={!hasAcceptedAgreements && !isLegalModalOpen}
+        initialTab={legalInitialTab}
+        onAccept={handleAcceptSiteAgreements}
+        onClose={() => setIsLegalModalOpen(false)}
+      />
 
       {/* Android Installation Help Modal */}
       <InstallGuideModal

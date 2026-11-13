@@ -1,6 +1,7 @@
 import React from 'react';
 import { ShieldCheck, Smartphone, Lock, UploadCloud, Layers, Tv, Code2 } from 'lucide-react';
 import { AdminUser, DeveloperUser } from '../types';
+import { LegalTab } from './LegalAgreementsModal';
 
 interface FooterProps {
   onNavigate: (view: 'store' | 'upload' | 'tv' | 'developer_console') => void;
@@ -10,6 +11,7 @@ interface FooterProps {
   developer?: DeveloperUser | null;
   onOpenDeveloperPortal?: () => void;
   onSecretAdminTrigger?: () => void;
+  onOpenLegal?: (tab: LegalTab) => void;
 }
 
 export const Footer: React.FC<FooterProps> = ({
@@ -20,6 +22,7 @@ export const Footer: React.FC<FooterProps> = ({
   developer,
   onOpenDeveloperPortal,
   onSecretAdminTrigger,
+  onOpenLegal,
 }) => {
   return (
     <footer className="border-t border-neutral-900 bg-neutral-950 py-12 text-neutral-400 text-xs">
@@ -139,10 +142,13 @@ export const Footer: React.FC<FooterProps> = ({
           </div>
         </div>
 
-        {/* Bottom copyright */}
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-4 text-neutral-400 text-[11px]">
-          <div className="flex items-center gap-2">
-            <p>© {new Date().getFullYear()} ZuzuStore. Direct Android application distribution.</p>
+        {/* Bottom copyright & Protector Technologies legal links */}
+        <div className="flex flex-col md:flex-row items-center justify-between gap-4 text-neutral-400 text-[11px]">
+          <div className="flex items-center gap-2 text-center sm:text-left">
+            <p>
+              © {new Date().getFullYear()}{' '}
+              <strong className="text-neutral-200 font-semibold">Protector Technologies</strong>. All rights reserved.
+            </p>
             {/* Discreet secret administrator trigger */}
             <button
               onClick={onSecretAdminTrigger}
@@ -153,12 +159,40 @@ export const Footer: React.FC<FooterProps> = ({
               <Lock className="w-2.5 h-2.5" />
             </button>
           </div>
-          <div className="flex items-center gap-4 text-neutral-300">
-            <span>Direct APK Access</span>
-            <span className="text-neutral-700">•</span>
-            <span>No Account Needed to Download</span>
-            <span className="text-neutral-700">•</span>
-            <span>Zero Bloat</span>
+          <div className="flex flex-wrap items-center justify-center gap-3 sm:gap-4 text-neutral-300">
+            {onOpenLegal ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => onOpenLegal('rights')}
+                  className="hover:text-amber-400 hover:underline transition-colors cursor-pointer"
+                >
+                  Terms &amp; Company Rights
+                </button>
+                <span className="text-neutral-700">·</span>
+                <button
+                  type="button"
+                  onClick={() => onOpenLegal('user-payment')}
+                  className="hover:text-amber-400 hover:underline transition-colors cursor-pointer"
+                >
+                  User Payment Agreement
+                </button>
+                <span className="text-neutral-700">·</span>
+                <button
+                  type="button"
+                  onClick={() => onOpenLegal('developer-payment')}
+                  className="hover:text-amber-400 hover:underline transition-colors cursor-pointer"
+                >
+                  Developer Payment Agreement
+                </button>
+              </>
+            ) : (
+              <>
+                <span>Direct APK Access</span>
+                <span className="text-neutral-700">·</span>
+                <span>No Account Needed to Download</span>
+              </>
+            )}
           </div>
         </div>
       </div>

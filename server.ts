@@ -515,6 +515,9 @@ export interface DeveloperAccount {
   status?: 'active' | 'frozen' | 'banned';
   banReason?: string;
   bannedAt?: string;
+  agreementsAccepted?: boolean;
+  agreementsAcceptedAt?: string;
+  agreementsVersion?: string;
   createdAt: string;
 }
 
@@ -1278,7 +1281,7 @@ app.post('/api/auth/login', (req, res) => {
 
 // Developer registration endpoint
 app.post('/api/developer/auth/register', async (req, res) => {
-  const { name, email, password, companyName } = req.body;
+  const { name, email, password, companyName, acceptedAgreements, agreementsVersion } = req.body;
 
   if (!name || !name.trim()) {
     return res.status(400).json({ error: 'Developer or studio name is required.' });
@@ -1290,6 +1293,12 @@ app.post('/api/developer/auth/register', async (req, res) => {
 
   if (!password || password.length < 6) {
     return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+  }
+
+  if (acceptedAgreements !== true) {
+    return res.status(400).json({
+      error: 'You must agree to Protector Technologies Terms & Conditions and Developer Payment Agreement.'
+    });
   }
 
   const normalizedEmail = email.trim().toLowerCase();
@@ -1306,6 +1315,8 @@ app.post('/api/developer/auth/register', async (req, res) => {
 
   const devId = `dev-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
   const passwordHash = crypto.createHash('sha256').update(password + 'zuzu_dev_salt_2026').digest('hex');
+  const nowIso = new Date().toISOString();
+  const ver = String(agreementsVersion || '2026-11-v1');
 
   const newDev: DeveloperAccount = {
     id: devId,
@@ -1314,10 +1325,27 @@ app.post('/api/developer/auth/register', async (req, res) => {
     passwordHash,
     companyName: companyName ? companyName.trim() : undefined,
     status: 'active',
-    createdAt: new Date().toISOString()
+    agreementsAccepted: true,
+    agreementsAcceptedAt: nowIso,
+    agreementsVersion: ver,
+    createdAt: nowIso
   };
 
   await persistDeveloper(newDev);
+
+  if (firestoreDb) {
+    try {
+      const accId = `agr-dev-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      await setDoc(doc(firestoreDb, 'agreements', accId), {
+        id: accId,
+        role: 'developer',
+        version: ver,
+        developerId: devId,
+        email: normalizedEmail,
+        acceptedAt: nowIso
+      });
+    } catch (_) {}
+  }
 
   const token = createDeveloperToken(devId, normalizedEmail);
 
@@ -1330,6 +1358,9 @@ app.post('/api/developer/auth/register', async (req, res) => {
       email: newDev.email,
       companyName: newDev.companyName,
       status: newDev.status,
+      agreementsAccepted: newDev.agreementsAccepted,
+      agreementsAcceptedAt: newDev.agreementsAcceptedAt,
+      agreementsVersion: newDev.agreementsVersion,
       createdAt: newDev.createdAt
     }
   });
@@ -1368,6 +1399,9 @@ app.post('/api/developer/auth/login', async (req, res) => {
       status: dev.status || 'active',
       banReason: dev.banReason,
       bannedAt: dev.bannedAt,
+      agreementsAccepted: dev.agreementsAccepted,
+      agreementsAcceptedAt: dev.agreementsAcceptedAt,
+      agreementsVersion: dev.agreementsVersion,
       createdAt: dev.createdAt
     }
   });
@@ -1411,6 +1445,9 @@ app.get('/api/auth/session', async (req, res) => {
           status: dev.status || 'active',
           banReason: dev.banReason,
           bannedAt: dev.bannedAt,
+          agreementsAccepted: dev.agreementsAccepted,
+          agreementsAcceptedAt: dev.agreementsAcceptedAt,
+          agreementsVersion: dev.agreementsVersion,
           createdAt: dev.createdAt
         }
       });
@@ -1448,7 +1485,97 @@ app.get('/api/developer/auth/session', async (req, res) => {
       status: dev.status || 'active',
       banReason: dev.banReason,
       bannedAt: dev.bannedAt,
+      agreementsAccepted: dev.agreementsAccepted,
+      agreementsAcceptedAt: dev.agreementsAcceptedAt,
+      agreementsVersion: dev.agreementsVersion,
       createdAt: dev.createdAt
+    }
+  });
+});
+
+// Record acceptance of Protector Technologies Terms, Conditions, and Payment Agreements (Users / Buyers)
+app.post('/api/agreements/accept', async (req, res) => {
+  const { role = 'user', version = '2026-11-v1', email } = req.body || {};
+  const allowedRoles = ['user', 'buyer', 'developer'];
+  const cleanRole = allowedRoles.includes(String(role)) ? String(role) : 'user';
+  const nowIso = new Date().toISOString();
+  const acceptanceId = `agr-${cleanRole}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+
+  const record: Record<string, any> = {
+    id: acceptanceId,
+    role: cleanRole,
+    version: String(version || '2026-11-v1'),
+    acceptedAt: nowIso
+  };
+  if (email && String(email).trim()) {
+    record.email = String(email).trim().toLowerCase();
+  }
+
+  try {
+    const agrFile = path.join(DATA_DIR, 'agreements.json');
+    let existing: any[] = [];
+    if (fs.existsSync(agrFile)) {
+      try {
+        const parsed = JSON.parse(fs.readFileSync(agrFile, 'utf-8'));
+        if (Array.isArray(parsed)) existing = parsed;
+      } catch (_) {}
+    }
+    existing.push(record);
+    fs.writeFileSync(agrFile, JSON.stringify(existing.slice(-500), null, 2), 'utf-8');
+  } catch (_) {}
+
+  if (firestoreDb) {
+    try {
+      await setDoc(doc(firestoreDb, 'agreements', acceptanceId), cleanForFirestore(record));
+    } catch (_) {}
+  }
+
+  return res.json({ success: true, acceptance: record });
+});
+
+// Developer: Accept updated Protector Technologies Developer & Payment Agreements
+app.post('/api/developer/agreements/accept', requireDeveloper, async (req, res) => {
+  const caller = (req as any).developer as DeveloperAccount;
+  const version = String(req.body?.version || '2026-11-v1');
+  const nowIso = new Date().toISOString();
+
+  const updatedDev: DeveloperAccount = {
+    ...caller,
+    agreementsAccepted: true,
+    agreementsAcceptedAt: nowIso,
+    agreementsVersion: version
+  };
+
+  await persistDeveloper(updatedDev);
+
+  if (firestoreDb) {
+    try {
+      const acceptanceId = `agr-dev-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      await setDoc(doc(firestoreDb, 'agreements', acceptanceId), {
+        id: acceptanceId,
+        role: 'developer',
+        version,
+        developerId: updatedDev.id,
+        email: updatedDev.email,
+        acceptedAt: nowIso
+      });
+    } catch (_) {}
+  }
+
+  return res.json({
+    success: true,
+    developer: {
+      id: updatedDev.id,
+      name: updatedDev.name,
+      email: updatedDev.email,
+      companyName: updatedDev.companyName,
+      status: updatedDev.status || 'active',
+      banReason: updatedDev.banReason,
+      bannedAt: updatedDev.bannedAt,
+      agreementsAccepted: updatedDev.agreementsAccepted,
+      agreementsAcceptedAt: updatedDev.agreementsAcceptedAt,
+      agreementsVersion: updatedDev.agreementsVersion,
+      createdAt: updatedDev.createdAt
     }
   });
 });

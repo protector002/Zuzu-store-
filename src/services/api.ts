@@ -844,6 +844,8 @@ export async function developerRegister(payload: {
   email: string;
   password: string;
   companyName?: string;
+  acceptedAgreements: boolean;
+  agreementsVersion?: string;
 }): Promise<{ success: boolean; token: string; developer: DeveloperUser }> {
   const res = await fetch('/api/developer/auth/register', {
     method: 'POST',
@@ -866,6 +868,44 @@ export async function developerRegister(payload: {
     } catch (_) {}
   }
 
+  return data;
+}
+
+export async function acceptPlatformAgreements(payload: {
+  role: 'user' | 'buyer' | 'developer';
+  version?: string;
+  email?: string;
+}): Promise<void> {
+  try {
+    await fetch('/api/agreements/accept', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+  } catch (_) {}
+}
+
+export async function acceptDeveloperAgreements(
+  version = '2026-11-v1'
+): Promise<{ success: boolean; developer: DeveloperUser }> {
+  const res = await fetch('/api/developer/agreements/accept', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getDeveloperAuthHeaders()
+    },
+    body: JSON.stringify({ version })
+  });
+  const data = await parseJsonSafely(res);
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || 'Failed to save developer agreement acceptance.');
+  }
+  if (data.developer) {
+    saveDeveloperToFirestore(data.developer).catch(() => {});
+    try {
+      localStorage.setItem('zuzu_active_developer', JSON.stringify(data.developer));
+    } catch (_) {}
+  }
   return data;
 }
 

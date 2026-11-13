@@ -65,8 +65,10 @@ import {
   cancelDeveloperAppTransfer,
   purchaseDeveloperAppTransfer,
   updateDeveloperOwnedApp,
-  addDeveloperOwnedAppRelease
+  addDeveloperOwnedAppRelease,
+  acceptDeveloperAgreements
 } from '../services/api';
+import { AGREEMENTS_VERSION, LegalTab } from './LegalAgreementsModal';
 
 // Compress icon image into a lightweight Data URL (permanent across restarts/instances)
 function convertImageToDataUrl(file: File): Promise<string> {
@@ -162,14 +164,19 @@ interface DeveloperConsoleProps {
   developer: DeveloperUser;
   onLogout: () => void;
   onBackToStore: () => void;
+  onDeveloperUpdated?: (dev: DeveloperUser) => void;
+  onOpenLegal?: (tab: LegalTab) => void;
 }
 
 export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
   developer,
   onLogout,
   onBackToStore,
+  onDeveloperUpdated,
+  onOpenLegal,
 }) => {
   const [activeTab, setActiveTab] = useState<'submit' | 'my-apps' | 'transfers' | 'wallet'>('submit');
+  const [isAcceptingAgreement, setIsAcceptingAgreement] = useState(false);
   const [myApps, setMyApps] = useState<StoreApp[]>([]);
   const [isLoadingApps, setIsLoadingApps] = useState(false);
   const [myAppsMessage, setMyAppsMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -903,6 +910,50 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
               {developer.banReason || 'Publishing privileges are suspended for administrative review.'}{' '}
               New app submissions are currently disabled.
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Protector Technologies Developer & Payment Agreement Prompt for Existing Accounts */}
+      {!developer.agreementsAccepted && (
+        <div className="bg-amber-950/50 border-b border-amber-500/40 py-3.5 px-4 sm:px-6">
+          <div className="max-w-5xl mx-auto flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+            <div className="space-y-0.5">
+              <div className="font-bold text-amber-300">
+                Protector Technologies — Developer &amp; Payment Agreement Update
+              </div>
+              <p className="text-[11px] text-neutral-300 leading-relaxed">
+                By continuing to publish apps, sell ownership, or withdraw earnings, you agree to Protector Technologies&apos; payment terms: 6% paid app commission, 10% app ownership transfer commission, and {feeRatePer1000} UGX per 1,000 UGX withdrawal charge.{' '}
+                {onOpenLegal && (
+                  <button
+                    type="button"
+                    onClick={() => onOpenLegal('developer-payment')}
+                    className="text-amber-400 font-semibold hover:underline cursor-pointer"
+                  >
+                    Read Full Agreement
+                  </button>
+                )}
+              </p>
+            </div>
+            <button
+              type="button"
+              disabled={isAcceptingAgreement}
+              onClick={async () => {
+                setIsAcceptingAgreement(true);
+                try {
+                  const res = await acceptDeveloperAgreements(AGREEMENTS_VERSION);
+                  if (res.developer && onDeveloperUpdated) {
+                    onDeveloperUpdated(res.developer);
+                  }
+                } catch (_) {
+                } finally {
+                  setIsAcceptingAgreement(false);
+                }
+              }}
+              className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-neutral-950 font-bold text-xs rounded-xl shrink-0 cursor-pointer disabled:opacity-50"
+            >
+              {isAcceptingAgreement ? 'Saving...' : 'Agree & Accept Terms'}
+            </button>
           </div>
         </div>
       )}
@@ -2365,7 +2416,19 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
 
                 <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-3 border-t border-neutral-800">
                   <span className="text-[11px] text-neutral-400">
-                    Payouts are reviewed by Super Admin and credited directly to your destination account.
+                    Subject to{' '}
+                    {onOpenLegal ? (
+                      <button
+                        type="button"
+                        onClick={() => onOpenLegal('developer-payment')}
+                        className="text-amber-400 hover:underline cursor-pointer"
+                      >
+                        Protector Technologies Developer Payment Agreement
+                      </button>
+                    ) : (
+                      'Protector Technologies Developer Payment Agreement'
+                    )}{' '}
+                    ({feeRatePer1000} UGX per 1,000 UGX sending charge).
                   </span>
 
                   <button
@@ -2850,7 +2913,19 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
               )}
 
               <div className="p-3 rounded-xl bg-emerald-950/20 border border-emerald-900/40 text-[11px] text-emerald-200 leading-relaxed">
-                Immediately upon payment, &ldquo;{buyModalListing.appName}&rdquo; transfers into your developer account with full control: edit metadata, set Free/Paid pricing, upload APK updates, and earn future app sales.
+                By confirming payment under the{' '}
+                {onOpenLegal ? (
+                  <button
+                    type="button"
+                    onClick={() => onOpenLegal('developer-payment')}
+                    className="text-amber-300 font-semibold hover:underline cursor-pointer"
+                  >
+                    Protector Technologies Developer Payment Agreement
+                  </button>
+                ) : (
+                  'Protector Technologies Developer Payment Agreement'
+                )}
+                , 90% goes to Seller, 10% platform commission goes to Protector Technologies, and &ldquo;{buyModalListing.appName}&rdquo; transfers into your developer account with full ownership rights.
               </div>
 
               <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-neutral-800">

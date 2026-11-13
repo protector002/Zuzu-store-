@@ -11,15 +11,17 @@ import {
   Receipt
 } from 'lucide-react';
 import { StoreApp, AppSaleTransaction } from '../types';
-import { purchaseApp } from '../services/api';
+import { purchaseApp, acceptPlatformAgreements } from '../services/api';
+import { AGREEMENTS_VERSION, LegalTab } from './LegalAgreementsModal';
 
 interface PurchaseModalProps {
   app: StoreApp;
   onClose: () => void;
   onSuccess: (transaction: AppSaleTransaction, downloadToken: string) => void;
+  onOpenLegal?: (tab: LegalTab) => void;
 }
 
-export const PurchaseModal: React.FC<PurchaseModalProps> = ({ app, onClose, onSuccess }) => {
+export const PurchaseModal: React.FC<PurchaseModalProps> = ({ app, onClose, onSuccess, onOpenLegal }) => {
   const priceConfig = app.pricing || { type: 'paid', price: 5000, currency: 'UGX' };
   const currency = priceConfig.currency || 'UGX';
   const price = priceConfig.price || 0;
@@ -28,6 +30,7 @@ export const PurchaseModal: React.FC<PurchaseModalProps> = ({ app, onClose, onSu
   const [customerEmail, setCustomerEmail] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<'mtn' | 'airtel' | 'card'>('mtn');
   const [phoneNumber, setPhoneNumber] = useState('');
+  const [agreedToPaymentTerms, setAgreedToPaymentTerms] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [completedTransaction, setCompletedTransaction] = useState<AppSaleTransaction | null>(null);
@@ -45,10 +48,21 @@ export const PurchaseModal: React.FC<PurchaseModalProps> = ({ app, onClose, onSu
       return;
     }
 
+    if (!agreedToPaymentTerms) {
+      setErrorMessage('Please agree to Protector Technologies User Payment Agreement before paying.');
+      return;
+    }
+
     setIsProcessing(true);
     setErrorMessage(null);
 
     try {
+      acceptPlatformAgreements({
+        role: 'buyer',
+        version: AGREEMENTS_VERSION,
+        email: customerEmail.trim()
+      });
+
       const paymentMethodLabel =
         paymentMethod === 'mtn'
           ? `LivePay MTN Mobile Money (${phoneNumber})`
@@ -301,9 +315,37 @@ export const PurchaseModal: React.FC<PurchaseModalProps> = ({ app, onClose, onSu
             <div className="p-3 bg-neutral-950 rounded-xl border border-neutral-800/80 text-[11px] text-neutral-400 flex items-center gap-2">
               <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
               <span>
-                Processed securely via <strong>LivePay Uganda Mobile Money</strong> (Account: LP260805074398). Instant automatic unlock upon PIN verification.
+                Processed securely by <strong>Protector Technologies</strong> via <strong>LivePay Uganda Mobile Money</strong> (Account: LP260805074398). Instant automatic unlock upon PIN verification.
               </span>
             </div>
+
+            {/* Required User Payment Agreement Checkbox */}
+            <label className="flex items-start gap-2.5 p-3 rounded-xl bg-neutral-950/60 border border-neutral-800 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={agreedToPaymentTerms}
+                onChange={(e) => setAgreedToPaymentTerms(e.target.checked)}
+                className="mt-0.5 w-4 h-4 rounded border-neutral-700 bg-neutral-950 text-amber-500 focus:ring-amber-500 cursor-pointer shrink-0"
+              />
+              <span className="text-[11px] text-neutral-300 leading-relaxed">
+                I agree to{' '}
+                {onOpenLegal ? (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      onOpenLegal('user-payment');
+                    }}
+                    className="text-amber-400 font-semibold hover:underline cursor-pointer"
+                  >
+                    Protector Technologies&apos; User Payment Agreement &amp; Terms
+                  </button>
+                ) : (
+                  <strong className="text-white">Protector Technologies&apos; User Payment Agreement &amp; Terms</strong>
+                )}{' '}
+                (instant digital APK unlock upon PIN approval; purchases are final once unlocked).
+              </span>
+            </label>
 
             {/* Action Buttons */}
             <div className="flex items-center justify-end gap-3 pt-2">
@@ -318,8 +360,8 @@ export const PurchaseModal: React.FC<PurchaseModalProps> = ({ app, onClose, onSu
 
               <button
                 type="submit"
-                disabled={isProcessing}
-                className="px-5 py-2.5 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-neutral-950 font-black text-xs rounded-xl shadow-lg shadow-amber-500/20 transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                disabled={isProcessing || !agreedToPaymentTerms}
+                className="px-5 py-2.5 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-neutral-950 font-black text-xs rounded-xl shadow-lg shadow-amber-500/20 transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {isProcessing ? (
                   <>
