@@ -365,6 +365,56 @@ function renderGoogleDriveAccessErrorPage(appName: string, fileId: string, webVi
 </html>`;
 }
 
+// Track deleted app IDs in memory so stale client syncs never resurrect deleted apps
+const serverDeletedAppIds = new Set<string>();
+
+function dedupeAppsList(apps: StoreApp[]): StoreApp[] {
+  const map = new Map<string, StoreApp>();
+  for (const appItem of apps) {
+    if (!appItem || !appItem.id) continue;
+    if (serverDeletedAppIds.has(appItem.id)) continue;
+    const prev = map.get(appItem.id);
+    if (!prev) {
+      map.set(appItem.id, appItem);
+    } else {
+      const prevTs = new Date(prev.updatedAt || prev.createdAt || 0).getTime();
+      const nextTs = new Date(appItem.updatedAt || appItem.createdAt || 0).getTime();
+      if (nextTs >= prevTs) {
+        map.set(appItem.id, appItem);
+      }
+    }
+  }
+  return Array.from(map.values());
+}
+
+function findAppByIdOrSlug(apps: StoreApp[], idOrSlug: string): StoreApp | undefined {
+  return apps.find((a) => a.id === idOrSlug) || apps.find((a) => a.slug === idOrSlug);
+}
+
+async function recordServerAppTombstone(appId: string) {
+  if (!appId) return;
+  serverDeletedAppIds.add(appId);
+  if (!firestoreDb) return;
+  try {
+    const docRef = doc(firestoreDb, 'stats', 'tombstones');
+    const snap = await getDoc(docRef);
+    const existingData = snap.exists() ? (snap.data() as any) : { deletedAppIds: [], deletedReleaseIds: [] };
+    const appIds = new Set<string>(Array.isArray(existingData.deletedAppIds) ? existingData.deletedAppIds : []);
+    appIds.add(appId);
+    await setDoc(
+      docRef,
+      {
+        deletedAppIds: Array.from(appIds),
+        deletedReleaseIds: existingData.deletedReleaseIds || [],
+        updatedAt: new Date().toISOString()
+      },
+      { merge: true }
+    );
+  } catch (e) {
+    console.warn('[Firestore] Failed to record app tombstone:', e);
+  }
+}
+
 // Helper: Read apps with memory and multi-path fallback
 function getApps(): StoreApp[] {
   try {
@@ -372,8 +422,9 @@ function getApps(): StoreApp[] {
       const data = fs.readFileSync(APPS_FILE, 'utf-8');
       const parsed = JSON.parse(data);
       if (Array.isArray(parsed) && parsed.length > 0) {
-        memoryApps = parsed;
-        return parsed;
+        const clean = dedupeAppsList(parsed);
+        memoryApps = clean;
+        return clean;
       }
     }
 
@@ -383,30 +434,32 @@ function getApps(): StoreApp[] {
       const data = fs.readFileSync(rootDataFile, 'utf-8');
       const parsed = JSON.parse(data);
       if (Array.isArray(parsed) && parsed.length > 0) {
-        memoryApps = parsed;
+        const clean = dedupeAppsList(parsed);
+        memoryApps = clean;
         try {
-          fs.writeFileSync(APPS_FILE, JSON.stringify(parsed, null, 2), 'utf-8');
+          fs.writeFileSync(APPS_FILE, JSON.stringify(clean, null, 2), 'utf-8');
         } catch (_) {}
-        return parsed;
+        return clean;
       }
     }
 
     if (memoryApps.length > 0) {
-      return memoryApps;
+      return dedupeAppsList(memoryApps);
     }
 
     return [];
   } catch (err) {
     console.error('Error reading apps file:', err);
-    return memoryApps || [];
+    return dedupeAppsList(memoryApps || []);
   }
 }
 
 // Helper: Save apps
 function saveApps(apps: StoreApp[]) {
-  memoryApps = apps;
+  const clean = dedupeAppsList(apps);
+  memoryApps = clean;
   try {
-    fs.writeFileSync(APPS_FILE, JSON.stringify(apps, null, 2), 'utf-8');
+    fs.writeFileSync(APPS_FILE, JSON.stringify(clean, null, 2), 'utf-8');
   } catch (err) {
     console.error('Error saving apps file:', err);
   }
@@ -415,7 +468,7 @@ function saveApps(apps: StoreApp[]) {
   try {
     const rootDataDir = path.resolve(process.cwd(), 'data');
     if (fs.existsSync(rootDataDir)) {
-      fs.writeFileSync(path.join(rootDataDir, 'apps.json'), JSON.stringify(apps, null, 2), 'utf-8');
+      fs.writeFileSync(path.join(rootDataDir, 'apps.json'), JSON.stringify(clean, null, 2), 'utf-8');
     }
   } catch (_) {}
 }
@@ -716,23 +769,32 @@ async function syncFromFirestore() {
       console.log('[Firestore Server] Synchronized broadcast banner.');
     }
 
-    // 3. Sync apps
+    // 3. Sync tombstones & apps from Firestore (Firestore is authoritative for existing catalog)
+    try {
+      const tombSnap = await getDoc(doc(firestoreDb, 'stats', 'tombstones'));
+      if (tombSnap.exists()) {
+        const tData = tombSnap.data() as any;
+        if (Array.isArray(tData.deletedAppIds)) {
+          tData.deletedAppIds.forEach((id: string) => serverDeletedAppIds.add(String(id)));
+        }
+      }
+    } catch (_) {}
+
     const appsSnap = await getDocs(collection(firestoreDb, 'apps'));
     const cloudApps: StoreApp[] = [];
     appsSnap.forEach((d) => {
       const app = d.data() as StoreApp;
       if (app && (app.id || d.id)) {
-        cloudApps.push(app);
+        const normalizedApp = app.id ? app : { ...app, id: d.id };
+        if (!serverDeletedAppIds.has(normalizedApp.id)) {
+          cloudApps.push(normalizedApp);
+        }
       }
     });
     if (cloudApps.length > 0) {
-      const existingLocal = getApps();
       const mergedMap = new Map<string, StoreApp>();
-      existingLocal.forEach((a) => {
-        if (a && a.id) mergedMap.set(a.id, a);
-      });
       cloudApps.forEach((a) => {
-        if (a && a.id) {
+        if (a && a.id && !serverDeletedAppIds.has(a.id)) {
           const prev = mergedMap.get(a.id);
           const prevTime = prev ? new Date(prev.updatedAt || prev.createdAt || 0).getTime() : 0;
           const nextTime = new Date(a.updatedAt || a.createdAt || 0).getTime();
@@ -1670,10 +1732,23 @@ app.post('/api/sync-catalog', (req, res) => {
 
   const current = getApps();
   const map = new Map<string, StoreApp>();
-  current.forEach((a) => map.set(a.id, a));
+  current.forEach((a) => {
+    if (a && a.id && !serverDeletedAppIds.has(a.id)) {
+      map.set(a.id, a);
+    }
+  });
   apps.forEach((a) => {
-    if (a && (a.id || a.slug)) {
-      map.set(a.id || a.slug, a);
+    if (a && a.id && !serverDeletedAppIds.has(a.id)) {
+      const prev = map.get(a.id);
+      if (!prev) {
+        map.set(a.id, a);
+      } else {
+        const prevTime = new Date(prev.updatedAt || prev.createdAt || 0).getTime();
+        const nextTime = new Date(a.updatedAt || a.createdAt || 0).getTime();
+        if (nextTime >= prevTime) {
+          map.set(a.id, a);
+        }
+      }
     }
   });
 
@@ -2361,10 +2436,10 @@ app.delete('/api/admin/apps/:id/releases/:releaseId', requireAdmin, (req, res) =
 });
 
 // Admin: Delete an app
-app.delete('/api/admin/apps/:id', requireAdmin, (req, res) => {
+app.delete('/api/admin/apps/:id', requireAdmin, async (req, res) => {
   const { id } = req.params;
   const apps = getApps();
-  const appItem = apps.find((a) => a.id === id || a.slug === id);
+  const appItem = findAppByIdOrSlug(apps, id);
 
   if (appItem) {
     // Clean up any uploaded binaries
@@ -2377,8 +2452,19 @@ app.delete('/api/admin/apps/:id', requireAdmin, (req, res) => {
     }
   }
 
-  const updated = apps.filter((a) => a.id !== id && a.slug !== id);
+  const targetId = appItem?.id || id;
+  const updated = apps.filter((a) => a.id !== targetId);
   saveApps(updated);
+
+  await recordServerAppTombstone(targetId);
+
+  if (firestoreDb) {
+    try {
+      await deleteDoc(doc(firestoreDb, 'apps', targetId));
+    } catch (e) {
+      console.warn('[Firestore] Error deleting app:', e);
+    }
+  }
 
   return res.json({
     success: true,
@@ -2661,6 +2747,28 @@ app.post(
       };
 
       const apps = getApps();
+
+      // Guard against duplicate accidental double-clicks by same developer within 15s
+      const normalizedNewName = newApp.name.toLowerCase();
+      const recentDup = apps.find(
+        (existing) =>
+          isAppOwnedByDeveloper(existing, dev) &&
+          existing.name.trim().toLowerCase() === normalizedNewName &&
+          (existing.appEdition || 'phone') === (newApp.appEdition || 'phone') &&
+          Date.now() - new Date(existing.createdAt || 0).getTime() < 15000
+      );
+      if (recentDup) {
+        return res.status(200).json({
+          success: true,
+          message: 'Application submitted successfully! It is now pending review by Super Admin.',
+          app: recentDup
+        });
+      }
+
+      if (apps.some((a) => a.slug === newApp.slug)) {
+        newApp.slug = `${newApp.slug}-${Date.now().toString().slice(-4)}`;
+      }
+
       apps.unshift(newApp);
       saveApps(apps);
 
@@ -2715,13 +2823,13 @@ app.delete('/api/developer/apps/:id', requireDeveloper, async (req, res) => {
   const dev = (req as any).developer;
   const { id } = req.params;
   const apps = getApps();
-  const index = apps.findIndex((a) => a.id === id || a.slug === id);
+  const appItem = findAppByIdOrSlug(apps, id);
+  const index = appItem ? apps.findIndex((a) => a.id === appItem.id) : -1;
 
-  if (index === -1) {
+  if (index === -1 || !appItem) {
     return res.status(404).json({ error: 'Application not found.' });
   }
 
-  const appItem = apps[index];
   const isOwner = isAppOwnedByDeveloper(appItem, dev);
 
   if (!isOwner) {
@@ -2730,6 +2838,8 @@ app.delete('/api/developer/apps/:id', requireDeveloper, async (req, res) => {
 
   apps.splice(index, 1);
   saveApps(apps);
+
+  await recordServerAppTombstone(appItem.id);
 
   if (firestoreDb) {
     try {

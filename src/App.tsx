@@ -112,7 +112,13 @@ export default function App() {
   // Load apps and check admin session on mount
   const loadApps = async () => {
     try {
-      const data = await fetchApps();
+      const rawData = await fetchApps();
+      const data = Array.from(
+        rawData.reduce((map, app) => {
+          if (app && app.id) map.set(app.id, app);
+          return map;
+        }, new Map<string, StoreApp>()).values()
+      );
       setApps(data);
       if (data.length > 0) {
         setSelectedApp((prev) => (prev ? data.find((a) => a.id === prev.id) || data[0] : data[0]));

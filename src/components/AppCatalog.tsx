@@ -68,8 +68,15 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
     setInternalSearch(val);
   };
 
-  // Strictly filter for Android Phone apps, sorted by Super Admin displayOrder (1 is top/hero)
-  const phoneApps = filterPhoneApps(apps).sort((a, b) => {
+  // Strictly deduplicate by ID and filter for Android Phone apps, sorted by Super Admin displayOrder
+  const uniqueById = Array.from(
+    apps.reduce((map, app) => {
+      if (app && app.id) map.set(app.id, app);
+      return map;
+    }, new Map<string, StoreApp>()).values()
+  );
+
+  const phoneApps = filterPhoneApps(uniqueById).sort((a, b) => {
     const orderA = a.displayOrder !== undefined ? a.displayOrder : (a.isFeatured ? 1 : 9999);
     const orderB = b.displayOrder !== undefined ? b.displayOrder : (b.isFeatured ? 1 : 9999);
     if (orderA !== orderB) return orderA - orderB;
@@ -497,79 +504,191 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
       ) : (
         /* Standard Play Store Tabs */
         <>
-          {/* TAB 1: FOR YOU (Play Store Shelves Layout) */}
+          {/* TAB 1: FOR YOU (Play Store Shelves Layout without redundant duplication) */}
           {mainTab === 'for-you' && (
             <div className="space-y-8">
-              {/* Shelf 1: Recommended For You (Curated in exact Super Admin display order) */}
-              {curatedForYouApps.length > 0 && (
-                <PlayStoreShelf
-                  title="Recommended For You"
-                  subtitle="Top featured apps curated for your Android device"
-                  appsList={curatedForYouApps}
-                  icon={Sparkles}
-                />
-              )}
+              {phoneApps.length === 0 ? (
+                <div className="text-center py-12 bg-neutral-900/40 border border-neutral-800 rounded-3xl p-8 max-w-md mx-auto space-y-2">
+                  <Smartphone className="w-8 h-8 text-neutral-600 mx-auto" />
+                  <h4 className="text-base font-bold text-white">No Android apps available yet</h4>
+                  <p className="text-xs text-neutral-400">
+                    Check back soon or switch to Smart TV Apps from the top bar.
+                  </p>
+                </div>
+              ) : phoneApps.length <= 4 ? (
+                /* Focused catalog: show each unique Android app once cleanly in a unified grid */
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-7 h-7 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
+                        <Sparkles className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h3 className="text-base sm:text-lg font-bold text-white tracking-tight leading-tight">
+                          Featured Android Apps
+                        </h3>
+                        <p className="text-[11px] text-neutral-400 mt-0.5 leading-none">
+                          Verified Android packages curated for your device ({phoneApps.length} {phoneApps.length === 1 ? 'app' : 'apps'})
+                        </p>
+                      </div>
+                    </div>
+                  </div>
 
-              {/* Shelf 2: Popular & Trending Apps */}
-              <PlayStoreShelf
-                title="Popular & Trending Apps"
-                subtitle="Most downloaded Android packages across Zuzu Store"
-                appsList={popularApps}
-                icon={Flame}
-                onSeeAll={() => {
-                  setMainTab('top-charts');
-                  setChartType('trending');
-                }}
-              />
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 sm:gap-4">
+                    {curatedForYouApps.map((app) => {
+                      const isCurrentlyDownloading = downloadingId === app.id;
+                      const devName = app.submittedBy?.name || app.developer?.name || 'Publisher';
+                      const isPaid = app.pricing && app.pricing.type === 'paid' && (app.pricing.price || 0) > 0;
+                      const priceLabel = isPaid ? `${app.pricing?.price.toLocaleString()} ${app.pricing?.currency || 'UGX'}` : 'Free';
 
-              {/* Shelf 2: Anime & Video Streaming */}
-              {streamingAnimeApps.length > 0 && (
-                <PlayStoreShelf
-                  title="Anime & Streaming Apps"
-                  subtitle="Fast media streaming players and anime packages"
-                  appsList={streamingAnimeApps}
-                  icon={Sparkles}
-                  onSeeAll={() => {
-                    setMainTab('categories');
-                    setSelectedCategory('Streaming');
-                  }}
-                />
-              )}
+                      return (
+                        <div
+                          key={app.id}
+                          onClick={() => onSelectApp(app)}
+                          className="group relative bg-neutral-900/60 hover:bg-neutral-900 border border-neutral-800/80 hover:border-amber-500/40 rounded-2xl p-3 transition-all cursor-pointer flex flex-col justify-between shadow-sm hover:shadow-lg hover:-translate-y-0.5 duration-150"
+                        >
+                          <div>
+                            <div className="relative aspect-square w-full rounded-2xl bg-neutral-950 border border-neutral-800/80 overflow-hidden flex items-center justify-center p-2 shadow-sm group-hover:border-amber-500/30 transition-colors">
+                              <img
+                                src={app.iconUrl || '/zuzustore-logo.png'}
+                                alt={app.name}
+                                className="w-full h-full object-contain rounded-xl"
+                                onError={(e) => {
+                                  e.currentTarget.onerror = null;
+                                  e.currentTarget.src = '/zuzustore-logo.png';
+                                }}
+                              />
+                              {isPaid ? (
+                                <span className="absolute top-1.5 right-1.5 px-1.5 py-0.5 rounded-md bg-amber-400 text-neutral-950 font-black text-[9px] shadow-sm">
+                                  {app.pricing?.currency || 'UGX'}
+                                </span>
+                              ) : app.isOfficial && (
+                                <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-amber-400 ring-2 ring-neutral-950" title="Verified Publisher" />
+                              )}
+                            </div>
 
-              {/* Shelf 3: Top Rated by Community */}
-              <PlayStoreShelf
-                title="Top Rated by Community"
-                subtitle="Highest user reviews and ratings"
-                appsList={topRatedApps}
-                icon={Star}
-                onSeeAll={() => {
-                  setMainTab('top-charts');
-                  setChartType('top-rated');
-                }}
-              />
+                            <h4 className="text-xs sm:text-sm font-bold text-white group-hover:text-amber-400 transition-colors line-clamp-1 mt-2.5">
+                              {app.name}
+                            </h4>
+                            <p className="text-[11px] text-neutral-400 line-clamp-1 mt-0.5">
+                              {devName}
+                            </p>
+                            <div className="flex items-center gap-1 text-[11px] text-neutral-400 mt-1 flex-wrap">
+                              <span className="flex items-center gap-0.5 font-semibold text-neutral-200">
+                                <span>{app.rating.toFixed(1)}</span>
+                                <Star className="w-2.5 h-2.5 fill-amber-400 text-amber-400" />
+                              </span>
+                              <span>·</span>
+                              <span className={isPaid ? 'text-amber-400 font-bold' : 'text-emerald-400 font-medium'}>
+                                {isPaid ? priceLabel : 'Free'}
+                              </span>
+                            </div>
+                          </div>
 
-              {/* Shelf 4: New Developer Releases */}
-              {newDeveloperApps.length > 0 && (
-                <PlayStoreShelf
-                  title="New Developer Releases"
-                  subtitle="Recently submitted and approved packages"
-                  appsList={newDeveloperApps}
-                  icon={Award}
-                />
-              )}
+                          <button
+                            type="button"
+                            onClick={(e) => handleDownloadClick(e, app)}
+                            disabled={isCurrentlyDownloading}
+                            className={`mt-2.5 w-full py-1.5 px-2 rounded-xl text-[11px] font-bold text-neutral-950 transition-all flex items-center justify-center gap-1 shadow-xs active:scale-95 ${
+                              isCurrentlyDownloading
+                                ? 'bg-neutral-700 text-neutral-300'
+                                : 'bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400'
+                            }`}
+                          >
+                            {isCurrentlyDownloading ? (
+                              <>
+                                <Check className="w-3 h-3 text-emerald-400" />
+                                <span>Downloading</span>
+                              </>
+                            ) : (
+                              <>
+                                <Download className="w-3 h-3" />
+                                <span>{isPaid ? 'Buy APK' : 'Get APK'}</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {/* Shelf 1: Recommended For You (Curated in exact Super Admin display order) */}
+                  <PlayStoreShelf
+                    title="Recommended For You"
+                    subtitle="Top featured apps curated for your Android device"
+                    appsList={curatedForYouApps}
+                    icon={Sparkles}
+                  />
 
-              {/* Shelf 5: Utilities & Tools */}
-              {utilitiesToolsApps.length > 0 && (
-                <PlayStoreShelf
-                  title="Utilities & Productivity Tools"
-                  subtitle="Essential tools and system packages"
-                  appsList={utilitiesToolsApps}
-                  icon={Package}
-                  onSeeAll={() => {
-                    setMainTab('categories');
-                    setSelectedCategory('Utilities');
-                  }}
-                />
+                  {/* Shelf 2: Popular & Trending Apps (only if ranking differs from Recommended) */}
+                  {popularApps.some((a, idx) => a.id !== curatedForYouApps[idx]?.id) && (
+                    <PlayStoreShelf
+                      title="Popular & Trending Apps"
+                      subtitle="Most downloaded Android packages across Zuzu Store"
+                      appsList={popularApps}
+                      icon={Flame}
+                      onSeeAll={() => {
+                        setMainTab('top-charts');
+                        setChartType('trending');
+                      }}
+                    />
+                  )}
+
+                  {/* Shelf 3: Anime & Video Streaming (only if subset of catalog) */}
+                  {streamingAnimeApps.length > 0 && streamingAnimeApps.length < phoneApps.length && (
+                    <PlayStoreShelf
+                      title="Anime & Streaming Apps"
+                      subtitle="Fast media streaming players and anime packages"
+                      appsList={streamingAnimeApps}
+                      icon={Sparkles}
+                      onSeeAll={() => {
+                        setMainTab('categories');
+                        setSelectedCategory('Streaming');
+                      }}
+                    />
+                  )}
+
+                  {/* Shelf 4: Top Rated by Community (only if ranking differs from Recommended & Popular) */}
+                  {topRatedApps.some((a, idx) => a.id !== curatedForYouApps[idx]?.id) &&
+                    topRatedApps.some((a, idx) => a.id !== popularApps[idx]?.id) && (
+                      <PlayStoreShelf
+                        title="Top Rated by Community"
+                        subtitle="Highest user reviews and ratings"
+                        appsList={topRatedApps}
+                        icon={Star}
+                        onSeeAll={() => {
+                          setMainTab('top-charts');
+                          setChartType('top-rated');
+                        }}
+                      />
+                    )}
+
+                  {/* Shelf 5: New Developer Releases (only if newest order differs from Recommended) */}
+                  {newDeveloperApps.some((a, idx) => a.id !== curatedForYouApps[idx]?.id) && (
+                    <PlayStoreShelf
+                      title="New Developer Releases"
+                      subtitle="Recently submitted and approved packages"
+                      appsList={newDeveloperApps}
+                      icon={Award}
+                    />
+                  )}
+
+                  {/* Shelf 6: Utilities & Tools (only if subset of catalog) */}
+                  {utilitiesToolsApps.length > 0 && utilitiesToolsApps.length < phoneApps.length && (
+                    <PlayStoreShelf
+                      title="Utilities & Productivity Tools"
+                      subtitle="Essential tools and system packages"
+                      appsList={utilitiesToolsApps}
+                      icon={Package}
+                      onSeeAll={() => {
+                        setMainTab('categories');
+                        setSelectedCategory('Utilities');
+                      }}
+                    />
+                  )}
+                </>
               )}
             </div>
           )}

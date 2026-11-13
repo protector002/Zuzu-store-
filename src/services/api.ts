@@ -87,46 +87,54 @@ async function parseJsonSafely(res: Response): Promise<any> {
 export async function fetchApps(params?: { category?: string; search?: string; platform?: string }): Promise<StoreApp[]> {
   const { deletedAppIds, deletedReleaseIds } = await getTombstonesFromFirestore();
 
+  const dedupeAndClean = (list: StoreApp[]): StoreApp[] => {
+    const map = new Map<string, StoreApp>();
+    for (const a of list) {
+      if (!a || !a.id || deletedAppIds.has(a.id)) continue;
+      map.set(a.id, {
+        ...a,
+        releases: (a.releases || []).filter((r) => !deletedReleaseIds.has(r.id))
+      });
+    }
+    return Array.from(map.values());
+  };
+
   // Step 1: Read pristine apps from Firestore cloud database (with tombstone filter)
   try {
     const cloudApps = await syncLocalCatalogToFirestore();
-    // Cache to localStorage
-    try {
-      const clean = cloudApps
-        .filter((a) => !deletedAppIds.has(a.id) && !deletedAppIds.has(a.slug))
-        .map((a) => ({
-          ...a,
-          releases: (a.releases || []).filter((r) => !deletedReleaseIds.has(r.id))
-        }));
-      localStorage.setItem('zuzu_local_catalog', JSON.stringify(clean));
+    const clean = dedupeAndClean(cloudApps);
 
-      // Sync cleanly to backend server in background so server download streaming has all app releases
-      fetch('/api/sync-catalog', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ apps: clean })
-      }).catch(() => {});
-    } catch (_) {}
+    // Cache to localStorage & sync to server in background when Firestore returned apps
+    if (clean.length > 0) {
+      try {
+        localStorage.setItem('zuzu_local_catalog', JSON.stringify(clean));
 
+        // Sync cleanly to backend server in background so server download streaming has all app releases
+        fetch('/api/sync-catalog', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ apps: clean })
+        }).catch(() => {});
+      } catch (_) {}
 
-    // Apply in-memory client filters if provided
-    let filtered = cloudApps;
-    if (params?.category && params.category !== 'All') {
-      filtered = filtered.filter((a) => a.category?.toLowerCase() === params.category?.toLowerCase());
+      let filtered = clean;
+      if (params?.category && params.category !== 'All') {
+        filtered = filtered.filter((a) => a.category?.toLowerCase() === params.category?.toLowerCase());
+      }
+      if (params?.platform && params.platform !== 'All') {
+        filtered = filtered.filter((a) => a.supportedPlatforms?.includes(params.platform as any));
+      }
+      if (params?.search) {
+        const q = params.search.toLowerCase();
+        filtered = filtered.filter(
+          (a) =>
+            a.name.toLowerCase().includes(q) ||
+            a.tagline.toLowerCase().includes(q) ||
+            a.description?.toLowerCase().includes(q)
+        );
+      }
+      return filtered;
     }
-    if (params?.platform && params.platform !== 'All') {
-      filtered = filtered.filter((a) => a.supportedPlatforms?.includes(params.platform as any));
-    }
-    if (params?.search) {
-      const q = params.search.toLowerCase();
-      filtered = filtered.filter(
-        (a) =>
-          a.name.toLowerCase().includes(q) ||
-          a.tagline.toLowerCase().includes(q) ||
-          a.description?.toLowerCase().includes(q)
-      );
-    }
-    return filtered;
   } catch (firestoreErr) {
     console.warn('Firestore fetch notice:', firestoreErr);
   }
@@ -142,13 +150,7 @@ export async function fetchApps(params?: { category?: string; search?: string; p
     if (res.ok) {
       const data: StoreApp[] = await res.json();
       if (Array.isArray(data)) {
-        const clean = data
-          .filter((a) => !deletedAppIds.has(a.id) && !deletedAppIds.has(a.slug))
-          .map((a) => ({
-            ...a,
-            releases: (a.releases || []).filter((r) => !deletedReleaseIds.has(r.id))
-          }));
-
+        const clean = dedupeAndClean(data);
         try {
           localStorage.setItem('zuzu_local_catalog', JSON.stringify(clean));
         } catch (_) {}
@@ -165,12 +167,7 @@ export async function fetchApps(params?: { category?: string; search?: string; p
     if (cached) {
       const parsed: StoreApp[] = JSON.parse(cached);
       if (Array.isArray(parsed)) {
-        return parsed
-          .filter((a) => !deletedAppIds.has(a.id) && !deletedAppIds.has(a.slug))
-          .map((a) => ({
-            ...a,
-            releases: (a.releases || []).filter((r) => !deletedReleaseIds.has(r.id))
-          }));
+        return dedupeAndClean(parsed);
       }
     }
   } catch (_) {}
@@ -612,12 +609,12 @@ export async function adminDeleteApp(appId: string): Promise<{ success: boolean;
     await deleteApkBlob(appId);
   } catch (_) {}
 
-  // 3. Remove from local browser cache immediately and add to deleted set
+  // 3. Remove from local browser cache immediately by ID
   try {
     const cached = localStorage.getItem('zuzu_local_catalog');
     if (cached) {
       const existing: StoreApp[] = JSON.parse(cached);
-      const filtered = existing.filter((a) => a.id !== appId && a.slug !== appId);
+      const filtered = existing.filter((a) => a.id !== appId);
       localStorage.setItem('zuzu_local_catalog', JSON.stringify(filtered));
     }
   } catch (_) {}

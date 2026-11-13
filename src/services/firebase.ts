@@ -104,15 +104,15 @@ export async function getTombstonesFromFirestore(): Promise<{ deletedAppIds: Set
 }
 
 /**
- * Record an app ID as permanently deleted
+ * Record an app ID as permanently deleted (strictly by ID so sibling editions sharing a slug are unaffected)
  */
-export async function recordAppTombstone(appId: string, slug?: string): Promise<void> {
+export async function recordAppTombstone(appId: string, _slug?: string): Promise<void> {
+  if (!appId) return;
   // Update local storage immediately
   try {
     const existing: string[] = JSON.parse(localStorage.getItem('zuzu_deleted_apps') || '[]');
     const set = new Set(existing);
     set.add(appId);
-    if (slug) set.add(slug);
     localStorage.setItem('zuzu_deleted_apps', JSON.stringify(Array.from(set)));
   } catch (_) {}
 
@@ -123,7 +123,6 @@ export async function recordAppTombstone(appId: string, slug?: string): Promise<
     const existingData = snap.exists() ? (snap.data() as TombstoneData) : { deletedAppIds: [], deletedReleaseIds: [], updatedAt: '' };
     const appIds = new Set(existingData.deletedAppIds || []);
     appIds.add(appId);
-    if (slug) appIds.add(slug);
 
     await setDoc(docRef, {
       deletedAppIds: Array.from(appIds),
@@ -173,15 +172,16 @@ export async function getAppsFromFirestore(includeUnapproved = false): Promise<S
     const { deletedAppIds, deletedReleaseIds } = await getTombstonesFromFirestore();
     const appsRef = collection(db, APPS_COLLECTION);
     const snap = await getDocs(appsRef);
-    const apps: StoreApp[] = [];
+    const dedupeMap = new Map<string, StoreApp>();
 
     snap.forEach((d) => {
-      const data = d.data() as StoreApp;
-      const id = data.id || d.id;
-      const slug = data.slug;
+      const rawData = d.data() as StoreApp;
+      const id = rawData.id || d.id;
+      if (!id) return;
+      const data: StoreApp = rawData.id ? rawData : { ...rawData, id };
 
-      // If marked as deleted, ensure it never appears and delete the stray document from Firestore
-      if (deletedAppIds.has(id) || deletedAppIds.has(d.id) || (slug && deletedAppIds.has(slug))) {
+      // If marked as deleted by ID, exclude it and clean up stray document
+      if (deletedAppIds.has(id) || deletedAppIds.has(d.id)) {
         deleteDoc(d.ref).catch(() => {});
         return;
       }
@@ -191,13 +191,24 @@ export async function getAppsFromFirestore(includeUnapproved = false): Promise<S
         data.releases = data.releases.filter((r) => !deletedReleaseIds.has(r.id));
       }
 
-      // Public visitors only see approved apps
-      if (!includeUnapproved && data.approvalStatus && data.approvalStatus !== 'approved') {
+      // Public visitors only see approved apps that are not taken down
+      if (!includeUnapproved && (data.isTakenDown || (data.approvalStatus && data.approvalStatus !== 'approved'))) {
         return;
       }
 
-      apps.push(data);
+      const prev = dedupeMap.get(id);
+      if (!prev) {
+        dedupeMap.set(id, data);
+      } else {
+        const prevTs = new Date(prev.updatedAt || prev.createdAt || 0).getTime();
+        const nextTs = new Date(data.updatedAt || data.createdAt || 0).getTime();
+        if (nextTs >= prevTs) {
+          dedupeMap.set(id, data);
+        }
+      }
     });
+
+    const apps = Array.from(dedupeMap.values());
 
     // Sort by displayOrder first (where 1 is top/Hero), then createdAt descending
     apps.sort((a, b) => {
@@ -374,17 +385,17 @@ export async function deleteReleaseFromFirestore(appId: string, releaseId: strin
 /**
  * Delete an application from Firestore permanently and record tombstone
  */
-export async function deleteAppFromFirestore(appId: string, slug?: string): Promise<void> {
+export async function deleteAppFromFirestore(appId: string, _slug?: string): Promise<void> {
   try {
-    // 1. Record tombstone in Firestore and localStorage so it can NEVER be resurrected
-    await recordAppTombstone(appId, slug);
+    // 1. Record tombstone in Firestore and localStorage strictly by ID
+    await recordAppTombstone(appId);
 
-    // 2. Remove from local browser catalog immediately
+    // 2. Remove from local browser catalog immediately by ID
     try {
       const cached = localStorage.getItem('zuzu_local_catalog');
       if (cached) {
         const existing: StoreApp[] = JSON.parse(cached);
-        const filtered = existing.filter((a) => a.id !== appId && a.slug !== appId && (slug ? a.slug !== slug : true));
+        const filtered = existing.filter((a) => a.id !== appId);
         localStorage.setItem('zuzu_local_catalog', JSON.stringify(filtered));
       }
     } catch (_) {}
@@ -393,13 +404,13 @@ export async function deleteAppFromFirestore(appId: string, slug?: string): Prom
     const docRef = doc(db, APPS_COLLECTION, appId);
     await deleteDoc(docRef);
 
-    // 4. Also check and delete if stored under slug or alternate document id
+    // 4. Also check and delete if stored under an alternate document key whose data.id matches appId
     try {
       const snap = await getDocs(collection(db, APPS_COLLECTION));
       const deletePromises: Promise<any>[] = [];
       snap.forEach((d) => {
         const data = d.data();
-        if (d.id === appId || data.id === appId || (slug && (d.id === slug || data.slug === slug))) {
+        if (d.id === appId || data.id === appId) {
           deletePromises.push(deleteDoc(d.ref));
         }
       });
@@ -426,13 +437,15 @@ export async function syncLocalCatalogToFirestore(): Promise<StoreApp[]> {
       if (cached) {
         const localApps: StoreApp[] = JSON.parse(cached);
         if (Array.isArray(localApps)) {
-          const cleaned = localApps
-            .filter((a) => !deletedAppIds.has(a.id) && !deletedAppIds.has(a.slug))
-            .map((a) => ({
+          const deduped = new Map<string, StoreApp>();
+          for (const a of localApps) {
+            if (!a || !a.id || deletedAppIds.has(a.id)) continue;
+            deduped.set(a.id, {
               ...a,
               releases: (a.releases || []).filter((r) => !deletedReleaseIds.has(r.id))
-            }));
-          localStorage.setItem('zuzu_local_catalog', JSON.stringify(cleaned));
+            });
+          }
+          localStorage.setItem('zuzu_local_catalog', JSON.stringify(Array.from(deduped.values())));
         }
       }
     } catch (_) {}
