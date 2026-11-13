@@ -125,12 +125,27 @@ export interface StoreApp {
     name: string;
     email: string;
   };
+  ownershipHistory?: AppOwnershipTransferRecord[];
   submittedAt?: string;
   reviewedAt?: string;
   reviewedBy?: string;
   rejectionReason?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface AppOwnershipTransferRecord {
+  id: string;
+  fromId: string;
+  fromName: string;
+  fromEmail: string;
+  toId: string;
+  toName: string;
+  toEmail: string;
+  transferredAt: string;
+  transferredBy: string;
+  reason?: string;
+  updatedDisplayCredit: boolean;
 }
 
 export type AppPricingType = 'free' | 'paid';
@@ -1372,10 +1387,7 @@ app.get('/api/apps/:id', (req, res) => {
     const token = authHeader?.startsWith('Bearer ') ? authHeader.split(' ')[1] : '';
     const isAdmin = token ? verifyAdminToken(token) : false;
     const devPayload = token ? verifyDeveloperToken(token) : null;
-    const isOwner =
-      devPayload &&
-      (appItem.submittedBy?.id === devPayload.id ||
-        appItem.submittedBy?.email?.toLowerCase() === devPayload.email.toLowerCase());
+    const isOwner = devPayload ? isAppOwnedByDeveloper(appItem, devPayload) : false;
 
     if (!isAdmin && !isOwner) {
       return res.status(403).json({ error: 'This app is pending approval by Super Admin.' });
@@ -2564,16 +2576,29 @@ app.post(
   }
 );
 
+// Strict ownership helper: once submittedBy is set (e.g., via submission or ownership transfer),
+// evaluate ownership strictly by submittedBy so the previous owner does not retain access.
+function isAppOwnedByDeveloper(appItem: StoreApp, dev: { id: string; email?: string }): boolean {
+  const devId = dev.id?.trim();
+  const devEmail = dev.email?.trim().toLowerCase();
+
+  if (appItem.submittedBy && (appItem.submittedBy.id || appItem.submittedBy.email)) {
+    const subId = appItem.submittedBy.id?.trim();
+    const subEmail = appItem.submittedBy.email?.trim().toLowerCase();
+    return Boolean(
+      (devId && subId && subId === devId) ||
+      (devEmail && subEmail && subEmail === devEmail)
+    );
+  }
+
+  return Boolean(devEmail && appItem.developer?.email?.trim().toLowerCase() === devEmail);
+}
+
 // Developer: List own submitted apps
 app.get('/api/developer/my-apps', requireDeveloper, (req, res) => {
   const dev = (req as any).developer;
   const apps = getApps();
-  const myApps = apps.filter(
-    (a) =>
-      a.submittedBy?.id === dev.id ||
-      a.submittedBy?.email?.toLowerCase() === dev.email.toLowerCase() ||
-      a.developer?.email?.toLowerCase() === dev.email.toLowerCase()
-  );
+  const myApps = apps.filter((a) => isAppOwnedByDeveloper(a, dev));
   return res.json({ success: true, apps: myApps });
 });
 
@@ -2589,10 +2614,7 @@ app.delete('/api/developer/apps/:id', requireDeveloper, (req, res) => {
   }
 
   const appItem = apps[index];
-  const isOwner =
-    appItem.submittedBy?.id === dev.id ||
-    appItem.submittedBy?.email?.toLowerCase() === dev.email.toLowerCase() ||
-    appItem.developer?.email?.toLowerCase() === dev.email.toLowerCase();
+  const isOwner = isAppOwnedByDeveloper(appItem, dev);
 
   if (!isOwner) {
     return res.status(403).json({ error: 'You do not have permission to delete this application.' });
@@ -2857,12 +2879,7 @@ app.get('/api/admin/developers', requireAdmin, async (req, res) => {
   const apps = getApps();
 
   const developerList = Object.values(devs).map((dev) => {
-    const devApps = apps.filter(
-      (a) =>
-        a.submittedBy?.id === dev.id ||
-        a.submittedBy?.email?.toLowerCase() === dev.email.toLowerCase() ||
-        a.developer?.email?.toLowerCase() === dev.email.toLowerCase()
-    );
+    const devApps = apps.filter((a) => isAppOwnedByDeveloper(a, dev));
 
     const totalDownloads = devApps.reduce((acc, a) => acc + (a.downloadsTotal || 0), 0);
 
@@ -2957,20 +2974,152 @@ app.delete('/api/admin/developers/:id', requireAdmin, async (req, res) => {
 });
 
 // Super Admin: Get all apps for a specific developer
-app.get('/api/admin/developers/:id/apps', requireAdmin, (req, res) => {
+app.get('/api/admin/developers/:id/apps', requireAdmin, async (req, res) => {
   const { id } = req.params;
+  const dev = await findDeveloperByIdOrEmail(id);
   const apps = getApps();
-  const devApps = apps.filter(
-    (a) =>
-      a.submittedBy?.id === id ||
-      a.submittedBy?.email?.toLowerCase() === id.toLowerCase() ||
-      a.developer?.email?.toLowerCase() === id.toLowerCase()
+  const devApps = apps.filter((a) =>
+    isAppOwnedByDeveloper(a, dev ? { id: dev.id, email: dev.email } : { id, email: id })
   );
 
   return res.json({
     success: true,
     apps: devApps,
     count: devApps.length
+  });
+});
+
+// Super Admin: Transfer app ownership to any targeted developer or back to Official Store Admin
+app.post('/api/admin/apps/:id/transfer-ownership', requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const {
+    targetDeveloperId,
+    targetEmail,
+    targetType,
+    updateDisplayDeveloper = true,
+    reason
+  } = req.body || {};
+
+  const apps = getApps();
+  const index = apps.findIndex((a) => a.id === id || a.slug === id);
+
+  if (index === -1) {
+    return res.status(404).json({ error: 'Application not found.' });
+  }
+
+  const appItem = apps[index];
+  const normalizedTargetEmail = typeof targetEmail === 'string' ? targetEmail.trim().toLowerCase() : '';
+  const isTransferToAdmin =
+    targetType === 'admin' ||
+    targetDeveloperId === 'admin' ||
+    (normalizedTargetEmail !== '' && normalizedTargetEmail === ADMIN_EMAIL.toLowerCase());
+
+  let targetOwner: {
+    id: string;
+    name: string;
+    displayName: string;
+    email: string;
+    verified: boolean;
+    isOfficial: boolean;
+  };
+
+  if (isTransferToAdmin) {
+    targetOwner = {
+      id: 'admin',
+      name: 'ZuzuStore Official',
+      displayName: 'ZuzuStore Official',
+      email: ADMIN_EMAIL,
+      verified: true,
+      isOfficial: true
+    };
+  } else {
+    const lookupKey = String(targetDeveloperId || targetEmail || '').trim();
+    if (!lookupKey) {
+      return res.status(400).json({ error: 'Please choose a registered developer or enter a target developer email.' });
+    }
+
+    const dev = await findDeveloperByIdOrEmail(lookupKey);
+    if (!dev) {
+      return res.status(404).json({
+        error: `No registered developer found matching "${lookupKey}".`
+      });
+    }
+
+    targetOwner = {
+      id: dev.id,
+      name: dev.name,
+      displayName: dev.companyName ? `${dev.name} (${dev.companyName})` : dev.name,
+      email: dev.email,
+      verified: dev.status !== 'banned',
+      isOfficial: false
+    };
+  }
+
+  const prevId =
+    appItem.submittedBy?.id ||
+    (appItem.developer?.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase()
+      ? 'admin'
+      : appItem.developer?.email || 'admin');
+  const prevName = appItem.submittedBy?.name || appItem.developer?.name || 'ZuzuStore Official';
+  const prevEmail = appItem.submittedBy?.email || appItem.developer?.email || ADMIN_EMAIL;
+
+  if (prevId === targetOwner.id && prevEmail.toLowerCase() === targetOwner.email.toLowerCase()) {
+    return res.status(400).json({
+      error: `"${appItem.name}" is already owned by ${targetOwner.name} (${targetOwner.email}).`
+    });
+  }
+
+  const nowIso = new Date().toISOString();
+  const shouldUpdateDisplay = updateDisplayDeveloper !== false;
+  const cleanReason = typeof reason === 'string' && reason.trim() ? reason.trim() : undefined;
+
+  const transferRecord: AppOwnershipTransferRecord = {
+    id: `xfer-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    fromId: prevId,
+    fromName: prevName,
+    fromEmail: prevEmail,
+    toId: targetOwner.id,
+    toName: targetOwner.name,
+    toEmail: targetOwner.email,
+    transferredAt: nowIso,
+    transferredBy: ADMIN_EMAIL,
+    ...(cleanReason ? { reason: cleanReason } : {}),
+    updatedDisplayCredit: shouldUpdateDisplay
+  };
+
+  appItem.submittedBy = {
+    id: targetOwner.id,
+    name: targetOwner.name,
+    email: targetOwner.email
+  };
+
+  if (shouldUpdateDisplay) {
+    appItem.developer = {
+      ...appItem.developer,
+      name: targetOwner.displayName,
+      email: targetOwner.email,
+      verified: targetOwner.verified
+    };
+    appItem.isOfficial = targetOwner.isOfficial;
+  }
+
+  appItem.ownershipHistory = [transferRecord, ...(appItem.ownershipHistory || [])];
+  appItem.updatedAt = nowIso;
+
+  apps[index] = appItem;
+  saveApps(apps);
+
+  if (firestoreDb) {
+    setDoc(doc(firestoreDb, 'apps', appItem.id), cleanForFirestore(appItem), { merge: true }).catch((e) => {
+      console.warn('[Firestore] Error syncing transferred app ownership:', e);
+    });
+  }
+
+  return res.json({
+    success: true,
+    message: `Ownership of "${appItem.name}" transferred from ${prevName} to ${targetOwner.name} (${targetOwner.email}).`,
+    app: appItem,
+    transferRecord
   });
 });
 

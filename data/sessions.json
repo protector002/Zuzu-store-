@@ -187,5 +187,19 @@
     "role": "admin",
     "createdAt": 1794476606345,
     "expiresAt": 1797068606345
+  },
+  "c3NlcnV3YWdpam9objQ1MkBnbWFpbC5jb206MTc5NzE1MjY1Mjg5MDowY2M4NjkwYWVjYTU4YzkyOTMxMjdiNWI4NGJjZjU4YjI1YTcwMzdiMmYyMzczZjZhNjg2N2VmNzM0MDc3NjRk": {
+    "token": "c3NlcnV3YWdpam9objQ1MkBnbWFpbC5jb206MTc5NzE1MjY1Mjg5MDowY2M4NjkwYWVjYTU4YzkyOTMxMjdiNWI4NGJjZjU4YjI1YTcwMzdiMmYyMzczZjZhNjg2N2VmNzM0MDc3NjRk",
+    "email": "sseruwagijohn452@gmail.com",
+    "role": "admin",
+    "createdAt": 1794560652891,
+    "expiresAt": 1797152652891
+  },
+  "c3NlcnV3YWdpam9objQ1MkBnbWFpbC5jb206MTc5NzE1MjY2NTM4MzpkZjdhMGQ5ZTA3MWExMjkxMjZmZjRjMWQ5NDdlMTkzMGVhMGE2OGUwMjNmYTZkNGE4ZTE1YzYyYjRkNjAyOTgx": {
+    "token": "c3NlcnV3YWdpam9objQ1MkBnbWFpbC5jb206MTc5NzE1MjY2NTM4MzpkZjdhMGQ5ZTA3MWExMjkxMjZmZjRjMWQ5NDdlMTkzMGVhMGE2OGUwMjNmYTZkNGE4ZTE1YzYyYjRkNjAyOTgx",
+    "email": "sseruwagijohn452@gmail.com",
+    "role": "admin",
+    "createdAt": 1794560665383,
+    "expiresAt": 1797152665383
   }
 }

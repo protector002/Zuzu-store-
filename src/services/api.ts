@@ -1265,6 +1265,46 @@ export async function overrideAppMetadata(
   return data;
 }
 
+export interface TransferAppOwnershipPayload {
+  targetDeveloperId?: string;
+  targetEmail?: string;
+  targetType?: 'developer' | 'admin';
+  updateDisplayDeveloper?: boolean;
+  reason?: string;
+}
+
+export async function transferAppOwnership(
+  appId: string,
+  payload: TransferAppOwnershipPayload
+): Promise<{ success: boolean; app: StoreApp; message: string }> {
+  const res = await fetch(`/api/admin/apps/${encodeURIComponent(appId)}/transfer-ownership`, {
+    method: 'POST',
+    headers: {
+      ...getAuthHeaders(),
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(payload)
+  });
+
+  const data = await res.json();
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || 'Failed to transfer app ownership.');
+  }
+
+  if (data.app) {
+    saveAppToFirestore(data.app).catch((e) => console.warn('Transfer ownership firestore update notice:', e));
+    try {
+      const cached = JSON.parse(localStorage.getItem('zuzu_local_catalog') || '[]');
+      if (Array.isArray(cached)) {
+        const updatedCache = cached.map((item: StoreApp) => (item.id === data.app.id ? data.app : item));
+        localStorage.setItem('zuzu_local_catalog', JSON.stringify(updatedCache));
+      }
+    } catch (_) {}
+  }
+
+  return data;
+}
+
 export async function fetchBroadcast(): Promise<AdminBroadcast | null> {
   try {
     const res = await fetch('/api/broadcast');

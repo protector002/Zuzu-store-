@@ -92,12 +92,27 @@ export interface StoreApp {
     name: string;
     email: string;
   };
+  ownershipHistory?: AppOwnershipTransferRecord[];
   submittedAt?: string;
   reviewedAt?: string;
   reviewedBy?: string;
   rejectionReason?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface AppOwnershipTransferRecord {
+  id: string;
+  fromId: string;
+  fromName: string;
+  fromEmail: string;
+  toId: string;
+  toName: string;
+  toEmail: string;
+  transferredAt: string;
+  transferredBy: string;
+  reason?: string;
+  updatedDisplayCredit: boolean;
 }
 
 export interface AdminUser {

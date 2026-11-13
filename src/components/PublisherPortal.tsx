@@ -48,7 +48,9 @@ import {
   ArrowDownToLine,
   Receipt,
   CreditCard,
-  Percent
+  Percent,
+  ArrowLeftRight,
+  History
 } from 'lucide-react';
 import {
   StoreApp,
@@ -84,7 +86,8 @@ import {
   rejectWithdrawalAdmin,
   disburseWithdrawalLivePay,
   pingLivePay,
-  updateAdminCommission
+  updateAdminCommission,
+  transferAppOwnership
 } from '../services/api';
 import { isTvApp, isPhoneApp, filterPhoneApps, filterTvApps } from '../utils/editionHelper';
 
@@ -290,6 +293,17 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
     iconUrl: ''
   });
   const [isSavingOverride, setIsSavingOverride] = useState(false);
+
+  // Super Admin App Ownership Transfer State
+  const [ownershipSearchTerm, setOwnershipSearchTerm] = useState('');
+  const [transferAppModal, setTransferAppModal] = useState<StoreApp | null>(null);
+  const [transferTargetMode, setTransferTargetMode] = useState<'developer' | 'email' | 'admin'>('developer');
+  const [selectedTargetDevId, setSelectedTargetDevId] = useState('');
+  const [manualTargetEmail, setManualTargetEmail] = useState('');
+  const [transferDevSearch, setTransferDevSearch] = useState('');
+  const [updateDisplayDeveloper, setUpdateDisplayDeveloper] = useState(true);
+  const [transferReason, setTransferReason] = useState('');
+  const [isTransferringOwnership, setIsTransferringOwnership] = useState(false);
 
   // Live System Broadcast Banner State
   const [broadcast, setBroadcast] = useState<AdminBroadcast>({
@@ -647,6 +661,61 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
       setErrorMessage(err.message || 'Failed to override application metadata.');
     } finally {
       setIsSavingOverride(false);
+    }
+  };
+
+  const openTransferOwnershipModal = (app: StoreApp) => {
+    setTransferAppModal(app);
+    setTransferTargetMode('developer');
+    setSelectedTargetDevId('');
+    setManualTargetEmail('');
+    setTransferDevSearch('');
+    setUpdateDisplayDeveloper(true);
+    setTransferReason('');
+    if (developers.length === 0) {
+      loadDevelopers();
+    }
+  };
+
+  const handleTransferOwnership = async () => {
+    if (!transferAppModal) return;
+    setIsTransferringOwnership(true);
+    setErrorMessage(null);
+    try {
+      const payload =
+        transferTargetMode === 'admin'
+          ? {
+              targetType: 'admin' as const,
+              updateDisplayDeveloper,
+              reason: transferReason.trim() || undefined
+            }
+          : transferTargetMode === 'email'
+          ? {
+              targetType: 'developer' as const,
+              targetEmail: manualTargetEmail.trim(),
+              updateDisplayDeveloper,
+              reason: transferReason.trim() || undefined
+            }
+          : {
+              targetType: 'developer' as const,
+              targetDeveloperId: selectedTargetDevId,
+              updateDisplayDeveloper,
+              reason: transferReason.trim() || undefined
+            };
+
+      const res = await transferAppOwnership(transferAppModal.id, payload);
+      setSuccessMessage(res.message);
+      setTransferAppModal(null);
+      if (onRefreshCatalog) onRefreshCatalog();
+      await loadDevelopers();
+      if (inspectDev) {
+        const refreshedApps = await fetchDeveloperAppsAdmin(inspectDev.id);
+        setInspectDevApps(refreshedApps);
+      }
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Failed to transfer app ownership.');
+    } finally {
+      setIsTransferringOwnership(false);
     }
   };
 
@@ -2616,13 +2685,17 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
                             )}
                           </div>
                           <p className="text-xs text-neutral-400 line-clamp-1">{app.tagline}</p>
-                          <div className="flex items-center gap-2 text-xs text-neutral-500 mt-1">
+                          <div className="flex flex-wrap items-center gap-2 text-xs text-neutral-500 mt-1">
                         <span>v{app.currentVersion}</span>
                         <span>•</span>
                         <span>{app.releases.length} releases</span>
                         <span>•</span>
                         <span className="tabular-nums font-mono text-cyan-400 font-medium">
                           {app.downloadsTotal.toLocaleString()} downloads
+                        </span>
+                        <span>•</span>
+                        <span className="text-[11px] text-amber-300/90 font-medium">
+                          Owner: {app.submittedBy?.name || app.developer?.name || 'ZuzuStore Official'}
                         </span>
                       </div>
                     </div>
@@ -2689,6 +2762,17 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
                         <span>Take Down</span>
                       </button>
                     )}
+
+                    {/* God Mode: Super Admin Ownership Transfer */}
+                    <button
+                      type="button"
+                      onClick={() => openTransferOwnershipModal(app)}
+                      className="px-3 py-1.5 text-xs font-semibold text-indigo-300 hover:text-white bg-indigo-950/50 hover:bg-indigo-900/70 border border-indigo-800/60 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
+                      title="Transfer app ownership to any registered user or Store Admin"
+                    >
+                      <ArrowLeftRight className="w-3.5 h-3.5 text-indigo-400" />
+                      <span>Transfer Owner</span>
+                    </button>
 
                     {/* God Mode: Super Admin Metadata Override */}
                     <button
@@ -3501,6 +3585,116 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
                   })}
               </div>
             )}
+          </div>
+
+          {/* SUB-PANEL 2.5: APP OWNERSHIP & TRANSFER CONTROL */}
+          <div className="p-5 sm:p-6 bg-neutral-900/60 border border-neutral-800 rounded-3xl space-y-5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-neutral-800 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 shrink-0">
+                  <ArrowLeftRight className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="text-base font-bold text-white">App Ownership &amp; Transfer Control</h3>
+                    <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-indigo-500/10 border border-indigo-500/30 text-indigo-300">
+                      {apps.length} Catalog Apps
+                    </span>
+                  </div>
+                  <p className="text-xs text-neutral-400 mt-0.5">
+                    Reassign any app&apos;s console access, future earnings, and developer attribution to any registered user or Store Admin.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="relative">
+              <Search className="w-4 h-4 text-neutral-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={ownershipSearchTerm}
+                onChange={(e) => setOwnershipSearchTerm(e.target.value)}
+                placeholder="Search apps by app name, package ID, or current owner email..."
+                className="w-full bg-neutral-950 border border-neutral-800 focus:border-indigo-500 rounded-xl py-2 pl-10 pr-4 text-xs text-white placeholder-neutral-500 outline-none"
+              />
+            </div>
+
+            <div className="space-y-2.5 max-h-[380px] overflow-y-auto pr-1">
+              {apps
+                .filter((a) => {
+                  if (!ownershipSearchTerm.trim()) return true;
+                  const q = ownershipSearchTerm.toLowerCase();
+                  const ownerName = (a.submittedBy?.name || a.developer?.name || '').toLowerCase();
+                  const ownerEmail = (a.submittedBy?.email || a.developer?.email || '').toLowerCase();
+                  return (
+                    a.name.toLowerCase().includes(q) ||
+                    a.packageId.toLowerCase().includes(q) ||
+                    ownerName.includes(q) ||
+                    ownerEmail.includes(q)
+                  );
+                })
+                .map((app) => {
+                  const ownerName = app.submittedBy?.name || app.developer?.name || 'ZuzuStore Official';
+                  const ownerEmail = app.submittedBy?.email || app.developer?.email || 'sseruwagijohn452@gmail.com';
+                  const isAdminOwned = !app.submittedBy?.id || app.submittedBy.id === 'admin';
+                  const transferCount = app.ownershipHistory?.length || 0;
+
+                  return (
+                    <div
+                      key={app.id}
+                      className="p-3.5 bg-neutral-950/90 border border-neutral-800/80 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:border-indigo-500/40 transition-colors"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <img
+                          src={app.iconUrl || '/zuzustore-logo.png'}
+                          alt={app.name}
+                          className="w-11 h-11 rounded-xl object-contain border border-neutral-800 bg-neutral-900 p-1 shrink-0"
+                          onError={(e) => {
+                            e.currentTarget.onerror = null;
+                            e.currentTarget.src = '/zuzustore-logo.png';
+                          }}
+                        />
+                        <div className="min-w-0 space-y-0.5">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <h4 className="text-sm font-bold text-white truncate">{app.name}</h4>
+                            <span
+                              className={`px-2 py-0.5 text-[10px] font-bold rounded-full border ${
+                                isAdminOwned
+                                  ? 'bg-amber-950/60 text-amber-300 border-amber-800/70'
+                                  : 'bg-indigo-950/60 text-indigo-300 border-indigo-800/70'
+                              }`}
+                            >
+                              {isAdminOwned ? 'Store Admin' : 'Developer'}
+                            </span>
+                            {transferCount > 0 && (
+                              <span className="px-2 py-0.5 text-[10px] font-semibold rounded-full bg-neutral-900 text-neutral-300 border border-neutral-700 flex items-center gap-1">
+                                <History className="w-2.5 h-2.5 text-indigo-400" />
+                                <span>{transferCount} {transferCount === 1 ? 'Transfer' : 'Transfers'}</span>
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs text-neutral-300 truncate">
+                            Owner: <strong className="text-white">{ownerName}</strong>{' '}
+                            <span className="text-neutral-500 font-mono">({ownerEmail})</span>
+                          </p>
+                          <p className="text-[11px] text-neutral-500 font-mono truncate">
+                            {app.packageId} • v{app.currentVersion}
+                          </p>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => openTransferOwnershipModal(app)}
+                        className="px-3.5 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 rounded-xl transition-colors flex items-center justify-center gap-1.5 shrink-0 self-end sm:self-auto cursor-pointer shadow-md shadow-indigo-950/40"
+                      >
+                        <ArrowLeftRight className="w-3.5 h-3.5" />
+                        <span>Transfer Ownership</span>
+                      </button>
+                    </div>
+                  );
+                })}
+            </div>
           </div>
 
           {/* SUB-PANEL 3: STORE TAKEDOWNS & CENSORSHIP REGISTRY */}
@@ -5021,7 +5215,16 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2 shrink-0">
+                    <div className="flex flex-wrap items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => openTransferOwnershipModal(a)}
+                        className="px-2.5 py-1.5 text-[11px] font-bold text-indigo-300 hover:text-white bg-indigo-950/60 hover:bg-indigo-900/80 border border-indigo-800/70 rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer"
+                        title="Transfer this app's ownership to another user or Store Admin"
+                      >
+                        <ArrowLeftRight className="w-3.5 h-3.5 text-indigo-400" />
+                        <span>Transfer</span>
+                      </button>
                       <button
                         type="button"
                         onClick={() => onDownloadTest(a.id, a.releases?.[0]?.id)}
@@ -5229,6 +5432,303 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
                   <Check className="w-3.5 h-3.5 stroke-[3]" />
                 )}
                 <span>Save Overrides</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* GOD MODE: TRANSFER APP OWNERSHIP MODAL */}
+      {transferAppModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/85 backdrop-blur-md animate-fade-in">
+          <div
+            className="w-full max-w-lg bg-neutral-900 border border-neutral-800 rounded-3xl p-5 sm:p-6 shadow-2xl text-neutral-100 space-y-4 max-h-[90vh] flex flex-col"
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className="flex items-center justify-between border-b border-neutral-800 pb-3 shrink-0">
+              <div className="flex items-center gap-2.5 text-indigo-400 min-w-0">
+                <ArrowLeftRight className="w-5 h-5 shrink-0" />
+                <div className="min-w-0">
+                  <h3 className="text-base font-bold text-white truncate">Transfer App Ownership</h3>
+                  <p className="text-[11px] text-neutral-400 truncate">Super Admin God Mode Control</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setTransferAppModal(null)}
+                className="p-1 text-neutral-400 hover:text-white rounded-lg cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="overflow-y-auto space-y-4 pr-1 flex-1">
+              {/* App & Current Owner Summary */}
+              <div className="p-3.5 bg-neutral-950 border border-neutral-800 rounded-2xl flex items-center gap-3">
+                <img
+                  src={transferAppModal.iconUrl || '/zuzustore-logo.png'}
+                  alt={transferAppModal.name}
+                  className="w-12 h-12 rounded-xl object-contain border border-neutral-800 bg-neutral-900 p-1 shrink-0"
+                  onError={(e) => {
+                    e.currentTarget.onerror = null;
+                    e.currentTarget.src = '/zuzustore-logo.png';
+                  }}
+                />
+                <div className="min-w-0 flex-1">
+                  <h4 className="text-sm font-bold text-white truncate">{transferAppModal.name}</h4>
+                  <p className="text-[11px] text-neutral-400 font-mono truncate">
+                    Current Owner:{' '}
+                    <span className="text-amber-300 font-semibold">
+                      {transferAppModal.submittedBy?.name || transferAppModal.developer?.name || 'ZuzuStore Official'}
+                    </span>{' '}
+                    ({transferAppModal.submittedBy?.email || transferAppModal.developer?.email || 'sseruwagijohn452@gmail.com'})
+                  </p>
+                </div>
+              </div>
+
+              {/* Target Type Switcher */}
+              <div className="space-y-1.5">
+                <label className="block text-xs font-semibold text-neutral-300">Select Target Owner</label>
+                <div className="grid grid-cols-3 gap-1.5 p-1 bg-neutral-950 border border-neutral-800 rounded-xl">
+                  <button
+                    type="button"
+                    onClick={() => setTransferTargetMode('developer')}
+                    className={`py-2 px-2 text-[11px] font-bold rounded-lg transition-colors cursor-pointer ${
+                      transferTargetMode === 'developer'
+                        ? 'bg-indigo-600 text-white shadow'
+                        : 'text-neutral-400 hover:text-white'
+                    }`}
+                  >
+                    Registered User
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTransferTargetMode('email')}
+                    className={`py-2 px-2 text-[11px] font-bold rounded-lg transition-colors cursor-pointer ${
+                      transferTargetMode === 'email'
+                        ? 'bg-indigo-600 text-white shadow'
+                        : 'text-neutral-400 hover:text-white'
+                    }`}
+                  >
+                    By Email / ID
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTransferTargetMode('admin')}
+                    className={`py-2 px-2 text-[11px] font-bold rounded-lg transition-colors cursor-pointer ${
+                      transferTargetMode === 'admin'
+                        ? 'bg-amber-500 text-neutral-950 shadow'
+                        : 'text-neutral-400 hover:text-white'
+                    }`}
+                  >
+                    Store Admin
+                  </button>
+                </div>
+              </div>
+
+              {/* Mode 1: Pick from Registered Developers */}
+              {transferTargetMode === 'developer' && (
+                <div className="space-y-2">
+                  <div className="relative">
+                    <Search className="w-3.5 h-3.5 text-neutral-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      value={transferDevSearch}
+                      onChange={(e) => setTransferDevSearch(e.target.value)}
+                      placeholder="Filter developers by name, email, or studio..."
+                      className="w-full bg-neutral-950 border border-neutral-800 focus:border-indigo-500 rounded-xl py-2 pl-9 pr-3 text-xs text-white placeholder-neutral-500 outline-none"
+                    />
+                  </div>
+
+                  <div className="max-h-48 overflow-y-auto space-y-1.5 pr-1">
+                    {developers.length === 0 ? (
+                      <div className="p-4 text-center text-xs text-neutral-500 bg-neutral-950 rounded-xl border border-neutral-800">
+                        No registered developer accounts found yet. Use &quot;By Email / ID&quot; or register a developer first.
+                      </div>
+                    ) : (
+                      developers
+                        .filter((d) => {
+                          if (!transferDevSearch.trim()) return true;
+                          const q = transferDevSearch.toLowerCase();
+                          return (
+                            d.name.toLowerCase().includes(q) ||
+                            d.email.toLowerCase().includes(q) ||
+                            (d.companyName && d.companyName.toLowerCase().includes(q))
+                          );
+                        })
+                        .map((dev) => {
+                          const isCurrent =
+                            transferAppModal.submittedBy?.id === dev.id ||
+                            transferAppModal.submittedBy?.email?.toLowerCase() === dev.email.toLowerCase();
+                          const isSelected = selectedTargetDevId === dev.id;
+
+                          return (
+                            <button
+                              key={dev.id}
+                              type="button"
+                              disabled={isCurrent}
+                              onClick={() => setSelectedTargetDevId(dev.id)}
+                              className={`w-full text-left p-2.5 rounded-xl border transition-all flex items-center justify-between gap-2 cursor-pointer ${
+                                isCurrent
+                                  ? 'bg-neutral-950/40 border-neutral-800/50 opacity-50 cursor-not-allowed'
+                                  : isSelected
+                                  ? 'bg-indigo-950/60 border-indigo-500 text-white shadow-sm'
+                                  : 'bg-neutral-950 border-neutral-800 hover:border-neutral-700 text-neutral-200'
+                              }`}
+                            >
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  <span className="text-xs font-bold text-white truncate">{dev.name}</span>
+                                  {dev.companyName && (
+                                    <span className="text-[10px] text-neutral-400">({dev.companyName})</span>
+                                  )}
+                                  {dev.status === 'frozen' && (
+                                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-950 text-cyan-400 border border-cyan-800">
+                                      Frozen
+                                    </span>
+                                  )}
+                                  {dev.status === 'banned' && (
+                                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-rose-950 text-rose-400 border border-rose-800">
+                                      Banned
+                                    </span>
+                                  )}
+                                  {isCurrent && (
+                                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-800">
+                                      Current Owner
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-[11px] text-neutral-400 font-mono truncate">{dev.email}</p>
+                              </div>
+
+                              {isSelected && <CheckCircle2 className="w-4 h-4 text-indigo-400 shrink-0" />}
+                            </button>
+                          );
+                        })
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Mode 2: Enter Exact Developer Email or ID */}
+              {transferTargetMode === 'email' && (
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-semibold text-neutral-300">
+                    Registered User Email or Developer ID
+                  </label>
+                  <input
+                    type="text"
+                    value={manualTargetEmail}
+                    onChange={(e) => setManualTargetEmail(e.target.value)}
+                    placeholder="e.g. developer@example.com or dev_..."
+                    className="w-full bg-neutral-950 border border-neutral-800 focus:border-indigo-500 rounded-xl py-2.5 px-3 text-xs text-white placeholder-neutral-500 outline-none"
+                  />
+                  <p className="text-[11px] text-neutral-500">
+                    Must match an existing registered developer email/ID (or Super Admin email).
+                  </p>
+                </div>
+              )}
+
+              {/* Mode 3: Reclaim / Transfer to Official Store Admin */}
+              {transferTargetMode === 'admin' && (
+                <div className="p-3.5 rounded-2xl bg-amber-950/25 border border-amber-700/50 text-xs text-amber-200 space-y-1">
+                  <div className="font-bold text-amber-300 flex items-center gap-1.5">
+                    <Crown className="w-4 h-4" />
+                    <span>Transfer to Official Store Admin</span>
+                  </div>
+                  <p className="text-[11px] text-neutral-300 leading-relaxed">
+                    Reassigns ownership to <strong className="text-white">ZuzuStore Official</strong> ({admin?.email || 'sseruwagijohn452@gmail.com'}), marks it as official store-managed, and routes future revenue to the Store Admin wallet.
+                  </p>
+                </div>
+              )}
+
+              {/* Public Credit Toggle */}
+              <label className="flex items-start gap-2.5 p-3 bg-neutral-950 border border-neutral-800 rounded-xl cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={updateDisplayDeveloper}
+                  onChange={(e) => setUpdateDisplayDeveloper(e.target.checked)}
+                  className="mt-0.5 rounded border-neutral-700 bg-neutral-900 text-indigo-500 focus:ring-indigo-500"
+                />
+                <div className="space-y-0.5">
+                  <span className="block text-xs font-semibold text-white">
+                    Update public developer name &amp; email on storefront
+                  </span>
+                  <span className="block text-[11px] text-neutral-400">
+                    Uncheck to transfer console &amp; payout rights silently while keeping the original storefront author credit.
+                  </span>
+                </div>
+              </label>
+
+              {/* Reason / Audit Note */}
+              <div>
+                <label className="block text-xs font-semibold text-neutral-300 mb-1">
+                  Transfer Reason / Audit Note (Optional)
+                </label>
+                <input
+                  type="text"
+                  value={transferReason}
+                  onChange={(e) => setTransferReason(e.target.value)}
+                  placeholder="e.g. Studio acquisition, co-founder handover, or admin takeover"
+                  className="w-full bg-neutral-950 border border-neutral-800 focus:border-indigo-500 rounded-xl py-2 px-3 text-xs text-white placeholder-neutral-500 outline-none"
+                />
+              </div>
+
+              {/* Financial Safeguard Notice */}
+              <div className="p-3 rounded-xl bg-indigo-950/30 border border-indigo-800/50 text-[11px] text-indigo-200 leading-relaxed">
+                <strong>Revenue Rule:</strong> Future app sales and withdrawals immediately route to the new owner. Past completed earnings remain safely in the previous owner&apos;s wallet ledger.
+              </div>
+
+              {/* Ownership History Audit Log */}
+              {transferAppModal.ownershipHistory && transferAppModal.ownershipHistory.length > 0 && (
+                <div className="space-y-1.5 pt-1">
+                  <div className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider flex items-center gap-1.5">
+                    <History className="w-3.5 h-3.5 text-indigo-400" />
+                    <span>Previous Ownership Transfers ({transferAppModal.ownershipHistory.length})</span>
+                  </div>
+                  <div className="space-y-1.5 max-h-28 overflow-y-auto pr-1">
+                    {transferAppModal.ownershipHistory.map((rec) => (
+                      <div
+                        key={rec.id}
+                        className="p-2 rounded-xl bg-neutral-950 border border-neutral-800/80 text-[11px] text-neutral-400"
+                      >
+                        <div className="text-neutral-200 font-medium">
+                          {rec.fromName} → <span className="text-indigo-300">{rec.toName}</span>
+                        </div>
+                        <div className="text-[10px] text-neutral-500 font-mono">
+                          {new Date(rec.transferredAt).toLocaleString()} {rec.reason ? `• ${rec.reason}` : ''}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="flex flex-wrap items-center justify-end gap-2.5 pt-3 border-t border-neutral-800 shrink-0">
+              <button
+                type="button"
+                onClick={() => setTransferAppModal(null)}
+                className="px-4 py-2 text-xs font-semibold text-neutral-400 hover:text-white bg-neutral-800 rounded-xl cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={
+                  isTransferringOwnership ||
+                  (transferTargetMode === 'developer' && !selectedTargetDevId) ||
+                  (transferTargetMode === 'email' && !manualTargetEmail.trim())
+                }
+                onClick={handleTransferOwnership}
+                className="px-5 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 rounded-xl transition-colors flex items-center gap-1.5 shadow-lg shadow-indigo-950/50 disabled:opacity-50 cursor-pointer"
+              >
+                {isTransferringOwnership ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <ArrowLeftRight className="w-3.5 h-3.5" />
+                )}
+                <span>Confirm Ownership Transfer</span>
               </button>
             </div>
           </div>
