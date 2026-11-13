@@ -9,7 +9,8 @@ import {
   DeveloperWallet,
   WithdrawalRequest,
   AdminFinancialSummary,
-  AppPriceConfig
+  AppPriceConfig,
+  AppTransferListing
 } from '../types';
 import {
   getAppsFromFirestore,
@@ -1782,4 +1783,201 @@ export async function updateAdminCommission(
 
   return data;
 }
+
+// ==========================================
+// DEVELOPER-TO-DEVELOPER APP OWNERSHIP TRANSFERS & FULL OWNER RIGHTS
+// ==========================================
+
+export async function updateDeveloperOwnedApp(
+  appId: string,
+  updates: {
+    name?: string;
+    tagline?: string;
+    description?: string;
+    category?: string;
+    iconUrl?: string;
+    heroImageUrl?: string;
+    screenshots?: string[];
+    packageId?: string;
+    appEdition?: 'phone' | 'tv' | 'both';
+    isTvCompatible?: boolean;
+    directDownloadUrl?: string;
+    pricing?: AppPriceConfig;
+  }
+): Promise<{ success: boolean; app: StoreApp; message: string }> {
+  const res = await fetch(`/api/developer/apps/${encodeURIComponent(appId)}`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getDeveloperAuthHeaders()
+    },
+    body: JSON.stringify(updates)
+  });
+
+  const data = await res.json();
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || 'Failed to update application details.');
+  }
+
+  if (data.app) {
+    saveAppToFirestore(data.app).catch(() => {});
+    try {
+      const cached = JSON.parse(localStorage.getItem('zuzu_local_catalog') || '[]');
+      if (Array.isArray(cached)) {
+        const updatedCache = cached.map((item: StoreApp) => (item.id === data.app.id ? data.app : item));
+        localStorage.setItem('zuzu_local_catalog', JSON.stringify(updatedCache));
+      }
+    } catch (_) {}
+  }
+
+  return data;
+}
+
+export async function addDeveloperOwnedAppRelease(
+  appId: string,
+  formData: FormData
+): Promise<{ success: boolean; app: StoreApp; message: string }> {
+  const res = await fetch(`/api/developer/apps/${encodeURIComponent(appId)}/releases`, {
+    method: 'POST',
+    headers: {
+      ...getDeveloperAuthHeaders()
+    },
+    body: formData
+  });
+
+  const data = await res.json();
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || 'Failed to publish new app version.');
+  }
+
+  if (data.app) {
+    saveAppToFirestore(data.app).catch(() => {});
+    try {
+      const cached = JSON.parse(localStorage.getItem('zuzu_local_catalog') || '[]');
+      if (Array.isArray(cached)) {
+        const updatedCache = cached.map((item: StoreApp) => (item.id === data.app.id ? data.app : item));
+        localStorage.setItem('zuzu_local_catalog', JSON.stringify(updatedCache));
+      }
+    } catch (_) {}
+  }
+
+  return data;
+}
+
+export async function fetchDeveloperDirectory(): Promise<
+  Array<{ id: string; name: string; email: string; companyName?: string }>
+> {
+  const res = await fetch('/api/developer/directory', {
+    headers: { ...getDeveloperAuthHeaders() }
+  });
+  const data = await res.json();
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || 'Failed to load fellow developers.');
+  }
+  return data.developers || [];
+}
+
+export async function createDeveloperAppTransferListing(payload: {
+  appId: string;
+  askingPrice: number;
+  targetBuyerEmail?: string;
+  targetBuyerId?: string;
+  note?: string;
+}): Promise<{ success: boolean; listing: AppTransferListing; message: string }> {
+  const res = await fetch('/api/developer/transfers/list', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getDeveloperAuthHeaders()
+    },
+    body: JSON.stringify(payload)
+  });
+
+  const data = await res.json();
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || 'Failed to create app ownership transfer listing.');
+  }
+  return data;
+}
+
+export async function fetchDeveloperTransfers(): Promise<{
+  myListings: AppTransferListing[];
+  incomingOffers: AppTransferListing[];
+  marketplaceOffers: AppTransferListing[];
+  completedHistory: AppTransferListing[];
+}> {
+  const res = await fetch('/api/developer/transfers', {
+    headers: { ...getDeveloperAuthHeaders() }
+  });
+  const data = await res.json();
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || 'Failed to fetch ownership transfer listings.');
+  }
+  return {
+    myListings: data.myListings || [],
+    incomingOffers: data.incomingOffers || [],
+    marketplaceOffers: data.marketplaceOffers || [],
+    completedHistory: data.completedHistory || []
+  };
+}
+
+export async function cancelDeveloperAppTransfer(
+  transferId: string
+): Promise<{ success: boolean; listing: AppTransferListing; message: string }> {
+  const res = await fetch(`/api/developer/transfers/${encodeURIComponent(transferId)}/cancel`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getDeveloperAuthHeaders()
+    }
+  });
+  const data = await res.json();
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || 'Failed to cancel transfer offer.');
+  }
+  return data;
+}
+
+export async function purchaseDeveloperAppTransfer(
+  transferId: string,
+  payload: {
+    paymentMethod: 'livepay_mtn' | 'livepay_airtel' | 'wallet';
+    phoneNumber?: string;
+  }
+): Promise<{
+  success: boolean;
+  listing: AppTransferListing;
+  app: StoreApp;
+  transaction: AppSaleTransaction;
+  buyerWallet?: DeveloperWallet;
+  message: string;
+}> {
+  const res = await fetch(`/api/developer/transfers/${encodeURIComponent(transferId)}/purchase`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getDeveloperAuthHeaders()
+    },
+    body: JSON.stringify(payload)
+  });
+
+  const data = await res.json();
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || 'Failed to complete app ownership transfer payment.');
+  }
+
+  if (data.app) {
+    saveAppToFirestore(data.app).catch(() => {});
+    try {
+      const cached = JSON.parse(localStorage.getItem('zuzu_local_catalog') || '[]');
+      if (Array.isArray(cached)) {
+        const updatedCache = cached.map((item: StoreApp) => (item.id === data.app.id ? data.app : item));
+        localStorage.setItem('zuzu_local_catalog', JSON.stringify(updatedCache));
+      }
+    } catch (_) {}
+  }
+
+  return data;
+}
+
 

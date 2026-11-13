@@ -4225,40 +4225,40 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
               <div className="p-4 bg-gradient-to-br from-amber-950/40 via-neutral-950 to-neutral-950 border border-amber-500/40 rounded-2xl shadow-lg">
                 <span className="text-[11px] font-semibold uppercase tracking-wider text-amber-400 block">
-                  ★ Super Admin ({commissionPercentInput}%) Profit
+                  ★ Super Admin Total Profit
                 </span>
                 <div className="text-2xl font-black text-amber-300 mt-1 tabular-nums">
                   {(financials?.totalAdminCommissionEarned || 0).toLocaleString()}{' '}
                   <span className="text-xs font-mono text-amber-400/80">{financials?.currency || 'UGX'}</span>
                 </div>
                 <div className="text-[10px] text-amber-400/90 mt-1">
-                  {commissionPercentInput}% commission cut on all store sales
+                  {commissionPercentInput}% app sales + 10% ownership transfers ({(financials?.totalTransferAdminFees || 0).toLocaleString()} {financials?.currency || 'UGX'} from {financials?.totalCompletedTransfersCount || 0} transfers)
                 </div>
               </div>
 
               <div className="p-4 bg-neutral-950 border border-neutral-800 rounded-2xl">
                 <span className="text-[11px] font-semibold uppercase tracking-wider text-neutral-400 block">
-                  Total Gross Store Sales
+                  Total Gross Volume
                 </span>
                 <div className="text-xl font-black text-white mt-1 tabular-nums">
                   {(financials?.totalGrossSales || 0).toLocaleString()}{' '}
                   <span className="text-xs font-mono text-neutral-400">{financials?.currency || 'UGX'}</span>
                 </div>
                 <div className="text-[10px] text-neutral-500 mt-1">
-                  Real volume paid by all buyers
+                  App sales + {(financials?.totalTransferGross || 0).toLocaleString()} {financials?.currency || 'UGX'} in ownership transfers
                 </div>
               </div>
 
               <div className="p-4 bg-emerald-950/20 border border-emerald-900/40 rounded-2xl">
                 <span className="text-[11px] font-semibold uppercase tracking-wider text-emerald-400 block">
-                  Developer Net Earnings ({Math.max(0, 100 - Number(commissionPercentInput))}%)
+                  Developer Net Earnings
                 </span>
                 <div className="text-xl font-black text-emerald-300 mt-1 tabular-nums">
                   {(financials?.totalDeveloperNetEarnings || 0).toLocaleString()}{' '}
                   <span className="text-xs font-mono text-emerald-400">{financials?.currency || 'UGX'}</span>
                 </div>
                 <div className="text-[10px] text-emerald-400/80 mt-1">
-                  Credited to developer wallets
+                  Credited to developer wallets ({Math.max(0, 100 - Number(commissionPercentInput))}% sales / 90% transfers)
                 </div>
               </div>
 
@@ -4444,17 +4444,17 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
                     <span>Real-Time Store Sales Transactions</span>
                   </h4>
                   <p className="text-[11px] text-neutral-400">
-                    All completed purchases across the website showing 6% Super Admin commission and 94% developer net.
+                    All completed app purchases ({commissionPercentInput}% Super Admin cut) and developer-to-developer ownership transfers (10% Super Admin cut).
                   </p>
                 </div>
                 <span className="text-xs text-neutral-400 font-mono bg-neutral-950 px-2.5 py-1 rounded-lg border border-neutral-800">
-                  {adminSales.length} Total Sales
+                  {adminSales.length} Total Transactions
                 </span>
               </div>
 
               {adminSales.length === 0 ? (
                 <div className="p-8 text-center text-xs text-neutral-500 bg-neutral-950 rounded-2xl border border-neutral-800">
-                  No app sales recorded yet. When users purchase paid apps on Zuzu Store, transactions will appear here.
+                  No app sales recorded yet. When users purchase paid apps or developers transfer ownership on Zuzu Store, transactions will appear here.
                 </div>
               ) : (
                 <div className="overflow-x-auto bg-neutral-950 rounded-2xl border border-neutral-800/80">
@@ -4465,8 +4465,8 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
                         <th className="p-3">Application</th>
                         <th className="p-3">Buyer</th>
                         <th className="p-3">Gross Paid</th>
-                        <th className="p-3">Admin 6% Cut</th>
-                        <th className="p-3">Developer 94% Net</th>
+                        <th className="p-3">Admin Cut</th>
+                        <th className="p-3">Developer Net</th>
                         <th className="p-3">Payment Method</th>
                         <th className="p-3">Status</th>
                       </tr>
@@ -4478,7 +4478,12 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
                             {new Date(sale.createdAt).toLocaleString()}
                           </td>
                           <td className="p-3 font-bold text-white">
-                            {sale.appName}
+                            <div>{sale.appName}</div>
+                            {sale.transactionType === 'ownership_transfer' && (
+                              <span className="inline-block mt-0.5 text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30 font-semibold">
+                                Ownership Transfer (10% Fee)
+                              </span>
+                            )}
                           </td>
                           <td className="p-3 font-mono text-[11px]">
                             <div>{sale.customerName}</div>
@@ -4488,7 +4493,7 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
                             {sale.grossAmount.toLocaleString()} {sale.currency}
                           </td>
                           <td className="p-3 font-mono font-bold text-amber-400">
-                            +{sale.adminCommissionAmount.toLocaleString()} {sale.currency}
+                            +{sale.adminCommissionAmount.toLocaleString()} {sale.currency} ({sale.adminCommissionPercent || commissionPercentInput}%)
                           </td>
                           <td className="p-3 font-mono text-emerald-400">
                             {sale.developerNetAmount.toLocaleString()} {sale.currency}

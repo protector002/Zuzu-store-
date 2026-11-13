@@ -1,38 +1,38 @@
 [
   {
-    "id": "wdr-1794225136437-aavoy",
-    "developerId": "dev-1794224084386-2nucd",
     "developerName": "Monetized Dev",
-    "developerEmail": "dev_monetize_test@zuzustore.com",
-    "amount": 2000,
-    "currency": "UGX",
+    "developerId": "dev-1794224084386-2nucd",
     "payoutMethod": "mobile_money_mtn",
+    "processedBy": "sseruwagijohn452@gmail.com",
     "payoutDetails": {
       "accountName": "Ronald Mugisha",
       "accountNumber": "0772000000"
     },
-    "status": "paid",
-    "requestedAt": "2026-11-09T11:52:16.437Z",
-    "transactionRef": "MOMO-DIRECT-APPROVED",
     "processedAt": "2026-11-09T11:52:16.730Z",
-    "processedBy": "sseruwagijohn452@gmail.com"
+    "id": "wdr-1794225136437-aavoy",
+    "transactionRef": "MOMO-DIRECT-APPROVED",
+    "developerEmail": "dev_monetize_test@zuzustore.com",
+    "requestedAt": "2026-11-09T11:52:16.437Z",
+    "currency": "UGX",
+    "status": "paid",
+    "amount": 2000
   },
   {
-    "payoutMethod": "mobile_money_mtn",
+    "id": "wdr-1794224457126-kvtii",
+    "developerName": "Monetized Dev",
+    "transactionRef": "MTN-MOMO-TX-4488219",
     "requestedAt": "2026-11-09T11:40:57.126Z",
     "currency": "UGX",
-    "developerId": "dev-1794224084386-2nucd",
-    "processedAt": "2026-11-09T11:40:57.150Z",
-    "developerEmail": "dev_monetize_test@zuzustore.com",
-    "amount": 2500,
-    "transactionRef": "MTN-MOMO-TX-4488219",
-    "processedBy": "sseruwagijohn452@gmail.com",
-    "id": "wdr-1794224457126-kvtii",
-    "status": "paid",
     "payoutDetails": {
-      "accountName": "Hakim Mukasa",
-      "accountNumber": "+256771234567"
+      "accountNumber": "+256771234567",
+      "accountName": "Hakim Mukasa"
     },
-    "developerName": "Monetized Dev"
+    "developerId": "dev-1794224084386-2nucd",
+    "processedBy": "sseruwagijohn452@gmail.com",
+    "developerEmail": "dev_monetize_test@zuzustore.com",
+    "status": "paid",
+    "amount": 2500,
+    "payoutMethod": "mobile_money_mtn",
+    "processedAt": "2026-11-09T11:40:57.150Z"
   }
 ]

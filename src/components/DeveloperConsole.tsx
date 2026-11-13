@@ -29,9 +29,25 @@ import {
   CreditCard,
   RefreshCw,
   Percent,
-  X
+  X,
+  ArrowRightLeft,
+  Edit3,
+  UploadCloud,
+  UserCheck,
+  History,
+  ShoppingBag,
+  Sparkles,
+  Tag
 } from 'lucide-react';
-import { DeveloperUser, StoreApp, AdminBroadcast, DeveloperWallet, WithdrawalRequest, AppPricingType } from '../types';
+import {
+  DeveloperUser,
+  StoreApp,
+  AdminBroadcast,
+  DeveloperWallet,
+  WithdrawalRequest,
+  AppPricingType,
+  AppTransferListing
+} from '../types';
 import { saveApkBlob } from '../utils/fileStorage';
 import {
   submitDeveloperApp,
@@ -42,7 +58,14 @@ import {
   fetchDeveloperWallet,
   requestDeveloperWithdrawal,
   fetchDeveloperWithdrawals,
-  fetchStoreCommission
+  fetchStoreCommission,
+  fetchDeveloperDirectory,
+  createDeveloperAppTransferListing,
+  fetchDeveloperTransfers,
+  cancelDeveloperAppTransfer,
+  purchaseDeveloperAppTransfer,
+  updateDeveloperOwnedApp,
+  addDeveloperOwnedAppRelease
 } from '../services/api';
 
 // Compress icon image into a lightweight Data URL (permanent across restarts/instances)
@@ -146,9 +169,10 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
   onLogout,
   onBackToStore,
 }) => {
-  const [activeTab, setActiveTab] = useState<'submit' | 'my-apps' | 'wallet'>('submit');
+  const [activeTab, setActiveTab] = useState<'submit' | 'my-apps' | 'transfers' | 'wallet'>('submit');
   const [myApps, setMyApps] = useState<StoreApp[]>([]);
   const [isLoadingApps, setIsLoadingApps] = useState(false);
+  const [myAppsMessage, setMyAppsMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [broadcast, setBroadcast] = useState<AdminBroadcast | null>(null);
 
   // Wallet & Earnings State
@@ -167,6 +191,65 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
   // Live Platform Commission & Fee Rates (Dynamic)
   const [adminCommissionPercent, setAdminCommissionPercent] = useState<number>(6);
   const [feeRatePer1000, setFeeRatePer1000] = useState<number>(100);
+
+  // Developer-to-Developer App Ownership Transfer State
+  const [myTransferListings, setMyTransferListings] = useState<AppTransferListing[]>([]);
+  const [incomingTransfers, setIncomingTransfers] = useState<AppTransferListing[]>([]);
+  const [marketTransfers, setMarketTransfers] = useState<AppTransferListing[]>([]);
+  const [transferHistory, setTransferHistory] = useState<AppTransferListing[]>([]);
+  const [fellowDevelopers, setFellowDevelopers] = useState<
+    Array<{ id: string; name: string; email: string; companyName?: string }>
+  >([]);
+  const [isLoadingTransfers, setIsLoadingTransfers] = useState(false);
+  const [transfersFeedback, setTransfersFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [cancellingTransferId, setCancellingTransferId] = useState<string | null>(null);
+
+  // Sell / Transfer App Ownership Modal
+  const [sellModalApp, setSellModalApp] = useState<StoreApp | null>(null);
+  const [sellMode, setSellMode] = useState<'specific' | 'open'>('specific');
+  const [sellTargetEmail, setSellTargetEmail] = useState('');
+  const [sellPrice, setSellPrice] = useState<number>(50000);
+  const [sellNote, setSellNote] = useState('');
+  const [isCreatingTransfer, setIsCreatingTransfer] = useState(false);
+  const [sellError, setSellError] = useState<string | null>(null);
+
+  // Buyer Checkout Modal for Purchasing App Ownership
+  const [buyModalListing, setBuyModalListing] = useState<AppTransferListing | null>(null);
+  const [buyPaymentMethod, setBuyPaymentMethod] = useState<'livepay_mtn' | 'livepay_airtel' | 'wallet'>('livepay_mtn');
+  const [buyPhoneNumber, setBuyPhoneNumber] = useState('');
+  const [isPurchasingTransfer, setIsPurchasingTransfer] = useState(false);
+  const [buyError, setBuyError] = useState<string | null>(null);
+
+  // Full Owner Control: Edit Owned App Modal
+  const [editModalApp, setEditModalApp] = useState<StoreApp | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editTagline, setEditTagline] = useState('');
+  const [editDescription, setEditDescription] = useState('');
+  const [editCategory, setEditCategory] = useState('Streaming');
+  const [editPackageId, setEditPackageId] = useState('');
+  const [editEdition, setEditEdition] = useState<'phone' | 'tv' | 'both'>('phone');
+  const [editDirectUrl, setEditDirectUrl] = useState('');
+  const [editPricingType, setEditPricingType] = useState<AppPricingType>('free');
+  const [editPrice, setEditPrice] = useState<number>(5000);
+  const [editCurrency, setEditCurrency] = useState<string>('UGX');
+  const [editIconUrl, setEditIconUrl] = useState('');
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+
+  // Full Owner Control: Release New Version Modal
+  const [releaseModalApp, setReleaseModalApp] = useState<StoreApp | null>(null);
+  const [relVersion, setRelVersion] = useState('');
+  const [relPlatform, setRelPlatform] = useState<'Android' | 'Android TV' | 'Fire TV' | 'Smart TV'>('Android');
+  const [relMinOS, setRelMinOS] = useState('Android 8.0+');
+  const [relChangelog, setRelChangelog] = useState('');
+  const [relApkFile, setRelApkFile] = useState<File | null>(null);
+  const [relDirectUrl, setRelDirectUrl] = useState('');
+  const [isPublishingRelease, setIsPublishingRelease] = useState(false);
+  const [relError, setRelError] = useState<string | null>(null);
+
+  // Confirm Withdraw Submission Modal (no window.confirm)
+  const [withdrawAppModal, setWithdrawAppModal] = useState<StoreApp | null>(null);
+  const [isDeletingApp, setIsDeletingApp] = useState(false);
 
   const isFrozen = developer.status === 'frozen';
   const isBanned = developer.status === 'banned';
@@ -230,9 +313,30 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
     }
   };
 
+  // Load developer-to-developer app ownership transfer offers & fellow developer directory
+  const loadTransfers = async () => {
+    setIsLoadingTransfers(true);
+    try {
+      const [trfData, dirData] = await Promise.all([
+        fetchDeveloperTransfers(),
+        fetchDeveloperDirectory().catch(() => [])
+      ]);
+      setMyTransferListings(trfData.myListings);
+      setIncomingTransfers(trfData.incomingOffers);
+      setMarketTransfers(trfData.marketplaceOffers);
+      setTransferHistory(trfData.completedHistory);
+      setFellowDevelopers(dirData);
+    } catch (e) {
+      console.warn('Failed to load app transfers:', e);
+    } finally {
+      setIsLoadingTransfers(false);
+    }
+  };
+
   useEffect(() => {
     loadMyApps();
     loadWallet();
+    loadTransfers();
     fetchStoreCommission().then((data) => {
       if (data) {
         setAdminCommissionPercent(data.adminCommissionPercent ?? 6);
@@ -461,16 +565,244 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
     }
   };
 
-  const handleDelete = async (appId: string, appName: string) => {
-    if (!window.confirm(`Are you sure you want to withdraw the submission for "${appName}"?`)) {
+  const handleConfirmDeleteApp = async () => {
+    if (!withdrawAppModal) return;
+    setIsDeletingApp(true);
+    try {
+      await deleteDeveloperApp(withdrawAppModal.id);
+      setMyAppsMessage({
+        type: 'success',
+        text: `Application "${withdrawAppModal.name}" was withdrawn from the store.`
+      });
+      setWithdrawAppModal(null);
+      await Promise.all([loadMyApps(), loadTransfers()]);
+    } catch (err: any) {
+      setMyAppsMessage({
+        type: 'error',
+        text: err.message || 'Could not withdraw application. Please try again.'
+      });
+    } finally {
+      setIsDeletingApp(false);
+    }
+  };
+
+  const openSellTransferModal = (app: StoreApp) => {
+    setSellModalApp(app);
+    setSellMode('specific');
+    setSellTargetEmail('');
+    setSellPrice(50000);
+    setSellNote('');
+    setSellError(null);
+    if (fellowDevelopers.length === 0) {
+      fetchDeveloperDirectory().then(setFellowDevelopers).catch(() => {});
+    }
+  };
+
+  const handleCreateTransferListing = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!sellModalApp) return;
+    setSellError(null);
+
+    if (!sellPrice || isNaN(sellPrice) || sellPrice < 1000) {
+      setSellError('Minimum ownership sale price is 1,000 UGX.');
       return;
     }
 
+    if (sellMode === 'specific' && !sellTargetEmail.trim()) {
+      setSellError('Please choose or enter the recipient developer email.');
+      return;
+    }
+
+    setIsCreatingTransfer(true);
     try {
-      await deleteDeveloperApp(appId);
+      const res = await createDeveloperAppTransferListing({
+        appId: sellModalApp.id,
+        askingPrice: sellPrice,
+        targetBuyerEmail: sellMode === 'specific' ? sellTargetEmail.trim() : undefined,
+        note: sellNote.trim() || undefined
+      });
+      setSellModalApp(null);
+      setTransfersFeedback({ type: 'success', text: res.message });
+      setMyAppsMessage({ type: 'success', text: res.message });
+      await loadTransfers();
+      setActiveTab('transfers');
+    } catch (err: any) {
+      setSellError(err.message || 'Failed to create transfer offer.');
+    } finally {
+      setIsCreatingTransfer(false);
+    }
+  };
+
+  const handleCancelTransfer = async (transferId: string) => {
+    setCancellingTransferId(transferId);
+    setTransfersFeedback(null);
+    try {
+      const res = await cancelDeveloperAppTransfer(transferId);
+      setTransfersFeedback({ type: 'success', text: res.message });
+      await loadTransfers();
+    } catch (err: any) {
+      setTransfersFeedback({ type: 'error', text: err.message || 'Could not cancel transfer offer.' });
+    } finally {
+      setCancellingTransferId(null);
+    }
+  };
+
+  const openBuyTransferModal = (listing: AppTransferListing) => {
+    setBuyModalListing(listing);
+    setBuyPaymentMethod('livepay_mtn');
+    setBuyPhoneNumber('');
+    setBuyError(null);
+    loadWallet();
+  };
+
+  const handleCompleteTransferPurchase = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!buyModalListing) return;
+    setBuyError(null);
+
+    if (buyPaymentMethod !== 'wallet' && !buyPhoneNumber.trim()) {
+      setBuyError('Please enter your MTN or Airtel Mobile Money phone number to complete payment.');
+      return;
+    }
+
+    if (buyPaymentMethod === 'wallet' && (wallet?.availableBalance || 0) < buyModalListing.askingPrice) {
+      setBuyError(
+        `Insufficient wallet balance. Available: ${(wallet?.availableBalance || 0).toLocaleString()} UGX, Required: ${buyModalListing.askingPrice.toLocaleString()} UGX.`
+      );
+      return;
+    }
+
+    setIsPurchasingTransfer(true);
+    try {
+      const res = await purchaseDeveloperAppTransfer(buyModalListing.id, {
+        paymentMethod: buyPaymentMethod,
+        phoneNumber: buyPaymentMethod !== 'wallet' ? buyPhoneNumber.trim() : undefined
+      });
+      setBuyModalListing(null);
+      setTransfersFeedback({ type: 'success', text: res.message });
+      setMyAppsMessage({
+        type: 'success',
+        text: `Ownership acquired! You now have full control and full rights over "${res.app.name}".`
+      });
+      await Promise.all([loadMyApps(), loadTransfers(), loadWallet()]);
+      setActiveTab('my-apps');
+    } catch (err: any) {
+      setBuyError(err.message || 'Failed to process app ownership transfer payment.');
+    } finally {
+      setIsPurchasingTransfer(false);
+    }
+  };
+
+  const openEditAppModal = (app: StoreApp) => {
+    setEditModalApp(app);
+    setEditName(app.name);
+    setEditTagline(app.tagline || '');
+    setEditDescription(app.description || '');
+    setEditCategory(app.category || 'Streaming');
+    setEditPackageId(app.packageId || '');
+    setEditEdition(app.appEdition || 'phone');
+    setEditDirectUrl(app.releases?.[0]?.directDownloadUrl || '');
+    setEditPricingType(app.pricing?.type || 'free');
+    setEditPrice(app.pricing?.price || 5000);
+    setEditCurrency(app.pricing?.currency || 'UGX');
+    setEditIconUrl(app.iconUrl || '');
+    setEditError(null);
+  };
+
+  const handleEditIconUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      const url = await convertImageToDataUrl(e.target.files[0]);
+      setEditIconUrl(url);
+      e.target.value = '';
+    }
+  };
+
+  const handleSaveOwnedAppEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editModalApp) return;
+    setEditError(null);
+
+    if (!editName.trim()) {
+      setEditError('Application name is required.');
+      return;
+    }
+
+    setIsSavingEdit(true);
+    try {
+      const res = await updateDeveloperOwnedApp(editModalApp.id, {
+        name: editName.trim(),
+        tagline: editTagline.trim(),
+        description: editDescription.trim(),
+        category: editCategory,
+        packageId: editPackageId.trim(),
+        appEdition: editEdition,
+        isTvCompatible: editEdition === 'tv' || editEdition === 'both',
+        directDownloadUrl: editDirectUrl.trim() || undefined,
+        iconUrl: editIconUrl.trim() || undefined,
+        pricing: {
+          type: editPricingType,
+          price: editPricingType === 'paid' ? editPrice : 0,
+          currency: editCurrency
+        }
+      });
+      setEditModalApp(null);
+      setMyAppsMessage({ type: 'success', text: res.message });
       await loadMyApps();
-    } catch (e) {
-      alert('Could not withdraw application. Please try again.');
+    } catch (err: any) {
+      setEditError(err.message || 'Failed to save app updates.');
+    } finally {
+      setIsSavingEdit(false);
+    }
+  };
+
+  const openReleaseModal = (app: StoreApp) => {
+    setReleaseModalApp(app);
+    setRelVersion('');
+    setRelPlatform(app.appEdition === 'tv' ? 'Android TV' : 'Android');
+    setRelMinOS('Android 8.0+');
+    setRelChangelog('');
+    setRelApkFile(null);
+    setRelDirectUrl('');
+    setRelError(null);
+  };
+
+  const handlePublishAppRelease = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!releaseModalApp) return;
+    setRelError(null);
+
+    if (!relVersion.trim()) {
+      setRelError('Version string is required (e.g. 2.0.0).');
+      return;
+    }
+
+    if (!relApkFile && !relDirectUrl.trim()) {
+      setRelError('Please upload an APK file or provide a direct download URL.');
+      return;
+    }
+
+    setIsPublishingRelease(true);
+    try {
+      const fd = new FormData();
+      fd.append('version', relVersion.trim());
+      fd.append('platform', relPlatform);
+      fd.append('minOS', relMinOS.trim() || 'Android 8.0+');
+      fd.append('changelog', relChangelog.trim() || 'Performance improvements and bug fixes.');
+      if (relApkFile) {
+        fd.append('apkFile', relApkFile);
+      }
+      if (relDirectUrl.trim()) {
+        fd.append('directDownloadUrl', relDirectUrl.trim());
+      }
+
+      const res = await addDeveloperOwnedAppRelease(releaseModalApp.id, fd);
+      setReleaseModalApp(null);
+      setMyAppsMessage({ type: 'success', text: res.message });
+      await loadMyApps();
+    } catch (err: any) {
+      setRelError(err.message || 'Failed to publish new release.');
+    } finally {
+      setIsPublishingRelease(false);
     }
   };
 
@@ -578,11 +910,11 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
       {/* Main Content Area */}
       <main className="max-w-5xl mx-auto px-4 sm:px-6 pt-6">
         {/* Navigation Tabs */}
-        <div className="flex items-center justify-between border-b border-neutral-800 pb-4 mb-6">
-          <div className="flex bg-neutral-900 p-1 rounded-xl border border-neutral-800">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-neutral-800 pb-4 mb-6">
+          <div className="flex flex-wrap bg-neutral-900 p-1 rounded-xl border border-neutral-800 gap-1">
             <button
               onClick={() => setActiveTab('submit')}
-              className={`flex items-center gap-2 py-2 px-4 rounded-lg text-xs font-bold transition-all ${
+              className={`flex items-center gap-2 py-2 px-3.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                 activeTab === 'submit'
                   ? 'bg-gradient-to-r from-amber-500 to-amber-600 text-neutral-950 shadow-md'
                   : 'text-neutral-400 hover:text-white'
@@ -596,7 +928,7 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
                 setActiveTab('my-apps');
                 loadMyApps();
               }}
-              className={`flex items-center gap-2 py-2 px-4 rounded-lg text-xs font-bold transition-all ${
+              className={`flex items-center gap-2 py-2 px-3.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                 activeTab === 'my-apps'
                   ? 'bg-gradient-to-r from-amber-500 to-amber-600 text-neutral-950 shadow-md'
                   : 'text-neutral-400 hover:text-white'
@@ -605,8 +937,27 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
               <Layers className="w-4 h-4" />
               <span>My Submissions</span>
               {myApps.length > 0 && (
-                <span className="ml-1 px-1.5 py-0.2 bg-neutral-800 text-neutral-200 text-[10px] rounded-full">
+                <span className="ml-0.5 px-1.5 py-0.2 bg-neutral-800 text-neutral-200 text-[10px] rounded-full">
                   {myApps.length}
+                </span>
+              )}
+            </button>
+            <button
+              onClick={() => {
+                setActiveTab('transfers');
+                loadTransfers();
+              }}
+              className={`flex items-center gap-2 py-2 px-3.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                activeTab === 'transfers'
+                  ? 'bg-gradient-to-r from-amber-500 to-amber-600 text-neutral-950 shadow-md'
+                  : 'text-neutral-400 hover:text-white'
+              }`}
+            >
+              <ArrowRightLeft className="w-4 h-4" />
+              <span>App Transfers &amp; Market</span>
+              {incomingTransfers.length > 0 && (
+                <span className="ml-0.5 px-1.5 py-0.2 bg-emerald-500 text-neutral-950 font-black text-[10px] rounded-full">
+                  {incomingTransfers.length}
                 </span>
               )}
             </button>
@@ -615,7 +966,7 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
                 setActiveTab('wallet');
                 loadWallet();
               }}
-              className={`flex items-center gap-2 py-2 px-4 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              className={`flex items-center gap-2 py-2 px-3.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                 activeTab === 'wallet'
                   ? 'bg-gradient-to-r from-amber-500 to-amber-600 text-neutral-950 shadow-md'
                   : 'text-neutral-400 hover:text-white'
@@ -624,16 +975,16 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
               <Wallet className="w-4 h-4" />
               <span>Earnings &amp; Wallet</span>
               {wallet && wallet.availableBalance > 0 && (
-                <span className="ml-1 px-1.5 py-0.2 bg-emerald-500/20 text-emerald-400 font-mono text-[10px] rounded-full border border-emerald-500/30">
+                <span className="ml-0.5 px-1.5 py-0.2 bg-emerald-500/20 text-emerald-400 font-mono text-[10px] rounded-full border border-emerald-500/30">
                   {wallet.availableBalance.toLocaleString()} {wallet.currency}
                 </span>
               )}
             </button>
           </div>
 
-          <div className="hidden sm:flex items-center gap-2 text-xs text-amber-300/80 bg-amber-950/30 border border-amber-800/40 px-3 py-1.5 rounded-xl">
+          <div className="hidden lg:flex items-center gap-2 text-xs text-amber-300/80 bg-amber-950/30 border border-amber-800/40 px-3 py-1.5 rounded-xl shrink-0">
             <ShieldCheck className="w-4 h-4 text-amber-400" />
-            <span>Super Admin (John) reviews all submissions</span>
+            <span>10% Admin Fee on App Sales Transfers</span>
           </div>
         </div>
 
@@ -1123,75 +1474,127 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
           </div>
         )}
 
-        {/* TAB 2: MY SUBMISSIONS */}
+        {/* TAB 2: MY SUBMISSIONS & OWNED APPS (FULL CONTROL & TRANSFER RIGHTS) */}
         {activeTab === 'my-apps' && (
           <div className="space-y-4">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <h2 className="text-lg font-black text-white">Your Submitted Applications</h2>
-                <p className="text-xs text-neutral-400">Track the review and approval status of your apps</p>
+                <h2 className="text-lg font-black text-white">Your Owned &amp; Submitted Applications</h2>
+                <p className="text-xs text-neutral-400">
+                  Full owner rights: edit metadata, push new APK updates, or sell/transfer ownership to another developer
+                </p>
               </div>
               <button
-                onClick={loadMyApps}
-                className="py-1.5 px-3 bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 rounded-xl text-xs font-semibold text-neutral-300"
+                onClick={() => {
+                  loadMyApps();
+                  loadTransfers();
+                }}
+                className="py-1.5 px-3 bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 rounded-xl text-xs font-semibold text-neutral-300 cursor-pointer"
               >
                 Refresh
               </button>
             </div>
 
+            {myAppsMessage && (
+              <div
+                className={`p-3.5 rounded-2xl text-xs flex items-center justify-between gap-3 ${
+                  myAppsMessage.type === 'success'
+                    ? 'bg-emerald-950/40 border border-emerald-800 text-emerald-200'
+                    : 'bg-rose-950/40 border border-rose-800 text-rose-200'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  {myAppsMessage.type === 'success' ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                  )}
+                  <span>{myAppsMessage.text}</span>
+                </div>
+                <button
+                  onClick={() => setMyAppsMessage(null)}
+                  className="text-[11px] font-bold underline cursor-pointer"
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
+
             {isLoadingApps ? (
               <div className="py-20 text-center">
                 <span className="inline-block w-8 h-8 border-2 border-amber-400 border-t-transparent rounded-full animate-spin" />
-                <p className="text-xs text-neutral-400 mt-3">Loading your submissions...</p>
+                <p className="text-xs text-neutral-400 mt-3">Loading your applications...</p>
               </div>
             ) : myApps.length === 0 ? (
               <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-10 text-center space-y-3">
                 <div className="w-12 h-12 rounded-2xl bg-neutral-950 border border-neutral-800 flex items-center justify-center mx-auto text-neutral-500">
                   <Layers className="w-6 h-6" />
                 </div>
-                <h3 className="text-sm font-bold text-white">No applications submitted yet</h3>
+                <h3 className="text-sm font-bold text-white">No applications in your account yet</h3>
                 <p className="text-xs text-neutral-400 max-w-sm mx-auto">
-                  Submit your first Android or TV application to be reviewed by the Super Admin and published on Zuzu Store.
+                  Submit a new Android/TV app or acquire full ownership of an existing app from the App Transfers &amp; Market tab.
                 </p>
-                <button
-                  onClick={() => setActiveTab('submit')}
-                  className="mt-2 py-2 px-5 bg-gradient-to-r from-amber-500 to-amber-600 text-neutral-950 font-bold text-xs rounded-xl shadow-md inline-flex items-center gap-2"
-                >
-                  <PlusCircle className="w-4 h-4" />
-                  <span>Submit an App</span>
-                </button>
+                <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+                  <button
+                    onClick={() => setActiveTab('submit')}
+                    className="py-2 px-5 bg-gradient-to-r from-amber-500 to-amber-600 text-neutral-950 font-bold text-xs rounded-xl shadow-md inline-flex items-center gap-2 cursor-pointer"
+                  >
+                    <PlusCircle className="w-4 h-4" />
+                    <span>Submit an App</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setActiveTab('transfers');
+                      loadTransfers();
+                    }}
+                    className="py-2 px-5 bg-neutral-800 hover:bg-neutral-700 text-white font-bold text-xs rounded-xl inline-flex items-center gap-2 cursor-pointer"
+                  >
+                    <ShoppingBag className="w-4 h-4 text-amber-400" />
+                    <span>Browse Transfer Market</span>
+                  </button>
+                </div>
               </div>
             ) : (
               <div className="grid grid-cols-1 gap-4">
                 {myApps.map((app) => {
                   const status = app.approvalStatus || 'approved';
-                  const release = app.releases?.[0];
+                  const openListing = myTransferListings.find((l) => l.appId === app.id && l.status === 'open');
+                  const latestTransfer = app.ownershipHistory?.[0];
 
                   return (
                     <div
                       key={app.id}
                       className="bg-neutral-900 border border-neutral-800 rounded-2xl p-5 hover:border-neutral-700 transition-colors space-y-4"
                     >
-                      <div className="flex items-start justify-between gap-4">
+                      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
                         <div className="flex items-center gap-3.5">
                           <img
                             src={app.iconUrl || '/zuzustore-logo.png'}
                             alt={app.name}
-                            className="w-14 h-14 rounded-2xl object-cover bg-neutral-950 border border-neutral-800 p-0.5"
+                            className="w-14 h-14 rounded-2xl object-cover bg-neutral-950 border border-neutral-800 p-0.5 shrink-0"
                             onError={(e) => {
                               e.currentTarget.onerror = null;
                               e.currentTarget.src = '/zuzustore-logo.png';
                             }}
                           />
                           <div>
-                            <div className="flex items-center gap-2">
+                            <div className="flex flex-wrap items-center gap-2">
                               <h3 className="text-base font-extrabold text-white">{app.name}</h3>
                               <span className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-neutral-950 text-neutral-300 border border-neutral-800">
                                 v{app.currentVersion}
                               </span>
                               <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-400 border border-amber-500/30">
-                                {app.appEdition === 'tv' ? 'TV Edition' : 'Phone'}
+                                {app.appEdition === 'tv' ? 'TV Edition' : app.appEdition === 'both' ? 'Phone & TV' : 'Phone'}
                               </span>
+                              {app.pricing?.type === 'paid' && Number(app.pricing.price) > 0 ? (
+                                <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 font-mono">
+                                  Paid: {Number(app.pricing.price).toLocaleString()} {app.pricing.currency || 'UGX'}
+                                </span>
+                              ) : (
+                                <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-neutral-800 text-neutral-300">
+                                  Free
+                                </span>
+                              )}
                             </div>
                             <p className="text-xs text-neutral-400 mt-1 line-clamp-1">{app.tagline}</p>
                             <p className="text-[10px] text-neutral-500 mt-0.5 font-mono">
@@ -1201,7 +1604,7 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
                         </div>
 
                         {/* Status Badge */}
-                        <div>
+                        <div className="shrink-0">
                           {app.isTakenDown ? (
                             <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-500/10 text-rose-400 border border-rose-500/30 text-xs font-bold">
                               <EyeOff className="w-3.5 h-3.5" />
@@ -1226,6 +1629,47 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
                         </div>
                       </div>
 
+                      {/* Acquired Ownership / Open Transfer Listing Indicators */}
+                      {latestTransfer && (
+                        <div className="p-2.5 bg-indigo-950/30 border border-indigo-800/40 rounded-xl text-[11px] text-indigo-200 flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <UserCheck className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+                            <span>
+                              Full ownership acquired from <strong>{latestTransfer.fromName}</strong>
+                              {latestTransfer.pricePaid
+                                ? ` for ${latestTransfer.pricePaid.toLocaleString()} ${latestTransfer.currency || 'UGX'}`
+                                : ''}
+                            </span>
+                          </div>
+                          <span className="text-[10px] font-mono text-indigo-300">
+                            {new Date(latestTransfer.transferredAt).toLocaleDateString()}
+                          </span>
+                        </div>
+                      )}
+
+                      {openListing && (
+                        <div className="p-2.5 bg-amber-950/30 border border-amber-700/40 rounded-xl text-[11px] text-amber-200 flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <Tag className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                            <span>
+                              Listed for transfer at{' '}
+                              <strong className="font-mono">{openListing.askingPrice.toLocaleString()} UGX</strong>
+                              {openListing.targetBuyerEmail
+                                ? ` → Offered to ${openListing.targetBuyerEmail}`
+                                : ' → Open Developer Market'}
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleCancelTransfer(openListing.id)}
+                            disabled={cancellingTransferId === openListing.id}
+                            className="text-[11px] font-bold text-rose-300 hover:text-rose-200 underline cursor-pointer"
+                          >
+                            {cancellingTransferId === openListing.id ? 'Cancelling...' : 'Cancel Offer'}
+                          </button>
+                        </div>
+                      )}
+
                       {/* Takedown notice if taken down */}
                       {app.isTakenDown && (
                         <div className="p-3 bg-rose-950/40 border border-rose-800/60 rounded-xl text-xs text-rose-300 flex items-start gap-2.5">
@@ -1248,14 +1692,45 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
                         </div>
                       )}
 
-                      {/* Footer Actions */}
-                      <div className="pt-3 border-t border-neutral-800/80 flex items-center justify-between text-xs text-neutral-400">
+                      {/* Footer Actions (Full Owner Control) */}
+                      <div className="pt-3 border-t border-neutral-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-neutral-400">
                         <div className="flex items-center gap-4">
                           <span>Downloads: <strong className="text-white">{app.downloadsTotal || 0}</strong></span>
                           <span>Rating: <strong className="text-amber-400">{app.rating > 0 ? `★ ${app.rating}` : 'New'}</strong></span>
+                          <span>Releases: <strong className="text-white">{app.releases?.length || 0}</strong></span>
                         </div>
 
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            disabled={isFrozen || isBanned}
+                            onClick={() => openEditAppModal(app)}
+                            className="py-1.5 px-3 bg-neutral-800 hover:bg-neutral-700 text-neutral-100 rounded-lg font-semibold flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+                          >
+                            <Edit3 className="w-3 h-3 text-amber-400" />
+                            <span>Edit App</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            disabled={isFrozen || isBanned}
+                            onClick={() => openReleaseModal(app)}
+                            className="py-1.5 px-3 bg-neutral-800 hover:bg-neutral-700 text-neutral-100 rounded-lg font-semibold flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+                          >
+                            <UploadCloud className="w-3 h-3 text-cyan-400" />
+                            <span>Release Update</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            disabled={isFrozen || isBanned}
+                            onClick={() => openSellTransferModal(app)}
+                            className="py-1.5 px-3 bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 rounded-lg font-bold flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+                          >
+                            <ArrowRightLeft className="w-3 h-3" />
+                            <span>Sell / Transfer</span>
+                          </button>
+
                           {status === 'approved' && (
                             <a
                               href={`/#app-${app.id}`}
@@ -1263,15 +1738,18 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
                                 e.preventDefault();
                                 onBackToStore();
                               }}
-                              className="py-1 px-3 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 rounded-lg font-semibold flex items-center gap-1.5 transition-colors"
+                              className="py-1.5 px-3 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 rounded-lg font-semibold flex items-center gap-1.5 transition-colors"
                             >
                               <ExternalLink className="w-3 h-3" />
-                              <span>View in Store</span>
+                              <span>Store</span>
                             </a>
                           )}
+
                           <button
-                            onClick={() => handleDelete(app.id, app.name)}
-                            className="py-1 px-3 bg-neutral-950 hover:bg-rose-950/50 hover:text-rose-400 text-neutral-400 border border-neutral-800 rounded-lg font-semibold flex items-center gap-1.5 transition-colors"
+                            type="button"
+                            disabled={isFrozen || isBanned}
+                            onClick={() => setWithdrawAppModal(app)}
+                            className="py-1.5 px-3 bg-neutral-950 hover:bg-rose-950/50 hover:text-rose-400 text-neutral-400 border border-neutral-800 rounded-lg font-semibold flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
                           >
                             <Trash2 className="w-3 h-3" />
                             <span>Withdraw</span>
@@ -1283,6 +1761,329 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
                 })}
               </div>
             )}
+          </div>
+        )}
+
+        {/* TAB 3: DEVELOPER-TO-DEVELOPER APP OWNERSHIP TRANSFERS & MARKET */}
+        {activeTab === 'transfers' && (
+          <div className="space-y-6 animate-fade-in">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="text-lg font-black text-white">App Ownership Sales &amp; Transfers</h2>
+                  <span className="px-2.5 py-0.5 text-[10px] font-bold rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-300">
+                    10% Super Admin Fee • 90% to Seller Wallet
+                  </span>
+                </div>
+                <p className="text-xs text-neutral-400 mt-1">
+                  Sell full app ownership &amp; rights to another developer directly on the website. All money transfers happen in-platform; standard withdrawal fees ({feeRatePer1000} UGX per 1,000 UGX) apply when withdrawing from your wallet.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2 self-start sm:self-auto">
+                <button
+                  type="button"
+                  onClick={loadTransfers}
+                  disabled={isLoadingTransfers}
+                  className="py-1.5 px-3.5 bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 rounded-xl text-xs font-semibold text-neutral-300 flex items-center gap-2 cursor-pointer"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isLoadingTransfers ? 'animate-spin text-amber-400' : ''}`} />
+                  <span>Refresh</span>
+                </button>
+                {myApps.length > 0 && (
+                  <button
+                    type="button"
+                    disabled={isFrozen || isBanned}
+                    onClick={() => openSellTransferModal(myApps[0])}
+                    className="py-1.5 px-3.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-neutral-950 font-black text-xs rounded-xl shadow-md flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  >
+                    <ArrowRightLeft className="w-3.5 h-3.5" />
+                    <span>Sell an App</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {transfersFeedback && (
+              <div
+                className={`p-4 rounded-2xl text-xs flex items-center justify-between gap-3 ${
+                  transfersFeedback.type === 'success'
+                    ? 'bg-emerald-950/40 border border-emerald-800 text-emerald-200'
+                    : 'bg-rose-950/40 border border-rose-800 text-rose-200'
+                }`}
+              >
+                <div className="flex items-center gap-2.5">
+                  {transfersFeedback.type === 'success' ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                  )}
+                  <span>{transfersFeedback.text}</span>
+                </div>
+                <button
+                  onClick={() => setTransfersFeedback(null)}
+                  className="font-bold underline text-[11px] shrink-0 cursor-pointer"
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
+
+            {/* Incoming Direct Offers Targeted at Me */}
+            <div className="bg-neutral-900 border border-emerald-500/30 rounded-3xl p-5 sm:p-6 space-y-4">
+              <div className="flex items-center justify-between border-b border-neutral-800 pb-3">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-emerald-400" />
+                  <h3 className="text-sm font-bold text-white">Direct Ownership Offers Sent to You</h3>
+                </div>
+                <span className="text-xs font-mono text-emerald-400">
+                  {incomingTransfers.length} awaiting payment
+                </span>
+              </div>
+
+              {incomingTransfers.length === 0 ? (
+                <p className="text-xs text-neutral-500 py-4 text-center">
+                  No direct ownership transfer offers targeted to your account right now.
+                </p>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {incomingTransfers.map((offer) => (
+                    <div
+                      key={offer.id}
+                      className="p-4 rounded-2xl bg-neutral-950 border border-emerald-500/30 space-y-3"
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-3">
+                          <img
+                            src={offer.appIcon || '/zuzustore-logo.png'}
+                            alt={offer.appName}
+                            className="w-11 h-11 rounded-xl object-cover bg-neutral-900 border border-neutral-800"
+                          />
+                          <div>
+                            <div className="font-bold text-white text-sm">{offer.appName}</div>
+                            <div className="text-[11px] text-neutral-400">
+                              v{offer.appVersion} • {offer.appCategory}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-sm font-black text-emerald-400 font-mono">
+                            {offer.askingPrice.toLocaleString()} {offer.currency}
+                          </div>
+                          <div className="text-[10px] text-neutral-500">Full ownership rights</div>
+                        </div>
+                      </div>
+
+                      <div className="text-[11px] text-neutral-300 bg-neutral-900/80 p-2.5 rounded-xl border border-neutral-800 space-y-1">
+                        <div>
+                          Seller: <strong className="text-white">{offer.sellerName}</strong> ({offer.sellerEmail})
+                        </div>
+                        {offer.note && <div className="text-neutral-400 italic">"{offer.note}"</div>}
+                      </div>
+
+                      <button
+                        type="button"
+                        disabled={isFrozen || isBanned}
+                        onClick={() => openBuyTransferModal(offer)}
+                        className="w-full py-2.5 px-4 bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 text-neutral-950 font-black text-xs rounded-xl shadow-md flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                      >
+                        <CreditCard className="w-3.5 h-3.5" />
+                        <span>Pay {offer.askingPrice.toLocaleString()} {offer.currency} &amp; Claim Ownership</span>
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Open Developer Ownership Market */}
+            <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-5 sm:p-6 space-y-4">
+              <div className="flex items-center justify-between border-b border-neutral-800 pb-3">
+                <div className="flex items-center gap-2">
+                  <ShoppingBag className="w-4 h-4 text-amber-400" />
+                  <h3 className="text-sm font-bold text-white">Open Developer Ownership Marketplace</h3>
+                </div>
+                <span className="text-xs font-mono text-neutral-400">{marketTransfers.length} available</span>
+              </div>
+
+              {marketTransfers.length === 0 ? (
+                <p className="text-xs text-neutral-500 py-4 text-center">
+                  No open marketplace listings from other developers right now.
+                </p>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {marketTransfers.map((offer) => (
+                    <div
+                      key={offer.id}
+                      className="p-4 rounded-2xl bg-neutral-950 border border-neutral-800 space-y-3"
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-3">
+                          <img
+                            src={offer.appIcon || '/zuzustore-logo.png'}
+                            alt={offer.appName}
+                            className="w-11 h-11 rounded-xl object-cover bg-neutral-900 border border-neutral-800"
+                          />
+                          <div>
+                            <div className="font-bold text-white text-sm">{offer.appName}</div>
+                            <div className="text-[11px] text-neutral-400">
+                              v{offer.appVersion} • {offer.appCategory}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-sm font-black text-amber-400 font-mono">
+                            {offer.askingPrice.toLocaleString()} {offer.currency}
+                          </div>
+                          <div className="text-[10px] text-neutral-500">Includes full rights</div>
+                        </div>
+                      </div>
+
+                      <div className="text-[11px] text-neutral-400">
+                        Owner: <strong className="text-neutral-200">{offer.sellerName}</strong> ({offer.sellerEmail})
+                        {offer.note ? <p className="mt-1 italic text-neutral-400">"{offer.note}"</p> : null}
+                      </div>
+
+                      <button
+                        type="button"
+                        disabled={isFrozen || isBanned}
+                        onClick={() => openBuyTransferModal(offer)}
+                        className="w-full py-2 px-4 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-neutral-950 font-black text-xs rounded-xl shadow-md flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                      >
+                        <ShoppingBag className="w-3.5 h-3.5" />
+                        <span>Buy Ownership ({offer.askingPrice.toLocaleString()} {offer.currency})</span>
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Your Active Outgoing Transfer Listings */}
+            <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-5 sm:p-6 space-y-4">
+              <div className="flex items-center justify-between border-b border-neutral-800 pb-3">
+                <div className="flex items-center gap-2">
+                  <Tag className="w-4 h-4 text-amber-400" />
+                  <h3 className="text-sm font-bold text-white">Your Active Apps Listed for Transfer</h3>
+                </div>
+                <span className="text-xs font-mono text-neutral-400">{myTransferListings.length} active</span>
+              </div>
+
+              {myTransferListings.length === 0 ? (
+                <p className="text-xs text-neutral-500 py-4 text-center">
+                  You have no active transfer offers. Open &ldquo;My Submissions&rdquo; and click &ldquo;Sell / Transfer&rdquo; on any app you own.
+                </p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-neutral-800 text-[11px] font-semibold text-neutral-400">
+                        <th className="pb-2.5">Application</th>
+                        <th className="pb-2.5">Target Recipient</th>
+                        <th className="pb-2.5">Asking Price</th>
+                        <th className="pb-2.5">10% Admin Fee</th>
+                        <th className="pb-2.5">Your 90% Net</th>
+                        <th className="pb-2.5 text-right">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-neutral-800/60">
+                      {myTransferListings.map((l) => (
+                        <tr key={l.id} className="text-neutral-300">
+                          <td className="py-3 font-bold text-white">{l.appName}</td>
+                          <td className="py-3 font-mono text-[11px]">
+                            {l.targetBuyerEmail ? `${l.targetBuyerName || ''} (${l.targetBuyerEmail})` : 'Open Market'}
+                          </td>
+                          <td className="py-3 font-mono font-bold text-white">
+                            {l.askingPrice.toLocaleString()} {l.currency}
+                          </td>
+                          <td className="py-3 font-mono text-rose-400">
+                            -{l.adminFeeAmount.toLocaleString()} {l.currency}
+                          </td>
+                          <td className="py-3 font-mono font-black text-emerald-400">
+                            +{l.sellerNetAmount.toLocaleString()} {l.currency}
+                          </td>
+                          <td className="py-3 text-right">
+                            <button
+                              type="button"
+                              onClick={() => handleCancelTransfer(l.id)}
+                              disabled={cancellingTransferId === l.id}
+                              className="px-2.5 py-1 bg-neutral-950 hover:bg-rose-950/60 text-rose-400 border border-neutral-800 rounded-lg text-[11px] font-bold cursor-pointer"
+                            >
+                              {cancellingTransferId === l.id ? 'Cancelling...' : 'Cancel Offer'}
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* Completed & Cancelled Transfer History */}
+            <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-5 sm:p-6 space-y-4">
+              <div className="flex items-center justify-between border-b border-neutral-800 pb-3">
+                <div className="flex items-center gap-2">
+                  <History className="w-4 h-4 text-neutral-400" />
+                  <h3 className="text-sm font-bold text-white">Ownership Transfer History</h3>
+                </div>
+                <span className="text-xs font-mono text-neutral-400">{transferHistory.length} records</span>
+              </div>
+
+              {transferHistory.length === 0 ? (
+                <p className="text-xs text-neutral-500 py-4 text-center">No completed or cancelled transfers yet.</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-neutral-800 text-[11px] font-semibold text-neutral-400">
+                        <th className="pb-2.5">Date</th>
+                        <th className="pb-2.5">App</th>
+                        <th className="pb-2.5">From → To</th>
+                        <th className="pb-2.5">Price</th>
+                        <th className="pb-2.5">10% Admin Fee</th>
+                        <th className="pb-2.5">Seller 90% Net</th>
+                        <th className="pb-2.5">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-neutral-800/60">
+                      {transferHistory.map((h) => (
+                        <tr key={h.id} className="text-neutral-300">
+                          <td className="py-3 font-mono text-[11px] text-neutral-400 whitespace-nowrap">
+                            {new Date(h.completedAt || h.cancelledAt || h.createdAt).toLocaleDateString()}
+                          </td>
+                          <td className="py-3 font-bold text-white">{h.appName}</td>
+                          <td className="py-3 text-[11px]">
+                            <span>{h.sellerEmail}</span> →{' '}
+                            <strong className="text-amber-300">{h.buyerEmail || h.targetBuyerEmail || 'Market'}</strong>
+                          </td>
+                          <td className="py-3 font-mono font-bold text-white whitespace-nowrap">
+                            {h.askingPrice.toLocaleString()} {h.currency}
+                          </td>
+                          <td className="py-3 font-mono text-rose-400 whitespace-nowrap">
+                            {h.adminFeeAmount.toLocaleString()} {h.currency}
+                          </td>
+                          <td className="py-3 font-mono text-emerald-400 whitespace-nowrap">
+                            {h.sellerNetAmount.toLocaleString()} {h.currency}
+                          </td>
+                          <td className="py-3">
+                            {h.status === 'completed' ? (
+                              <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 text-[10px] font-bold">
+                                Transferred
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded-full bg-neutral-800 text-neutral-400 text-[10px] font-bold">
+                                Cancelled
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
           </div>
         )}
 
@@ -1672,23 +2473,23 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
               )}
             </div>
 
-            {/* CUSTOMER SALES LEDGER */}
+            {/* CUSTOMER SALES & OWNERSHIP TRANSFER LEDGER */}
             <div className="p-6 bg-neutral-900 border border-neutral-800 rounded-3xl space-y-4">
               <div className="flex items-center justify-between border-b border-neutral-800 pb-3">
                 <div>
-                  <h3 className="text-sm font-bold text-white">Customer App Sales Ledger</h3>
+                  <h3 className="text-sm font-bold text-white">Revenue &amp; Ownership Transfer Ledger</h3>
                   <p className="text-[11px] text-neutral-400">
-                    Real transactions showing gross sale price, 6% platform commission, and your 94% net take-home.
+                    Real transactions showing app sales ({adminCommissionPercent}% Admin cut) and ownership transfers (10% Admin cut, 90% Seller net).
                   </p>
                 </div>
                 <span className="text-xs text-neutral-400 font-mono">
-                  {wallet?.recentSales?.length || 0} sales
+                  {wallet?.recentSales?.length || 0} transactions
                 </span>
               </div>
 
               {!wallet?.recentSales || wallet.recentSales.length === 0 ? (
                 <div className="py-8 text-center text-xs text-neutral-500">
-                  No sales recorded yet. When visitors purchase your paid applications, their payments and the 6% commission split will appear here.
+                  No sales or ownership transfer earnings recorded yet.
                 </div>
               ) : (
                 <div className="overflow-x-auto">
@@ -1699,7 +2500,7 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
                         <th className="pb-2.5">Application</th>
                         <th className="pb-2.5">Buyer</th>
                         <th className="pb-2.5">Gross Paid</th>
-                        <th className="pb-2.5">6% Admin Fee</th>
+                        <th className="pb-2.5">Admin Cut</th>
                         <th className="pb-2.5">Net Take-Home</th>
                         <th className="pb-2.5">Method</th>
                       </tr>
@@ -1711,7 +2512,12 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
                             {new Date(sale.createdAt).toLocaleDateString()}
                           </td>
                           <td className="py-3 font-bold text-white">
-                            {sale.appName}
+                            <div>{sale.appName}</div>
+                            {sale.transactionType === 'ownership_transfer' && (
+                              <span className="inline-block mt-0.5 text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/30 font-semibold">
+                                App Ownership Sale (10% fee)
+                              </span>
+                            )}
                           </td>
                           <td className="py-3 font-mono text-[11px]">
                             {sale.customerName} ({sale.customerEmail})
@@ -1720,7 +2526,7 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
                             {sale.grossAmount.toLocaleString()} {sale.currency}
                           </td>
                           <td className="py-3 font-mono text-rose-400">
-                            -{sale.adminCommissionAmount.toLocaleString()} {sale.currency}
+                            -{sale.adminCommissionAmount.toLocaleString()} {sale.currency} ({sale.adminCommissionPercent}%)
                           </td>
                           <td className="py-3 font-mono font-black text-emerald-400">
                             +{sale.developerNetAmount.toLocaleString()} {sale.currency}
@@ -1738,6 +2544,708 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
           </div>
         )}
       </main>
+
+      {/* MODAL 1: SELL / TRANSFER APP OWNERSHIP TO ANOTHER DEVELOPER */}
+      {sellModalApp && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
+          <div
+            className="w-full max-w-lg bg-neutral-900 border border-neutral-800 rounded-3xl p-6 shadow-2xl text-neutral-100 space-y-5 max-h-[90vh] overflow-y-auto"
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className="flex items-center justify-between border-b border-neutral-800 pb-3">
+              <div className="flex items-center gap-2.5 text-amber-400">
+                <ArrowRightLeft className="w-5 h-5" />
+                <h3 className="text-base font-black text-white">Sell / Transfer App Ownership</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSellModalApp(null)}
+                className="p-1 text-neutral-400 hover:text-white rounded-lg cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="flex items-center gap-3 p-3 bg-neutral-950 rounded-2xl border border-neutral-800">
+              <img
+                src={sellModalApp.iconUrl || '/zuzustore-logo.png'}
+                alt={sellModalApp.name}
+                className="w-11 h-11 rounded-xl object-cover bg-neutral-900 border border-neutral-800"
+              />
+              <div>
+                <div className="font-bold text-white text-sm">{sellModalApp.name}</div>
+                <div className="text-[11px] text-neutral-400 font-mono">
+                  v{sellModalApp.currentVersion} • {sellModalApp.packageId}
+                </div>
+              </div>
+            </div>
+
+            {sellError && (
+              <div className="p-3 bg-rose-950/40 border border-rose-800 rounded-xl text-xs text-rose-300 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                <span>{sellError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleCreateTransferListing} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-neutral-300 mb-1.5">
+                  Who should receive full rights to this app?
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setSellMode('specific')}
+                    className={`py-2 px-3 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                      sellMode === 'specific'
+                        ? 'bg-amber-500/15 border-amber-500/50 text-amber-300'
+                        : 'bg-neutral-950 border-neutral-800 text-neutral-400'
+                    }`}
+                  >
+                    Specific Developer
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSellMode('open')}
+                    className={`py-2 px-3 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                      sellMode === 'open'
+                        ? 'bg-amber-500/15 border-amber-500/50 text-amber-300'
+                        : 'bg-neutral-950 border-neutral-800 text-neutral-400'
+                    }`}
+                  >
+                    Open Dev Marketplace
+                  </button>
+                </div>
+              </div>
+
+              {sellMode === 'specific' && (
+                <div className="space-y-2">
+                  {fellowDevelopers.length > 0 && (
+                    <div>
+                      <label className="block text-[11px] font-semibold text-neutral-400 mb-1">
+                        Select Registered Developer
+                      </label>
+                      <select
+                        value={sellTargetEmail}
+                        onChange={(e) => setSellTargetEmail(e.target.value)}
+                        className="w-full bg-neutral-950 border border-neutral-800 focus:border-amber-500 rounded-xl py-2 px-3 text-xs text-white outline-none"
+                      >
+                        <option value="">-- Choose developer or type email below --</option>
+                        {fellowDevelopers.map((d) => (
+                          <option key={d.id} value={d.email}>
+                            {d.name} ({d.email}) {d.companyName ? `• ${d.companyName}` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  <div>
+                    <label className="block text-xs font-semibold text-neutral-300 mb-1">
+                      Target Developer Email <span className="text-red-400">*</span>
+                    </label>
+                    <input
+                      type="email"
+                      required={sellMode === 'specific'}
+                      value={sellTargetEmail}
+                      onChange={(e) => setSellTargetEmail(e.target.value)}
+                      placeholder="buyer.developer@example.com"
+                      className="w-full bg-neutral-950 border border-neutral-800 focus:border-amber-500 rounded-xl py-2 px-3 text-xs text-white outline-none font-mono"
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-xs font-semibold text-neutral-300 mb-1">
+                  Transfer Sale Price (UGX) <span className="text-red-400">*</span>
+                </label>
+                <input
+                  type="number"
+                  min={1000}
+                  step={500}
+                  required
+                  value={sellPrice}
+                  onChange={(e) => setSellPrice(parseInt(e.target.value, 10) || 0)}
+                  className="w-full bg-neutral-950 border border-neutral-800 focus:border-amber-500 rounded-xl py-2.5 px-3 text-sm font-black text-white outline-none font-mono"
+                />
+              </div>
+
+              {/* Live 10% Admin Commission & 90% Seller Net Preview */}
+              <div className="p-3.5 bg-neutral-950 rounded-2xl border border-neutral-800 space-y-2">
+                <div className="text-[11px] font-bold text-amber-400 uppercase tracking-wider">
+                  Ownership Transfer Payout Split (10% Admin Commission)
+                </div>
+                <div className="grid grid-cols-3 gap-2 text-center font-mono">
+                  <div className="p-2 bg-neutral-900 rounded-lg border border-neutral-800">
+                    <span className="text-[10px] text-neutral-400 block font-sans">Sale Price</span>
+                    <span className="text-xs font-black text-white">
+                      {Math.max(0, sellPrice).toLocaleString()} UGX
+                    </span>
+                  </div>
+                  <div className="p-2 bg-rose-950/30 rounded-lg border border-rose-900/40">
+                    <span className="text-[10px] text-rose-300 block font-sans">Super Admin (10%)</span>
+                    <span className="text-xs font-black text-rose-400">
+                      -{Math.round(Math.max(0, sellPrice) * 0.1).toLocaleString()} UGX
+                    </span>
+                  </div>
+                  <div className="p-2 bg-emerald-950/30 rounded-lg border border-emerald-900/40">
+                    <span className="text-[10px] text-emerald-300 block font-sans">Your Net (90%)</span>
+                    <span className="text-xs font-black text-emerald-400">
+                      {(Math.max(0, sellPrice) - Math.round(Math.max(0, sellPrice) * 0.1)).toLocaleString()} UGX
+                    </span>
+                  </div>
+                </div>
+                <p className="text-[10px] text-neutral-400 leading-relaxed">
+                  Once the buyer pays on the website, 90% is credited to your Developer Wallet, 10% goes to Super Admin, and full rights transfer immediately. Standard withdrawal sending charges ({feeRatePer1000} UGX per 1,000 UGX) remain unchanged when cashing out.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-neutral-300 mb-1">Transfer Note (Optional)</label>
+                <input
+                  type="text"
+                  value={sellNote}
+                  onChange={(e) => setSellNote(e.target.value)}
+                  placeholder="e.g. Includes full store listing, future updates & monetization rights"
+                  className="w-full bg-neutral-950 border border-neutral-800 focus:border-amber-500 rounded-xl py-2 px-3 text-xs text-white outline-none"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-neutral-800">
+                <button
+                  type="button"
+                  onClick={() => setSellModalApp(null)}
+                  className="px-4 py-2 text-xs font-semibold text-neutral-400 hover:text-white bg-neutral-800 rounded-xl cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isCreatingTransfer}
+                  className="px-5 py-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-neutral-950 font-black text-xs rounded-xl shadow-md flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  {isCreatingTransfer ? 'Publishing Offer...' : 'Publish Ownership Sale'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 2: BUYER PAY & CLAIM APP OWNERSHIP */}
+      {buyModalListing && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
+          <div
+            className="w-full max-w-md bg-neutral-900 border border-neutral-800 rounded-3xl p-6 shadow-2xl text-neutral-100 space-y-5 max-h-[90vh] overflow-y-auto"
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className="flex items-center justify-between border-b border-neutral-800 pb-3">
+              <div className="flex items-center gap-2.5 text-emerald-400">
+                <CreditCard className="w-5 h-5" />
+                <h3 className="text-base font-black text-white">Pay &amp; Claim Full App Ownership</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setBuyModalListing(null)}
+                className="p-1 text-neutral-400 hover:text-white rounded-lg cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-3.5 bg-neutral-950 rounded-2xl border border-neutral-800 space-y-2">
+              <div className="flex items-center gap-3">
+                <img
+                  src={buyModalListing.appIcon || '/zuzustore-logo.png'}
+                  alt={buyModalListing.appName}
+                  className="w-12 h-12 rounded-xl object-cover bg-neutral-900 border border-neutral-800"
+                />
+                <div>
+                  <div className="font-bold text-white text-sm">{buyModalListing.appName}</div>
+                  <div className="text-[11px] text-neutral-400">
+                    Seller: {buyModalListing.sellerName} ({buyModalListing.sellerEmail})
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center justify-between pt-2 border-t border-neutral-800 text-xs">
+                <span className="text-neutral-400">Total Transfer Price:</span>
+                <span className="text-base font-black text-emerald-400 font-mono">
+                  {buyModalListing.askingPrice.toLocaleString()} {buyModalListing.currency}
+                </span>
+              </div>
+              <div className="text-[10px] text-neutral-400">
+                Includes 10% Super Admin commission ({buyModalListing.adminFeeAmount.toLocaleString()} {buyModalListing.currency}) &amp; 90% to Seller ({buyModalListing.sellerNetAmount.toLocaleString()} {buyModalListing.currency}).
+              </div>
+            </div>
+
+            {buyError && (
+              <div className="p-3 bg-rose-950/40 border border-rose-800 rounded-xl text-xs text-rose-300 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                <span>{buyError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleCompleteTransferPurchase} className="space-y-4">
+              <div className="space-y-2">
+                <label className="block text-xs font-semibold text-neutral-300">Select Payment Method</label>
+                <div className="grid grid-cols-1 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setBuyPaymentMethod('livepay_mtn')}
+                    className={`p-3 rounded-xl border text-left text-xs font-bold flex items-center justify-between cursor-pointer ${
+                      buyPaymentMethod === 'livepay_mtn'
+                        ? 'bg-amber-500/15 border-amber-500 text-amber-300'
+                        : 'bg-neutral-950 border-neutral-800 text-neutral-300'
+                    }`}
+                  >
+                    <span>MTN Mobile Money (LivePay)</span>
+                    <span className="text-[10px] font-mono">Instant Prompt</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setBuyPaymentMethod('livepay_airtel')}
+                    className={`p-3 rounded-xl border text-left text-xs font-bold flex items-center justify-between cursor-pointer ${
+                      buyPaymentMethod === 'livepay_airtel'
+                        ? 'bg-rose-500/15 border-rose-500 text-rose-300'
+                        : 'bg-neutral-950 border-neutral-800 text-neutral-300'
+                    }`}
+                  >
+                    <span>Airtel Money (LivePay)</span>
+                    <span className="text-[10px] font-mono">Instant Prompt</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setBuyPaymentMethod('wallet')}
+                    className={`p-3 rounded-xl border text-left text-xs font-bold flex items-center justify-between cursor-pointer ${
+                      buyPaymentMethod === 'wallet'
+                        ? 'bg-emerald-500/15 border-emerald-500 text-emerald-300'
+                        : 'bg-neutral-950 border-neutral-800 text-neutral-300'
+                    }`}
+                  >
+                    <span>Developer Wallet Balance</span>
+                    <span className="text-[10px] font-mono">
+                      Avail: {(wallet?.availableBalance || 0).toLocaleString()} UGX
+                    </span>
+                  </button>
+                </div>
+              </div>
+
+              {buyPaymentMethod !== 'wallet' && (
+                <div>
+                  <label className="block text-xs font-semibold text-neutral-300 mb-1">
+                    Mobile Money Phone Number <span className="text-red-400">*</span>
+                  </label>
+                  <input
+                    type="tel"
+                    required
+                    value={buyPhoneNumber}
+                    onChange={(e) => setBuyPhoneNumber(e.target.value)}
+                    placeholder="e.g. 0770 000 000 or 0750 000 000"
+                    className="w-full bg-neutral-950 border border-neutral-800 focus:border-emerald-500 rounded-xl py-2.5 px-3 text-xs text-white outline-none font-mono"
+                  />
+                </div>
+              )}
+
+              <div className="p-3 rounded-xl bg-emerald-950/20 border border-emerald-900/40 text-[11px] text-emerald-200 leading-relaxed">
+                Immediately upon payment, &ldquo;{buyModalListing.appName}&rdquo; transfers into your developer account with full control: edit metadata, set Free/Paid pricing, upload APK updates, and earn future app sales.
+              </div>
+
+              <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-neutral-800">
+                <button
+                  type="button"
+                  onClick={() => setBuyModalListing(null)}
+                  className="px-4 py-2 text-xs font-semibold text-neutral-400 hover:text-white bg-neutral-800 rounded-xl cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isPurchasingTransfer}
+                  className="px-5 py-2 bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 text-neutral-950 font-black text-xs rounded-xl shadow-md cursor-pointer disabled:opacity-50"
+                >
+                  {isPurchasingTransfer
+                    ? 'Processing Transfer...'
+                    : `Confirm & Pay ${buyModalListing.askingPrice.toLocaleString()} ${buyModalListing.currency}`}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 3: EDIT OWNED APP (FULL RIGHTS CONTROL) */}
+      {editModalApp && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
+          <div
+            className="w-full max-w-xl bg-neutral-900 border border-neutral-800 rounded-3xl p-6 shadow-2xl text-neutral-100 space-y-5 max-h-[90vh] overflow-y-auto"
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className="flex items-center justify-between border-b border-neutral-800 pb-3">
+              <div className="flex items-center gap-2.5 text-amber-400">
+                <Edit3 className="w-5 h-5" />
+                <h3 className="text-base font-black text-white">Manage &amp; Edit App ({editModalApp.name})</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditModalApp(null)}
+                className="p-1 text-neutral-400 hover:text-white rounded-lg cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {editError && (
+              <div className="p-3 bg-rose-950/40 border border-rose-800 rounded-xl text-xs text-rose-300 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                <span>{editError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleSaveOwnedAppEdit} className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-neutral-300 mb-1">App Name</label>
+                  <input
+                    type="text"
+                    required
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                    className="w-full bg-neutral-950 border border-neutral-800 focus:border-amber-500 rounded-xl py-2 px-3 text-xs text-white outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-neutral-300 mb-1">Package ID</label>
+                  <input
+                    type="text"
+                    value={editPackageId}
+                    onChange={(e) => setEditPackageId(e.target.value)}
+                    className="w-full bg-neutral-950 border border-neutral-800 focus:border-amber-500 rounded-xl py-2 px-3 text-xs text-white outline-none font-mono"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-neutral-300 mb-1">Tagline</label>
+                <input
+                  type="text"
+                  value={editTagline}
+                  onChange={(e) => setEditTagline(e.target.value)}
+                  className="w-full bg-neutral-950 border border-neutral-800 focus:border-amber-500 rounded-xl py-2 px-3 text-xs text-white outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-neutral-300 mb-1">Full Description</label>
+                <textarea
+                  rows={3}
+                  value={editDescription}
+                  onChange={(e) => setEditDescription(e.target.value)}
+                  className="w-full bg-neutral-950 border border-neutral-800 focus:border-amber-500 rounded-xl py-2 px-3 text-xs text-white outline-none"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-neutral-300 mb-1">Category</label>
+                  <select
+                    value={editCategory}
+                    onChange={(e) => setEditCategory(e.target.value)}
+                    className="w-full bg-neutral-950 border border-neutral-800 focus:border-amber-500 rounded-xl py-2 px-3 text-xs text-white outline-none"
+                  >
+                    <option value="Streaming">Streaming</option>
+                    <option value="TV & Movies">TV &amp; Movies</option>
+                    <option value="Entertainment">Entertainment</option>
+                    <option value="Productivity">Productivity</option>
+                    <option value="Utilities">Utilities</option>
+                    <option value="Tools">Tools</option>
+                    <option value="Games">Games</option>
+                    <option value="Social">Social</option>
+                    <option value="Finance">Finance</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-neutral-300 mb-1">Target Device</label>
+                  <select
+                    value={editEdition}
+                    onChange={(e) => setEditEdition(e.target.value as any)}
+                    className="w-full bg-neutral-950 border border-neutral-800 focus:border-amber-500 rounded-xl py-2 px-3 text-xs text-white outline-none"
+                  >
+                    <option value="phone">Android Phone</option>
+                    <option value="tv">Android / Smart TV</option>
+                    <option value="both">Both Phone &amp; TV</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
+                <div>
+                  <label className="block text-xs font-semibold text-neutral-300 mb-1">App Icon URL</label>
+                  <input
+                    type="text"
+                    value={editIconUrl}
+                    onChange={(e) => setEditIconUrl(e.target.value)}
+                    className="w-full bg-neutral-950 border border-neutral-800 focus:border-amber-500 rounded-xl py-2 px-3 text-xs text-white outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-neutral-300 mb-1">Or Upload New Icon</label>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handleEditIconUpload}
+                    className="w-full text-xs text-neutral-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:bg-neutral-800 file:text-neutral-200 file:font-semibold"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-neutral-300 mb-1">
+                  Latest Release Direct Download URL (Optional)
+                </label>
+                <input
+                  type="url"
+                  value={editDirectUrl}
+                  onChange={(e) => setEditDirectUrl(e.target.value)}
+                  placeholder="https://drive.google.com/file/d/..."
+                  className="w-full bg-neutral-950 border border-neutral-800 focus:border-amber-500 rounded-xl py-2 px-3 text-xs text-white outline-none font-mono"
+                />
+              </div>
+
+              {/* Pricing Update */}
+              <div className="p-3.5 bg-neutral-950 rounded-2xl border border-neutral-800 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-white">Store Pricing Model</span>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setEditPricingType('free')}
+                      className={`px-3 py-1 rounded-lg text-xs font-bold cursor-pointer ${
+                        editPricingType === 'free' ? 'bg-amber-500 text-neutral-950' : 'bg-neutral-900 text-neutral-400'
+                      }`}
+                    >
+                      Free
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEditPricingType('paid')}
+                      className={`px-3 py-1 rounded-lg text-xs font-bold cursor-pointer ${
+                        editPricingType === 'paid' ? 'bg-emerald-500 text-neutral-950' : 'bg-neutral-900 text-neutral-400'
+                      }`}
+                    >
+                      Paid App
+                    </button>
+                  </div>
+                </div>
+
+                {editPricingType === 'paid' && (
+                  <div className="grid grid-cols-2 gap-3">
+                    <input
+                      type="number"
+                      min={editCurrency === 'USD' ? 1 : 500}
+                      value={editPrice}
+                      onChange={(e) => setEditPrice(parseInt(e.target.value, 10) || 0)}
+                      className="w-full bg-neutral-900 border border-neutral-800 rounded-xl py-2 px-3 text-xs text-white font-mono outline-none"
+                    />
+                    <select
+                      value={editCurrency}
+                      onChange={(e) => setEditCurrency(e.target.value)}
+                      className="w-full bg-neutral-900 border border-neutral-800 rounded-xl py-2 px-3 text-xs text-white outline-none"
+                    >
+                      <option value="UGX">UGX</option>
+                      <option value="USD">USD</option>
+                    </select>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-neutral-800">
+                <button
+                  type="button"
+                  onClick={() => setEditModalApp(null)}
+                  className="px-4 py-2 text-xs font-semibold text-neutral-400 hover:text-white bg-neutral-800 rounded-xl cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingEdit}
+                  className="px-5 py-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-neutral-950 font-black text-xs rounded-xl shadow-md cursor-pointer disabled:opacity-50"
+                >
+                  {isSavingEdit ? 'Saving Changes...' : 'Save App Changes'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 4: RELEASE NEW APK VERSION UPDATE */}
+      {releaseModalApp && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
+          <div
+            className="w-full max-w-lg bg-neutral-900 border border-neutral-800 rounded-3xl p-6 shadow-2xl text-neutral-100 space-y-5 max-h-[90vh] overflow-y-auto"
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className="flex items-center justify-between border-b border-neutral-800 pb-3">
+              <div className="flex items-center gap-2.5 text-cyan-400">
+                <UploadCloud className="w-5 h-5" />
+                <h3 className="text-base font-black text-white">Publish New Update ({releaseModalApp.name})</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setReleaseModalApp(null)}
+                className="p-1 text-neutral-400 hover:text-white rounded-lg cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {relError && (
+              <div className="p-3 bg-rose-950/40 border border-rose-800 rounded-xl text-xs text-rose-300 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                <span>{relError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handlePublishAppRelease} className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-neutral-300 mb-1">New Version *</label>
+                  <input
+                    type="text"
+                    required
+                    value={relVersion}
+                    onChange={(e) => setRelVersion(e.target.value)}
+                    placeholder="e.g. 2.1.0"
+                    className="w-full bg-neutral-950 border border-neutral-800 focus:border-cyan-500 rounded-xl py-2 px-3 text-xs text-white outline-none font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-neutral-300 mb-1">Platform</label>
+                  <select
+                    value={relPlatform}
+                    onChange={(e) => setRelPlatform(e.target.value as any)}
+                    className="w-full bg-neutral-950 border border-neutral-800 focus:border-cyan-500 rounded-xl py-2 px-3 text-xs text-white outline-none"
+                  >
+                    <option value="Android">Android</option>
+                    <option value="Android TV">Android TV</option>
+                    <option value="Fire TV">Fire TV</option>
+                    <option value="Smart TV">Smart TV</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-neutral-300 mb-1">Min OS</label>
+                  <input
+                    type="text"
+                    value={relMinOS}
+                    onChange={(e) => setRelMinOS(e.target.value)}
+                    className="w-full bg-neutral-950 border border-neutral-800 focus:border-cyan-500 rounded-xl py-2 px-3 text-xs text-white outline-none"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-neutral-300 mb-1">Upload APK Binary</label>
+                <input
+                  type="file"
+                  accept=".apk,application/vnd.android.package-archive"
+                  onChange={(e) => setRelApkFile(e.target.files?.[0] || null)}
+                  className="w-full text-xs text-neutral-300 file:mr-3 file:py-2 file:px-3 file:rounded-xl file:border-0 file:bg-neutral-800 file:text-white file:font-semibold"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-neutral-300 mb-1">Or Direct Cloud APK Link</label>
+                <input
+                  type="url"
+                  value={relDirectUrl}
+                  onChange={(e) => setRelDirectUrl(e.target.value)}
+                  placeholder="https://drive.google.com/file/d/..."
+                  className="w-full bg-neutral-950 border border-neutral-800 focus:border-cyan-500 rounded-xl py-2 px-3 text-xs text-white outline-none font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-neutral-300 mb-1">What&apos;s New / Changelog</label>
+                <textarea
+                  rows={3}
+                  value={relChangelog}
+                  onChange={(e) => setRelChangelog(e.target.value)}
+                  placeholder="- Added new features&#10;- Fixed startup crash"
+                  className="w-full bg-neutral-950 border border-neutral-800 focus:border-cyan-500 rounded-xl py-2 px-3 text-xs text-white outline-none"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-neutral-800">
+                <button
+                  type="button"
+                  onClick={() => setReleaseModalApp(null)}
+                  className="px-4 py-2 text-xs font-semibold text-neutral-400 hover:text-white bg-neutral-800 rounded-xl cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isPublishingRelease}
+                  className="px-5 py-2 bg-gradient-to-r from-cyan-400 to-cyan-500 hover:from-cyan-300 hover:to-cyan-400 text-neutral-950 font-black text-xs rounded-xl shadow-md cursor-pointer disabled:opacity-50"
+                >
+                  {isPublishingRelease ? 'Publishing Update...' : 'Publish New Release'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 5: CONFIRM WITHDRAW / DELETE APPLICATION */}
+      {withdrawAppModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
+          <div
+            className="w-full max-w-md bg-neutral-900 border border-neutral-800 rounded-3xl p-6 shadow-2xl text-neutral-100 space-y-4"
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className="flex items-center justify-between border-b border-neutral-800 pb-3">
+              <div className="flex items-center gap-2 text-rose-400">
+                <Trash2 className="w-5 h-5" />
+                <h3 className="text-base font-bold text-white">Withdraw Application</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setWithdrawAppModal(null)}
+                className="p-1 text-neutral-400 hover:text-white rounded-lg cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <p className="text-xs text-neutral-300 leading-relaxed">
+              Are you sure you want to permanently remove <strong className="text-white">{withdrawAppModal.name}</strong> from your account and the store catalog?
+            </p>
+            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-neutral-800">
+              <button
+                type="button"
+                onClick={() => setWithdrawAppModal(null)}
+                className="px-4 py-2 text-xs font-semibold text-neutral-400 hover:text-white bg-neutral-800 rounded-xl cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isDeletingApp}
+                onClick={handleConfirmDeleteApp}
+                className="px-5 py-2 bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs rounded-xl cursor-pointer disabled:opacity-50"
+              >
+                {isDeletingApp ? 'Withdrawing...' : 'Yes, Withdraw App'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

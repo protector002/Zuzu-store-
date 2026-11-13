@@ -51,6 +51,11 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    // Developer-to-developer paid app ownership transfers
+    match /app_transfers/{transferId} {
+      allow read, write: if true;
+    }
+
     match /test/{docId} {
       allow read, write: if true;
     }

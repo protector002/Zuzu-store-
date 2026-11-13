@@ -41,6 +41,7 @@ const SALES_FILE = path.join(DATA_DIR, 'sales.json');
 const WALLETS_FILE = path.join(DATA_DIR, 'wallets.json');
 const WITHDRAWALS_FILE = path.join(DATA_DIR, 'withdrawals.json');
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
+const TRANSFERS_FILE = path.join(DATA_DIR, 'transfers.json');
 
 // Admin credentials specified by the user
 const ADMIN_EMAIL = 'sseruwagijohn452@gmail.com';
@@ -146,6 +147,48 @@ export interface AppOwnershipTransferRecord {
   transferredBy: string;
   reason?: string;
   updatedDisplayCredit: boolean;
+  pricePaid?: number;
+  adminFeePercent?: number;
+  adminFeeAmount?: number;
+  sellerNetAmount?: number;
+  currency?: string;
+  transferListingId?: string;
+  paymentMethod?: string;
+}
+
+export interface AppTransferListing {
+  id: string;
+  appId: string;
+  appName: string;
+  appSlug?: string;
+  appIcon: string;
+  appVersion: string;
+  appCategory: string;
+  sellerId: string;
+  sellerName: string;
+  sellerEmail: string;
+  targetBuyerId?: string;
+  targetBuyerEmail?: string;
+  targetBuyerName?: string;
+  askingPrice: number;
+  adminFeePercent: number;
+  adminFeeAmount: number;
+  sellerNetAmount: number;
+  currency: string;
+  note?: string;
+  status: 'open' | 'completed' | 'cancelled';
+  buyerId?: string;
+  buyerName?: string;
+  buyerEmail?: string;
+  paymentMethod?: string;
+  phoneNumber?: string;
+  livepayReference?: string;
+  livepayInternalRef?: string;
+  livepayNetwork?: string;
+  transferRecordId?: string;
+  createdAt: string;
+  completedAt?: string;
+  cancelledAt?: string;
 }
 
 export type AppPricingType = 'free' | 'paid';
@@ -167,9 +210,9 @@ export interface AppSaleTransaction {
   customerName: string;
   customerEmail: string;
   grossAmount: number;
-  adminCommissionPercent: number; // 6%
-  adminCommissionAmount: number; // gross * 0.06
-  developerNetAmount: number; // gross * 0.94
+  adminCommissionPercent: number; // 6% for store sales, 10% for ownership transfers
+  adminCommissionAmount: number;
+  developerNetAmount: number;
   currency: string;
   paymentMethod: string;
   phoneNumber?: string;
@@ -178,6 +221,7 @@ export interface AppSaleTransaction {
   livepayNetwork?: string;
   livepayStatus?: string;
   status: 'completed' | 'refunded';
+  transactionType?: 'app_purchase' | 'ownership_transfer';
   downloadToken?: string;
   createdAt: string;
 }
@@ -756,6 +800,20 @@ async function syncFromFirestore() {
         console.log(`[Firestore Server] Synchronized system settings: commission=${data.adminCommissionPercent}%, transferFeePer1000=${data.withdrawalTransferFeePer1000} UGX`);
       }
     }
+
+    // 8. Sync developer-to-developer app ownership transfers
+    const transfersSnap = await getDocs(collection(firestoreDb, 'app_transfers'));
+    const cloudTransfers: AppTransferListing[] = [];
+    transfersSnap.forEach((d) => {
+      const t = d.data() as AppTransferListing;
+      if (t && t.id) cloudTransfers.push(t);
+    });
+    if (cloudTransfers.length > 0) {
+      cloudTransfers.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+      memoryTransfers = cloudTransfers;
+      saveTransfers(cloudTransfers);
+      console.log(`[Firestore Server] Synchronized ${cloudTransfers.length} app ownership transfer listings.`);
+    }
   } catch (err) {
     console.warn('[Firestore Server] Initial sync notice:', err);
   }
@@ -765,6 +823,7 @@ async function syncFromFirestore() {
 let memorySales: AppSaleTransaction[] = [];
 let memoryWallets: Record<string, DeveloperWallet> = {};
 let memoryWithdrawals: WithdrawalRequest[] = [];
+let memoryTransfers: AppTransferListing[] = [];
 
 function getSales(): AppSaleTransaction[] {
   try {
@@ -829,6 +888,28 @@ function saveWithdrawals(withdrawals: WithdrawalRequest[]) {
     fs.writeFileSync(WITHDRAWALS_FILE, JSON.stringify(withdrawals, null, 2), 'utf-8');
   } catch (err) {
     console.error('Error saving withdrawals file:', err);
+  }
+}
+
+function getTransfers(): AppTransferListing[] {
+  try {
+    if (!fs.existsSync(TRANSFERS_FILE)) {
+      fs.writeFileSync(TRANSFERS_FILE, '[]', 'utf-8');
+      return [];
+    }
+    const data = fs.readFileSync(TRANSFERS_FILE, 'utf-8');
+    return JSON.parse(data);
+  } catch (err) {
+    return memoryTransfers || [];
+  }
+}
+
+function saveTransfers(transfers: AppTransferListing[]) {
+  memoryTransfers = transfers;
+  try {
+    fs.writeFileSync(TRANSFERS_FILE, JSON.stringify(transfers, null, 2), 'utf-8');
+  } catch (err) {
+    console.error('Error saving transfers file:', err);
   }
 }
 
@@ -2659,6 +2740,696 @@ app.delete('/api/developer/apps/:id', requireDeveloper, async (req, res) => {
   return res.json({ success: true, message: `Submission for "${appItem.name}" has been removed.` });
 });
 
+// Developer: Full Owner Control - Edit own app metadata, pricing, icon, screenshots, and download URL
+app.patch('/api/developer/apps/:id', requireDeveloper, async (req, res) => {
+  const dev = (req as any).developer;
+  const { id } = req.params;
+  const apps = getApps();
+  const index = apps.findIndex((a) => a.id === id || a.slug === id);
+
+  if (index === -1) {
+    return res.status(404).json({ error: 'Application not found.' });
+  }
+
+  const appItem = apps[index];
+  if (!isAppOwnedByDeveloper(appItem, dev)) {
+    return res.status(403).json({ error: 'You do not have ownership rights to edit this application.' });
+  }
+
+  const {
+    name,
+    tagline,
+    description,
+    category,
+    iconUrl,
+    heroImageUrl,
+    screenshots,
+    packageId,
+    appEdition,
+    isTvCompatible,
+    directDownloadUrl,
+    pricing
+  } = req.body || {};
+
+  if (name !== undefined && !String(name).trim()) {
+    return res.status(400).json({ error: 'Application name cannot be empty.' });
+  }
+
+  let updatedPricing = appItem.pricing;
+  if (pricing && typeof pricing === 'object') {
+    const nextType: AppPricingType = pricing.type === 'paid' ? 'paid' : 'free';
+    const nextCurrency = String(pricing.currency || appItem.pricing?.currency || 'UGX').toUpperCase();
+    const nextPrice = nextType === 'paid' ? Number(pricing.price || 0) : 0;
+    if (nextType === 'paid') {
+      const minAllowed = nextCurrency === 'USD' ? 1 : 500;
+      if (!nextPrice || isNaN(nextPrice) || nextPrice < minAllowed) {
+        return res.status(400).json({ error: `Paid app price must be at least ${minAllowed} ${nextCurrency}.` });
+      }
+    }
+    updatedPricing = {
+      type: nextType,
+      price: nextPrice,
+      currency: nextCurrency
+    };
+  }
+
+  const normalizedDirect =
+    directDownloadUrl !== undefined ? normalizeDownloadUrl(String(directDownloadUrl || '').trim()) : undefined;
+
+  let updatedReleases = appItem.releases || [];
+  if (directDownloadUrl !== undefined && updatedReleases.length > 0) {
+    updatedReleases = updatedReleases.map((rel, idx) =>
+      idx === 0 ? { ...rel, directDownloadUrl: normalizedDirect } : rel
+    );
+  }
+
+  const nextEdition = appEdition || appItem.appEdition || 'phone';
+  const updatedApp: StoreApp = {
+    ...appItem,
+    name: name !== undefined ? String(name).trim() : appItem.name,
+    tagline: tagline !== undefined ? String(tagline).trim() : appItem.tagline,
+    description: description !== undefined ? String(description).trim() : appItem.description,
+    category: category !== undefined ? String(category).trim() : appItem.category,
+    iconUrl: iconUrl !== undefined && String(iconUrl).trim() ? String(iconUrl).trim() : appItem.iconUrl,
+    heroImageUrl:
+      heroImageUrl !== undefined && String(heroImageUrl).trim()
+        ? String(heroImageUrl).trim()
+        : iconUrl !== undefined && String(iconUrl).trim()
+        ? String(iconUrl).trim()
+        : appItem.heroImageUrl,
+    screenshots: Array.isArray(screenshots) && screenshots.length > 0 ? screenshots : appItem.screenshots,
+    packageId: packageId !== undefined && String(packageId).trim() ? String(packageId).trim() : appItem.packageId,
+    appEdition: nextEdition,
+    isTvCompatible:
+      isTvCompatible !== undefined
+        ? Boolean(isTvCompatible)
+        : nextEdition === 'tv' || nextEdition === 'both'
+        ? true
+        : appItem.isTvCompatible,
+    pricing: updatedPricing,
+    releases: updatedReleases,
+    updatedAt: new Date().toISOString()
+  };
+
+  apps[index] = updatedApp;
+  saveApps(apps);
+
+  if (firestoreDb) {
+    try {
+      await setDoc(doc(firestoreDb, 'apps', updatedApp.id), cleanForFirestore(updatedApp), { merge: true });
+    } catch (e) {
+      console.warn('[Firestore] Developer app edit sync notice:', e);
+    }
+  }
+
+  return res.json({
+    success: true,
+    message: `Application "${updatedApp.name}" updated successfully.`,
+    app: updatedApp
+  });
+});
+
+// Developer: Full Owner Control - Publish a new APK or direct-link version update to own app
+app.post(
+  '/api/developer/apps/:id/releases',
+  requireDeveloper,
+  conditionalSingleUpload,
+  async (req, res) => {
+    try {
+      const dev = (req as any).developer;
+      const { id } = req.params;
+      const {
+        version,
+        platform,
+        minOS,
+        changelog,
+        directDownloadUrl,
+        fileName: customFileName,
+        fileSize: customFileSize
+      } = req.body || {};
+      const file = req.file;
+
+      if (!version || !String(version).trim()) {
+        return res.status(400).json({ error: 'Version string is required.' });
+      }
+
+      const apps = getApps();
+      const appIndex = apps.findIndex((a) => a.id === id || a.slug === id);
+      if (appIndex === -1) {
+        return res.status(404).json({ error: 'Application not found.' });
+      }
+
+      const targetApp = apps[appIndex];
+      if (!isAppOwnedByDeveloper(targetApp, dev)) {
+        return res.status(403).json({ error: 'You do not have ownership rights to release updates for this app.' });
+      }
+
+      const formattedDirectUrl = normalizeDownloadUrl(directDownloadUrl);
+      if (!file && !formattedDirectUrl) {
+        return res.status(400).json({ error: 'Please upload an APK file or provide a direct download URL.' });
+      }
+
+      const cleanVersion = String(version).trim();
+      const targetPlatform = (platform || (targetApp.appEdition === 'tv' ? 'Android TV' : 'Android')) as AppRelease['platform'];
+
+      let fileSize = customFileSize || '32.0 MB';
+      let fileName = customFileName || `${targetApp.slug}-v${cleanVersion}.apk`;
+      let sha256Checksum = crypto.randomBytes(32).toString('hex');
+      let apkFilePath: string | undefined = undefined;
+
+      if (file) {
+        fileSize = `${(file.size / (1024 * 1024)).toFixed(1)} MB`;
+        fileName = file.originalname;
+        apkFilePath = file.path;
+        try {
+          const fileBuffer = fs.readFileSync(file.path);
+          sha256Checksum = crypto.createHash('sha256').update(fileBuffer).digest('hex');
+        } catch (_) {}
+      } else if (formattedDirectUrl) {
+        fileSize = customFileSize || 'Cloud Direct Link';
+      }
+
+      (targetApp.releases || []).forEach((r) => {
+        if (r.platform === targetPlatform) {
+          r.isLatest = false;
+        }
+      });
+
+      const changelogList = (changelog || 'Bug fixes and performance improvements.')
+        .split('\n')
+        .map((l: string) => l.trim().replace(/^[-* ]\s*/, ''))
+        .filter(Boolean);
+
+      const newRelease: AppRelease = {
+        id: `rel-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        version: cleanVersion,
+        buildNumber: (targetApp.releases?.[0]?.buildNumber || 100) + 1,
+        releaseDate: new Intl.DateTimeFormat('en-US', { month: 'long', day: 'numeric', year: 'numeric' }).format(new Date()),
+        fileSize,
+        fileName,
+        platform: targetPlatform,
+        minOS: minOS || 'Android 8.0+',
+        changelog: changelogList,
+        downloadCount: 0,
+        sha256Checksum,
+        isLatest: true,
+        filePath: apkFilePath,
+        directDownloadUrl: formattedDirectUrl
+      };
+
+      targetApp.releases = [newRelease, ...(targetApp.releases || [])];
+      targetApp.currentVersion = cleanVersion;
+      targetApp.updatedAt = new Date().toISOString();
+
+      if (!targetApp.supportedPlatforms.includes(targetPlatform)) {
+        targetApp.supportedPlatforms.push(targetPlatform);
+      }
+
+      const isTvPlat = targetPlatform === 'Android TV' || targetPlatform === 'Fire TV' || targetPlatform === 'Smart TV';
+      if (isTvPlat) {
+        targetApp.isTvCompatible = true;
+        if (targetApp.appEdition === 'phone') {
+          targetApp.appEdition = 'both';
+        }
+      } else if (targetPlatform === 'Android' && targetApp.appEdition === 'tv') {
+        targetApp.appEdition = 'both';
+      }
+
+      apps[appIndex] = targetApp;
+      saveApps(apps);
+
+      if (firestoreDb) {
+        try {
+          await setDoc(doc(firestoreDb, 'apps', targetApp.id), cleanForFirestore(targetApp), { merge: true });
+        } catch (e) {
+          console.warn('[Firestore] Developer release upload sync notice:', e);
+        }
+      }
+
+      return res.json({
+        success: true,
+        message: `Version v${cleanVersion} published for "${targetApp.name}"!`,
+        app: targetApp,
+        release: newRelease
+      });
+    } catch (err: any) {
+      console.error('Error releasing developer app update:', err);
+      return res.status(500).json({ error: err.message || 'Failed to publish app update.' });
+    }
+  }
+);
+
+// ==========================================
+// DEVELOPER-TO-DEVELOPER APP OWNERSHIP SALE & TRANSFER (10% ADMIN FEE)
+// ==========================================
+
+// List active fellow developers (for choosing a recipient developer when selling/transferring an app)
+app.get('/api/developer/directory', requireDeveloper, (req, res) => {
+  const caller = (req as any).developer;
+  const devs = getDevelopers();
+  const directory = Object.values(devs)
+    .filter((d) => {
+      if (!d || d.status === 'banned' || d.status === 'frozen') return false;
+      if (d.id === caller.id || d.email?.toLowerCase() === caller.email?.toLowerCase()) return false;
+      if (d.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase()) return false;
+      return true;
+    })
+    .map((d) => ({
+      id: d.id,
+      name: d.name,
+      email: d.email,
+      companyName: d.companyName
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  return res.json({ success: true, developers: directory });
+});
+
+// Seller Developer: List an owned app for sale/ownership transfer to a specific developer or open developer market
+app.post('/api/developer/transfers/list', requireDeveloper, async (req, res) => {
+  const seller = (req as any).developer;
+  const { appId, askingPrice, targetBuyerEmail, targetBuyerId, note } = req.body || {};
+
+  if (!appId) {
+    return res.status(400).json({ error: 'Please select an application to sell/transfer.' });
+  }
+
+  const priceNum = Number(askingPrice);
+  if (!priceNum || isNaN(priceNum) || priceNum < 1000) {
+    return res.status(400).json({ error: 'Minimum transfer price is 1,000 UGX.' });
+  }
+
+  const apps = getApps();
+  const appItem = apps.find((a) => a.id === appId || a.slug === appId);
+  if (!appItem) {
+    return res.status(404).json({ error: 'Application not found.' });
+  }
+
+  if (!isAppOwnedByDeveloper(appItem, seller)) {
+    return res.status(403).json({ error: 'You do not own this application and cannot list it for transfer.' });
+  }
+
+  let resolvedBuyer: DeveloperAccount | null = null;
+  const lookupKey = String(targetBuyerId || targetBuyerEmail || '').trim();
+  if (lookupKey) {
+    if (lookupKey.toLowerCase() === ADMIN_EMAIL.toLowerCase()) {
+      return res.status(400).json({ error: 'Developer-to-developer transfers cannot target the Super Admin account.' });
+    }
+    resolvedBuyer = await findDeveloperByIdOrEmail(lookupKey);
+    if (!resolvedBuyer) {
+      return res.status(404).json({ error: `No registered developer found matching "${lookupKey}".` });
+    }
+    if (
+      resolvedBuyer.id === seller.id ||
+      resolvedBuyer.email?.toLowerCase() === seller.email?.toLowerCase()
+    ) {
+      return res.status(400).json({ error: 'You cannot transfer ownership to your own developer account.' });
+    }
+    if (resolvedBuyer.status === 'banned' || resolvedBuyer.status === 'frozen') {
+      return res.status(400).json({
+        error: `Target developer "${resolvedBuyer.name}" cannot receive apps because their account is ${resolvedBuyer.status}.`
+      });
+    }
+  }
+
+  const adminFeePercent = 10;
+  const adminFeeAmount = Math.round((priceNum * adminFeePercent) / 100);
+  const sellerNetAmount = priceNum - adminFeeAmount;
+  const nowIso = new Date().toISOString();
+
+  const transfers = getTransfers();
+  // Cancel any stale open listings for the same app by this seller
+  const modifiedIds: string[] = [];
+  transfers.forEach((t) => {
+    if (t.appId === appItem.id && t.status === 'open') {
+      t.status = 'cancelled';
+      t.cancelledAt = nowIso;
+      modifiedIds.push(t.id);
+    }
+  });
+
+  const listing: AppTransferListing = {
+    id: `trf-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    appId: appItem.id,
+    appName: appItem.name,
+    appSlug: appItem.slug,
+    appIcon: appItem.iconUrl || '/zuzustore-logo.png',
+    appVersion: appItem.currentVersion,
+    appCategory: appItem.category,
+    sellerId: seller.id,
+    sellerName: seller.name,
+    sellerEmail: seller.email,
+    ...(resolvedBuyer
+      ? {
+          targetBuyerId: resolvedBuyer.id,
+          targetBuyerEmail: resolvedBuyer.email,
+          targetBuyerName: resolvedBuyer.name
+        }
+      : {}),
+    askingPrice: priceNum,
+    adminFeePercent,
+    adminFeeAmount,
+    sellerNetAmount,
+    currency: 'UGX',
+    ...(note && String(note).trim() ? { note: String(note).trim() } : {}),
+    status: 'open',
+    createdAt: nowIso
+  };
+
+  transfers.unshift(listing);
+  saveTransfers(transfers);
+
+  if (firestoreDb) {
+    try {
+      await setDoc(doc(firestoreDb, 'app_transfers', listing.id), cleanForFirestore(listing));
+      await Promise.all(
+        modifiedIds.map((mid) => {
+          const item = transfers.find((t) => t.id === mid);
+          return item ? setDoc(doc(firestoreDb, 'app_transfers', mid), cleanForFirestore(item), { merge: true }) : Promise.resolve();
+        })
+      );
+    } catch (e) {
+      console.warn('[Firestore] Transfer listing sync notice:', e);
+    }
+  }
+
+  return res.status(201).json({
+    success: true,
+    message: resolvedBuyer
+      ? `Transfer offer for "${appItem.name}" sent to ${resolvedBuyer.name} (${resolvedBuyer.email}) for ${priceNum.toLocaleString()} UGX.`
+      : `"${appItem.name}" listed on the Developer Ownership Market for ${priceNum.toLocaleString()} UGX.`,
+    listing
+  });
+});
+
+// Developer: Fetch my open listings, incoming direct offers, open developer market offers, and transfer history
+app.get('/api/developer/transfers', requireDeveloper, (req, res) => {
+  const dev = (req as any).developer;
+  const devEmail = dev.email?.toLowerCase();
+  const transfers = getTransfers();
+
+  const isSeller = (t: AppTransferListing) =>
+    t.sellerId === dev.id || t.sellerEmail?.toLowerCase() === devEmail;
+  const isTargetBuyer = (t: AppTransferListing) =>
+    Boolean(
+      (t.targetBuyerId && t.targetBuyerId === dev.id) ||
+        (t.targetBuyerEmail && t.targetBuyerEmail.toLowerCase() === devEmail)
+    );
+  const isBuyer = (t: AppTransferListing) =>
+    Boolean(
+      (t.buyerId && t.buyerId === dev.id) ||
+        (t.buyerEmail && t.buyerEmail.toLowerCase() === devEmail)
+    );
+
+  const myListings = transfers.filter((t) => t.status === 'open' && isSeller(t));
+  const incomingOffers = transfers.filter(
+    (t) => t.status === 'open' && !isSeller(t) && isTargetBuyer(t)
+  );
+  const marketplaceOffers = transfers.filter(
+    (t) => t.status === 'open' && !isSeller(t) && !t.targetBuyerId && !t.targetBuyerEmail
+  );
+  const completedHistory = transfers.filter(
+    (t) => t.status !== 'open' && (isSeller(t) || isBuyer(t) || isTargetBuyer(t))
+  );
+
+  return res.json({
+    success: true,
+    myListings,
+    incomingOffers,
+    marketplaceOffers,
+    completedHistory
+  });
+});
+
+// Seller Developer: Cancel an open transfer listing
+app.post('/api/developer/transfers/:id/cancel', requireDeveloper, async (req, res) => {
+  const dev = (req as any).developer;
+  const { id } = req.params;
+  const transfers = getTransfers();
+  const listing = transfers.find((t) => t.id === id);
+
+  if (!listing) {
+    return res.status(404).json({ error: 'Transfer listing not found.' });
+  }
+
+  const isOwner =
+    listing.sellerId === dev.id || listing.sellerEmail?.toLowerCase() === dev.email?.toLowerCase();
+  if (!isOwner) {
+    return res.status(403).json({ error: 'Only the seller developer can cancel this transfer listing.' });
+  }
+
+  if (listing.status !== 'open') {
+    return res.status(400).json({ error: `Cannot cancel a listing that is already ${listing.status}.` });
+  }
+
+  listing.status = 'cancelled';
+  listing.cancelledAt = new Date().toISOString();
+  saveTransfers(transfers);
+
+  if (firestoreDb) {
+    try {
+      await setDoc(doc(firestoreDb, 'app_transfers', listing.id), cleanForFirestore(listing), { merge: true });
+    } catch (_) {}
+  }
+
+  return res.json({
+    success: true,
+    message: `Transfer offer for "${listing.appName}" has been cancelled.`,
+    listing
+  });
+});
+
+// Buyer Developer: Pay for app ownership (LivePay Mobile Money OR Wallet Balance) -> 10% Admin Commission, 90% Seller Wallet, Immediate Full Rights Handover
+app.post('/api/developer/transfers/:id/purchase', requireDeveloper, async (req, res) => {
+  const buyer = (req as any).developer;
+  const { id } = req.params;
+  const { paymentMethod = 'livepay_mtn', phoneNumber } = req.body || {};
+
+  const transfers = getTransfers();
+  const listingIndex = transfers.findIndex((t) => t.id === id);
+  if (listingIndex === -1) {
+    return res.status(404).json({ error: 'App transfer listing not found.' });
+  }
+
+  const listing = transfers[listingIndex];
+  if (listing.status !== 'open') {
+    return res.status(400).json({ error: `This transfer offer is already ${listing.status}.` });
+  }
+
+  if (
+    listing.sellerId === buyer.id ||
+    listing.sellerEmail?.toLowerCase() === buyer.email?.toLowerCase()
+  ) {
+    return res.status(400).json({ error: 'You cannot purchase your own app transfer listing.' });
+  }
+
+  // If targeted at a specific developer, verify caller is that developer
+  if (listing.targetBuyerId || listing.targetBuyerEmail) {
+    const matchesId = listing.targetBuyerId && listing.targetBuyerId === buyer.id;
+    const matchesEmail =
+      listing.targetBuyerEmail && listing.targetBuyerEmail.toLowerCase() === buyer.email?.toLowerCase();
+    if (!matchesId && !matchesEmail) {
+      return res.status(403).json({ error: 'This private ownership transfer offer is assigned to a different developer.' });
+    }
+  }
+
+  const apps = getApps();
+  const appIndex = apps.findIndex((a) => a.id === listing.appId);
+  if (appIndex === -1) {
+    return res.status(404).json({ error: 'The application in this transfer listing no longer exists.' });
+  }
+
+  const appItem = apps[appIndex];
+  if (!isAppOwnedByDeveloper(appItem, { id: listing.sellerId, email: listing.sellerEmail })) {
+    return res.status(409).json({
+      error: 'Ownership of this application changed outside this listing. Transfer aborted for safety.'
+    });
+  }
+
+  const grossAmount = Number(listing.askingPrice);
+  const adminFeePercent = 10;
+  const adminFeeAmount = Math.round((grossAmount * adminFeePercent) / 100);
+  const sellerNetAmount = grossAmount - adminFeeAmount;
+  const currency = listing.currency || 'UGX';
+  const nowIso = new Date().toISOString();
+
+  const wallets = getWallets();
+  let buyerWallet: DeveloperWallet | null = null;
+  let livepayResult: any = null;
+  let cleanPhone = '';
+  let readableMethod = 'LivePay Mobile Money';
+
+  if (paymentMethod === 'wallet') {
+    buyerWallet = getOrCreateWallet(buyer.id);
+    if ((buyerWallet.availableBalance || 0) < grossAmount) {
+      return res.status(400).json({
+        error: `Insufficient Developer Wallet balance. Required: ${grossAmount.toLocaleString()} ${currency}, Available: ${(buyerWallet.availableBalance || 0).toLocaleString()} ${currency}.`
+      });
+    }
+    buyerWallet.availableBalance -= grossAmount;
+    buyerWallet.updatedAt = nowIso;
+    wallets[buyer.id] = buyerWallet;
+    readableMethod = 'Developer Wallet Balance';
+  } else {
+    cleanPhone = normalizeUgandaPhone(phoneNumber || '');
+    if (!cleanPhone || cleanPhone.length < 10) {
+      return res.status(400).json({
+        error: 'Please enter a valid MTN or Airtel Mobile Money phone number (e.g. 0770 000 000).'
+      });
+    }
+    const isAirtel = paymentMethod === 'livepay_airtel';
+    readableMethod = isAirtel ? 'LivePay Airtel Money' : 'LivePay MTN Mobile Money';
+    const livepayRef = `ZUZUXFR${Date.now().toString().slice(-7)}`;
+    console.log(`[LivePay App Transfer] Collecting ${grossAmount} ${currency} from ${cleanPhone} for "${appItem.name}"...`);
+    livepayResult = await callLivePayCollect({
+      phoneNumber: cleanPhone,
+      amount: grossAmount,
+      currency,
+      reference: livepayRef,
+      description: `XFER:${appItem.name.substring(0, 18)}`
+    });
+    console.log('[LivePay App Transfer Response]:', livepayResult);
+  }
+
+  // Credit 90% to Seller Developer Wallet (10% retained by Super Admin)
+  const sellerWallet = getOrCreateWallet(listing.sellerId);
+  sellerWallet.totalGrossRevenue += grossAmount;
+  sellerWallet.totalAdminFeesPaid += adminFeeAmount;
+  sellerWallet.totalNetEarnings += sellerNetAmount;
+  sellerWallet.availableBalance += sellerNetAmount;
+  sellerWallet.currency = currency;
+  sellerWallet.updatedAt = nowIso;
+  wallets[listing.sellerId] = sellerWallet;
+  saveWallets(wallets);
+
+  // Record financial transaction in sales ledger (tracks Super Admin 10% commission & seller 90% net)
+  const saleTx: AppSaleTransaction = {
+    id: `sale-xfer-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    appId: appItem.id,
+    appName: `${appItem.name} (Ownership Transfer)`,
+    appIcon: appItem.iconUrl,
+    developerId: listing.sellerId,
+    developerEmail: listing.sellerEmail,
+    customerName: buyer.name,
+    customerEmail: buyer.email,
+    grossAmount,
+    adminCommissionPercent: adminFeePercent,
+    adminCommissionAmount: adminFeeAmount,
+    developerNetAmount: sellerNetAmount,
+    currency,
+    paymentMethod: readableMethod,
+    ...(cleanPhone ? { phoneNumber: cleanPhone } : {}),
+    livepayReference: livepayResult?.data?.reference || (paymentMethod === 'wallet' ? `WALLET-${Date.now()}` : `LP-XFR-${Date.now()}`),
+    ...(livepayResult?.data?.internal_reference ? { livepayInternalRef: livepayResult.data.internal_reference } : {}),
+    ...(livepayResult?.data?.network ? { livepayNetwork: livepayResult.data.network } : {}),
+    livepayStatus: paymentMethod === 'wallet' ? 'completed' : livepayResult?.ok ? 'initiated' : 'completed',
+    status: 'completed',
+    transactionType: 'ownership_transfer',
+    createdAt: nowIso
+  };
+  const sales = getSales();
+  sales.unshift(saleTx);
+  saveSales(sales);
+
+  // Transfer FULL app ownership & full rights immediately to Buyer Developer
+  const transferRecord: AppOwnershipTransferRecord = {
+    id: `xfer-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    fromId: listing.sellerId,
+    fromName: listing.sellerName,
+    fromEmail: listing.sellerEmail,
+    toId: buyer.id,
+    toName: buyer.name,
+    toEmail: buyer.email,
+    transferredAt: nowIso,
+    transferredBy: buyer.email,
+    reason: listing.note || `Developer-to-developer paid ownership sale (${grossAmount.toLocaleString()} ${currency})`,
+    updatedDisplayCredit: true,
+    pricePaid: grossAmount,
+    adminFeePercent,
+    adminFeeAmount,
+    sellerNetAmount,
+    currency,
+    transferListingId: listing.id,
+    paymentMethod: readableMethod
+  };
+
+  const buyerDisplayName = buyer.companyName ? `${buyer.name} (${buyer.companyName})` : buyer.name;
+  appItem.submittedBy = {
+    id: buyer.id,
+    name: buyer.name,
+    email: buyer.email
+  };
+  appItem.developer = {
+    ...appItem.developer,
+    name: buyerDisplayName,
+    email: buyer.email,
+    verified: buyer.status !== 'banned'
+  };
+  appItem.isOfficial = false;
+  appItem.ownershipHistory = [transferRecord, ...(appItem.ownershipHistory || [])];
+  appItem.updatedAt = nowIso;
+
+  apps[appIndex] = appItem;
+  saveApps(apps);
+
+  // Mark listing completed & cancel any other open listings for the same app
+  listing.status = 'completed';
+  listing.buyerId = buyer.id;
+  listing.buyerName = buyer.name;
+  listing.buyerEmail = buyer.email;
+  listing.paymentMethod = readableMethod;
+  if (cleanPhone) listing.phoneNumber = cleanPhone;
+  listing.livepayReference = saleTx.livepayReference;
+  if (saleTx.livepayInternalRef) listing.livepayInternalRef = saleTx.livepayInternalRef;
+  if (saleTx.livepayNetwork) listing.livepayNetwork = saleTx.livepayNetwork;
+  listing.transferRecordId = transferRecord.id;
+  listing.completedAt = nowIso;
+  transfers[listingIndex] = listing;
+
+  const cancelledOtherIds: string[] = [];
+  transfers.forEach((t) => {
+    if (t.id !== listing.id && t.appId === appItem.id && t.status === 'open') {
+      t.status = 'cancelled';
+      t.cancelledAt = nowIso;
+      cancelledOtherIds.push(t.id);
+    }
+  });
+  saveTransfers(transfers);
+
+  // Persist all updated collections to Firestore
+  if (firestoreDb) {
+    try {
+      const dbWrites: Promise<any>[] = [
+        setDoc(doc(firestoreDb, 'apps', appItem.id), cleanForFirestore(appItem), { merge: true }),
+        setDoc(doc(firestoreDb, 'app_transfers', listing.id), cleanForFirestore(listing), { merge: true }),
+        setDoc(doc(firestoreDb, 'wallets', listing.sellerId), cleanForFirestore(sellerWallet), { merge: true }),
+        setDoc(doc(firestoreDb, 'sales', saleTx.id), cleanForFirestore(saleTx))
+      ];
+      if (buyerWallet) {
+        dbWrites.push(setDoc(doc(firestoreDb, 'wallets', buyer.id), cleanForFirestore(buyerWallet), { merge: true }));
+      }
+      cancelledOtherIds.forEach((cid) => {
+        const item = transfers.find((t) => t.id === cid);
+        if (item) {
+          dbWrites.push(setDoc(doc(firestoreDb, 'app_transfers', cid), cleanForFirestore(item), { merge: true }));
+        }
+      });
+      await Promise.all(dbWrites);
+    } catch (e) {
+      console.warn('[Firestore] App transfer completion sync notice:', e);
+    }
+  }
+
+  return res.json({
+    success: true,
+    message: `Ownership of "${appItem.name}" transferred to ${buyer.name}! Admin 10% commission (${adminFeeAmount.toLocaleString()} ${currency}) recorded and Seller credited ${sellerNetAmount.toLocaleString()} ${currency}.`,
+    listing,
+    app: appItem,
+    transaction: saleTx,
+    buyerWallet: buyerWallet || getOrCreateWallet(buyer.id)
+  });
+});
+
 // ==========================================
 // DEVELOPER FINANCIAL WALLET & WITHDRAWALS
 // ==========================================
@@ -3570,7 +4341,7 @@ app.get('/api/apps/:id/verify-purchase', (req, res) => {
 // SUPER ADMIN FINANCIAL GOD MODE & PAYOUTS
 // ==========================================
 
-// Super Admin: Platform-wide financial summary (Total Sales, 6% Commission, Payouts)
+// Super Admin: Platform-wide financial summary (Total Sales, 6% App Sales + 10% Transfer Commission, Payouts)
 app.get('/api/admin/financials', requireAdmin, (req, res) => {
   const sales = getSales();
   const withdrawals = getWithdrawals();
@@ -3578,6 +4349,11 @@ app.get('/api/admin/financials', requireAdmin, (req, res) => {
   const totalGrossSales = sales.reduce((sum, s) => sum + (s.grossAmount || 0), 0);
   const totalAdminCommissionEarned = sales.reduce((sum, s) => sum + (s.adminCommissionAmount || 0), 0);
   const totalDeveloperNetEarnings = sales.reduce((sum, s) => sum + (s.developerNetAmount || 0), 0);
+
+  const transferSales = sales.filter((s) => s.transactionType === 'ownership_transfer');
+  const totalTransferGross = transferSales.reduce((sum, s) => sum + (s.grossAmount || 0), 0);
+  const totalTransferAdminFees = transferSales.reduce((sum, s) => sum + (s.adminCommissionAmount || 0), 0);
+  const totalCompletedTransfersCount = transferSales.length;
 
   const totalDisbursedWithdrawals = withdrawals
     .filter((w) => w.status === 'paid' || w.status === 'approved')
@@ -3595,11 +4371,14 @@ app.get('/api/admin/financials', requireAdmin, (req, res) => {
     success: true,
     financials: {
       totalGrossSales,
-      totalAdminCommissionEarned, // Super Admin profit!
+      totalAdminCommissionEarned, // Super Admin profit (App Sales + 10% Ownership Transfers)!
       totalDeveloperNetEarnings,
       totalDisbursedWithdrawals,
       totalPendingWithdrawals,
       totalPaidTransactionsCount: sales.length,
+      totalTransferGross,
+      totalTransferAdminFees,
+      totalCompletedTransfersCount,
       currency: 'UGX',
       adminCommissionPercent: currentSettings.adminCommissionPercent,
       withdrawalTransferFeePer1000: currentSettings.withdrawalTransferFeePer1000,

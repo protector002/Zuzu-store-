@@ -234,6 +234,29 @@
         "requestedAt": { "type": "string" }
       },
       "required": ["id", "developerId", "amount", "payoutMethod", "status"]
+    },
+    "AppTransferListing": {
+      "title": "AppTransferListing",
+      "description": "Developer-to-developer paid app ownership sale listing and transfer record with 10 percent admin fee",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "appId": { "type": "string" },
+        "appName": { "type": "string" },
+        "sellerId": { "type": "string" },
+        "sellerEmail": { "type": "string" },
+        "buyerId": { "type": "string" },
+        "buyerEmail": { "type": "string" },
+        "askingPrice": { "type": "number" },
+        "adminFeePercent": { "type": "number" },
+        "adminFeeAmount": { "type": "number" },
+        "sellerNetAmount": { "type": "number" },
+        "currency": { "type": "string" },
+        "status": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "completedAt": { "type": "string" }
+      },
+      "required": ["id", "appId", "sellerId", "askingPrice", "adminFeePercent", "status"]
     }
   },
   "firestore": {
@@ -272,6 +295,12 @@
         "$ref": "#/entities/WithdrawalRequest"
       },
       "description": "Developer payout requests subject to minimum 1000 threshold and admin approval"
+    },
+    "/app_transfers/{transferId}": {
+      "schema": {
+        "$ref": "#/entities/AppTransferListing"
+      },
+      "description": "Developer-to-developer paid app ownership sale listings and completed ownership transfers"
     }
   }
 }

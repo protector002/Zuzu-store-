@@ -113,6 +113,48 @@ export interface AppOwnershipTransferRecord {
   transferredBy: string;
   reason?: string;
   updatedDisplayCredit: boolean;
+  pricePaid?: number;
+  adminFeePercent?: number;
+  adminFeeAmount?: number;
+  sellerNetAmount?: number;
+  currency?: string;
+  transferListingId?: string;
+  paymentMethod?: string;
+}
+
+export interface AppTransferListing {
+  id: string;
+  appId: string;
+  appName: string;
+  appSlug?: string;
+  appIcon: string;
+  appVersion: string;
+  appCategory: string;
+  sellerId: string;
+  sellerName: string;
+  sellerEmail: string;
+  targetBuyerId?: string;
+  targetBuyerEmail?: string;
+  targetBuyerName?: string;
+  askingPrice: number;
+  adminFeePercent: number;
+  adminFeeAmount: number;
+  sellerNetAmount: number;
+  currency: string;
+  note?: string;
+  status: 'open' | 'completed' | 'cancelled';
+  buyerId?: string;
+  buyerName?: string;
+  buyerEmail?: string;
+  paymentMethod?: string;
+  phoneNumber?: string;
+  livepayReference?: string;
+  livepayInternalRef?: string;
+  livepayNetwork?: string;
+  transferRecordId?: string;
+  createdAt: string;
+  completedAt?: string;
+  cancelledAt?: string;
 }
 
 export interface AdminUser {
@@ -233,6 +275,7 @@ export interface AppSaleTransaction {
   livepayNetwork?: string;
   livepayStatus?: string;
   status: 'completed' | 'refunded';
+  transactionType?: 'app_purchase' | 'ownership_transfer';
   downloadToken?: string;
   createdAt: string;
 }
@@ -298,6 +341,9 @@ export interface AdminFinancialSummary {
   totalDisbursedWithdrawals: number;
   totalPendingWithdrawals: number;
   totalPaidTransactionsCount: number;
+  totalTransferGross?: number;
+  totalTransferAdminFees?: number;
+  totalCompletedTransfersCount?: number;
   currency: string;
   adminCommissionPercent?: number;
   withdrawalTransferFeePer1000?: number;
