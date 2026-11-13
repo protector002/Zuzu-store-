@@ -102,7 +102,7 @@ interface PublisherPortalProps {
   onDeleteApp: (appId: string) => Promise<void>;
   onResetCatalog: () => Promise<void>;
   onViewAppInStore: (app: StoreApp) => void;
-  onDownloadTest: (appId: string, releaseId?: string) => Promise<void>;
+  onDownloadTest: (appId: string, releaseId?: string, appObj?: StoreApp) => Promise<void>;
   onAppApproved?: (app: StoreApp) => void;
   onRefreshCatalog?: () => void;
   requestedTab?: 'upload-new' | 'update-existing' | 'manage' | 'submissions' | 'god-mode';
@@ -3083,7 +3083,7 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
                       <div className="flex items-center gap-2">
                         <button
                           type="button"
-                          onClick={() => onDownloadTest(subApp.id, release?.id)}
+                          onClick={() => onDownloadTest(subApp.id, release?.id, subApp)}
                           className="py-2 px-3.5 bg-neutral-950 hover:bg-neutral-800 border border-neutral-800 hover:border-neutral-700 text-neutral-200 text-xs font-semibold rounded-xl flex items-center gap-2 transition-colors cursor-pointer"
                         >
                           <Download className="w-3.5 h-3.5 text-amber-400" />

@@ -201,5 +201,12 @@
     "role": "admin",
     "createdAt": 1794560665383,
     "expiresAt": 1797152665383
+  },
+  "c3NlcnV3YWdpam9objQ1MkBnbWFpbC5jb206MTc5NzE1NDA2NTAxOTo1MzNhMmVlODA1Zjc3NzI3ZTc4ZDdkZTg2ZWM5NjU1MGY4ZDFjZDc3MGJiMTY0OWRjNGNkYTM0YTk1ODQ2ZGYz": {
+    "token": "c3NlcnV3YWdpam9objQ1MkBnbWFpbC5jb206MTc5NzE1NDA2NTAxOTo1MzNhMmVlODA1Zjc3NzI3ZTc4ZDdkZTg2ZWM5NjU1MGY4ZDFjZDc3MGJiMTY0OWRjNGNkYTM0YTk1ODQ2ZGYz",
+    "email": "sseruwagijohn452@gmail.com",
+    "role": "admin",
+    "createdAt": 1794562065019,
+    "expiresAt": 1797154065019
   }
 }

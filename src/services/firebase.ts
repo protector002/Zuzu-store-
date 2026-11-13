@@ -37,6 +37,22 @@ async function testConnection() {
 }
 testConnection();
 
+// Helper to strip undefined values recursively before writing to Firestore
+function cleanForFirestore<T>(data: T): any {
+  if (data === undefined) return null;
+  if (data === null || typeof data !== 'object') return data;
+  if (Array.isArray(data)) {
+    return data.filter((item) => item !== undefined).map((item) => cleanForFirestore(item));
+  }
+  const cleaned: Record<string, any> = {};
+  for (const [key, value] of Object.entries(data as Record<string, any>)) {
+    if (value !== undefined) {
+      cleaned[key] = cleanForFirestore(value);
+    }
+  }
+  return cleaned;
+}
+
 // Collection reference
 const APPS_COLLECTION = 'apps';
 const STATS_COLLECTION = 'stats';
@@ -229,12 +245,13 @@ export async function reorderAppsInFirestore(
  */
 export async function saveAppToFirestore(appData: StoreApp): Promise<void> {
   try {
-    // If this app was previously in deleted tombstones, remove it so republishing works
+    // Strip undefined fields so Firestore setDoc never fails on optional properties
     const docRef = doc(db, APPS_COLLECTION, appData.id);
-    await setDoc(docRef, {
+    const payload = cleanForFirestore({
       ...appData,
       updatedAt: new Date().toISOString()
-    }, { merge: true });
+    });
+    await setDoc(docRef, payload, { merge: true });
   } catch (err) {
     console.error('Failed to save app to Firestore:', err);
     throw err;
@@ -330,7 +347,7 @@ export async function deleteReleaseFromFirestore(appId: string, releaseId: strin
         updatedAt: new Date().toISOString()
       };
 
-      await setDoc(targetDocRef, updatedApp, { merge: true });
+      await setDoc(targetDocRef, cleanForFirestore(updatedApp), { merge: true });
 
       // Clean local storage
       try {
@@ -439,10 +456,10 @@ export async function saveDeveloperToFirestore(dev: DeveloperUser): Promise<void
     const docRef = doc(db, DEVELOPERS_COLLECTION, dev.id);
     await setDoc(
       docRef,
-      {
+      cleanForFirestore({
         ...dev,
         updatedAt: new Date().toISOString()
-      },
+      }),
       { merge: true }
     );
 

@@ -682,15 +682,31 @@ async function syncFromFirestore() {
       }
     });
     if (cloudApps.length > 0) {
-      cloudApps.sort((a, b) => {
+      const existingLocal = getApps();
+      const mergedMap = new Map<string, StoreApp>();
+      existingLocal.forEach((a) => {
+        if (a && a.id) mergedMap.set(a.id, a);
+      });
+      cloudApps.forEach((a) => {
+        if (a && a.id) {
+          const prev = mergedMap.get(a.id);
+          const prevTime = prev ? new Date(prev.updatedAt || prev.createdAt || 0).getTime() : 0;
+          const nextTime = new Date(a.updatedAt || a.createdAt || 0).getTime();
+          if (!prev || nextTime >= prevTime) {
+            mergedMap.set(a.id, a);
+          }
+        }
+      });
+      const mergedApps = Array.from(mergedMap.values());
+      mergedApps.sort((a, b) => {
         const orderA = a.displayOrder !== undefined ? a.displayOrder : (a.isFeatured ? 1 : 9999);
         const orderB = b.displayOrder !== undefined ? b.displayOrder : (b.isFeatured ? 1 : 9999);
         if (orderA !== orderB) return orderA - orderB;
         return new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime();
       });
-      memoryApps = cloudApps;
-      saveApps(cloudApps);
-      console.log(`[Firestore Server] Synchronized ${cloudApps.length} store apps.`);
+      memoryApps = mergedApps;
+      saveApps(mergedApps);
+      console.log(`[Firestore Server] Synchronized ${mergedApps.length} store apps.`);
     }
 
     // 4. Sync sales
@@ -2379,7 +2395,7 @@ app.post(
   '/api/developer/apps',
   requireDeveloper,
   conditionalUpload,
-  (req, res) => {
+  async (req, res) => {
     try {
       const dev = (req as any).developer;
       const {
@@ -2402,7 +2418,7 @@ app.post(
         fileSize: customFileSize
       } = req.body;
 
-      if (!name || !name.trim()) {
+      if (!name || !String(name).trim()) {
         return res.status(400).json({ error: 'Application name is required.' });
       }
 
@@ -2411,8 +2427,15 @@ app.post(
       const icon = files?.iconFile?.[0];
       const screenshots = files?.screenshotFiles || [];
 
+      const rawDirectUrl = directDownloadUrl ? String(directDownloadUrl).trim() : '';
+      if (!apk && !rawDirectUrl) {
+        return res.status(400).json({
+          error: 'Please upload an APK file or provide a direct download link (e.g. Google Drive / cloud link).'
+        });
+      }
+
       const slug =
-        name
+        String(name)
           .toLowerCase()
           .replace(/[^a-z0-9]+/g, '-')
           .replace(/^-|-$/g, '') || `app-${Date.now()}`;
@@ -2436,7 +2459,9 @@ app.post(
         } catch (_) {}
       }
 
-      const formattedDirectUrl = normalizeDownloadUrl(directDownloadUrl);
+      const normalizedInputUrl =
+        rawDirectUrl && !/^https?:\/\//i.test(rawDirectUrl) ? `https://${rawDirectUrl}` : rawDirectUrl;
+      const formattedDirectUrl = normalizeDownloadUrl(normalizedInputUrl);
 
       const finalIconUrl =
         iconUrl ||
@@ -2494,7 +2519,7 @@ app.post(
       const newApp: StoreApp = {
         id: appId,
         slug,
-        name: name.trim(),
+        name: String(name).trim(),
         tagline: tagline || `${name} for ${targetPlatform}`,
         description: description || `Submitted by ${dev.name}`,
         iconUrl: finalIconUrl,
@@ -2559,9 +2584,11 @@ app.post(
       saveApps(apps);
 
       if (firestoreDb) {
-        setDoc(doc(firestoreDb, 'apps', newApp.id), cleanForFirestore(newApp), { merge: true }).catch((e) => {
+        try {
+          await setDoc(doc(firestoreDb, 'apps', newApp.id), cleanForFirestore(newApp), { merge: true });
+        } catch (e) {
           console.warn('[Firestore] Error saving submitted app to cloud:', e);
-        });
+        }
       }
 
       return res.status(201).json({
@@ -2603,7 +2630,7 @@ app.get('/api/developer/my-apps', requireDeveloper, (req, res) => {
 });
 
 // Developer: Delete or withdraw own pending/rejected submission
-app.delete('/api/developer/apps/:id', requireDeveloper, (req, res) => {
+app.delete('/api/developer/apps/:id', requireDeveloper, async (req, res) => {
   const dev = (req as any).developer;
   const { id } = req.params;
   const apps = getApps();
@@ -2624,7 +2651,9 @@ app.delete('/api/developer/apps/:id', requireDeveloper, (req, res) => {
   saveApps(apps);
 
   if (firestoreDb) {
-    deleteDoc(doc(firestoreDb, 'apps', appItem.id)).catch(() => {});
+    try {
+      await deleteDoc(doc(firestoreDb, 'apps', appItem.id));
+    } catch (_) {}
   }
 
   return res.json({ success: true, message: `Submission for "${appItem.name}" has been removed.` });
@@ -2766,7 +2795,7 @@ app.get('/api/admin/submissions/pending', requireAdmin, (req, res) => {
 });
 
 // Super Admin: Approve submission (Publishes to live storefront)
-app.post('/api/admin/submissions/:id/approve', requireAdmin, (req, res) => {
+app.post('/api/admin/submissions/:id/approve', requireAdmin, async (req, res) => {
   const { id } = req.params;
   const apps = getApps();
   const appItem = apps.find((a) => a.id === id || a.slug === id);
@@ -2784,7 +2813,9 @@ app.post('/api/admin/submissions/:id/approve', requireAdmin, (req, res) => {
   saveApps(apps);
 
   if (firestoreDb) {
-    setDoc(doc(firestoreDb, 'apps', appItem.id), cleanForFirestore(appItem), { merge: true }).catch(() => {});
+    try {
+      await setDoc(doc(firestoreDb, 'apps', appItem.id), cleanForFirestore(appItem), { merge: true });
+    } catch (_) {}
   }
 
   return res.json({
@@ -2795,7 +2826,7 @@ app.post('/api/admin/submissions/:id/approve', requireAdmin, (req, res) => {
 });
 
 // Super Admin: Reject submission (Provides feedback to developer)
-app.post('/api/admin/submissions/:id/reject', requireAdmin, (req, res) => {
+app.post('/api/admin/submissions/:id/reject', requireAdmin, async (req, res) => {
   const { id } = req.params;
   const { reason } = req.body;
   const apps = getApps();
@@ -2814,7 +2845,9 @@ app.post('/api/admin/submissions/:id/reject', requireAdmin, (req, res) => {
   saveApps(apps);
 
   if (firestoreDb) {
-    setDoc(doc(firestoreDb, 'apps', appItem.id), cleanForFirestore(appItem), { merge: true }).catch(() => {});
+    try {
+      await setDoc(doc(firestoreDb, 'apps', appItem.id), cleanForFirestore(appItem), { merge: true });
+    } catch (_) {}
   }
 
   return res.json({

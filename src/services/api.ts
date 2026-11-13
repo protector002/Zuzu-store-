@@ -64,6 +64,21 @@ function getDeveloperAuthHeaders(): HeadersInit {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+async function parseJsonSafely(res: Response): Promise<any> {
+  const text = await res.text();
+  if (!text) return {};
+  try {
+    return JSON.parse(text);
+  } catch (_) {
+    return {
+      error:
+        res.status === 413
+          ? 'Upload exceeds server payload size limit (413 Payload Too Large).'
+          : `Unexpected server response (HTTP ${res.status}).`
+    };
+  }
+}
+
 // =====================================
 // Public API Calls (No Account Required)
 // =====================================
@@ -889,8 +904,14 @@ export async function checkDeveloperSession(): Promise<{
   developer?: DeveloperUser;
 }> {
   const token = getDeveloperToken();
-  if (!token) return { authenticated: false };
+  if (!token) {
+    try {
+      localStorage.removeItem('zuzu_active_developer');
+    } catch (_) {}
+    return { authenticated: false };
+  }
 
+  let serverUnreachable = false;
   try {
     const res = await fetch('/api/developer/auth/session', {
       headers: {
@@ -906,25 +927,47 @@ export async function checkDeveloperSession(): Promise<{
         } catch (_) {}
         return data;
       }
+      // Server explicitly rejected the token — do NOT fake authentication from localStorage
+      clearDeveloperToken();
+      try {
+        localStorage.removeItem('zuzu_active_developer');
+      } catch (_) {}
+      return { authenticated: false };
     }
-  } catch (_) {}
 
-  // Fallback: Check local cache and Firestore cloud directly so developer is never lost if server restarts
-  try {
-    const cached = localStorage.getItem('zuzu_active_developer');
-    if (cached) {
-      const dev: DeveloperUser = JSON.parse(cached);
-      if (dev && dev.id) {
-        const cloudDev = await getDeveloperFromFirestore(dev.id);
-        if (cloudDev && cloudDev.status !== 'banned') {
-          return { authenticated: true, developer: cloudDev };
-        }
-        if (dev.status !== 'banned') {
-          return { authenticated: true, developer: dev };
+    if (res.status === 401 || res.status === 403) {
+      clearDeveloperToken();
+      try {
+        localStorage.removeItem('zuzu_active_developer');
+      } catch (_) {}
+      return { authenticated: false };
+    }
+
+    if (res.status >= 500) {
+      serverUnreachable = true;
+    }
+  } catch (_) {
+    serverUnreachable = true;
+  }
+
+  // Only allow local/Firestore cache fallback when we still hold a token AND the server is temporarily unreachable
+  if (serverUnreachable) {
+    try {
+      const cached = localStorage.getItem('zuzu_active_developer');
+      if (cached) {
+        const dev: DeveloperUser = JSON.parse(cached);
+        if (dev && dev.id) {
+          const cloudDev = await getDeveloperFromFirestore(dev.id);
+          if (cloudDev && cloudDev.status !== 'banned') {
+            return { authenticated: true, developer: cloudDev };
+          }
+          if (dev.status !== 'banned') {
+            return { authenticated: true, developer: dev };
+          }
         }
       }
-    }
-  } catch (_) {}
+    } catch (_) {}
+  }
 
   return { authenticated: false };
 }
@@ -943,10 +986,16 @@ export async function developerLogout(): Promise<void> {
 export async function submitDeveloperApp(
   payload: FormData | Record<string, any>
 ): Promise<{ success: boolean; app: StoreApp; message: string }> {
+  const token = getDeveloperToken();
+  if (!token) {
+    throw new Error('Your developer session expired. Please sign out and sign in again to publish.');
+  }
+
   const isFormData = typeof FormData !== 'undefined' && payload instanceof FormData;
 
   let res: Response | null = null;
   let uploadFailed = false;
+  let wasPayloadTooLarge = false;
 
   try {
     const headers: HeadersInit = {
@@ -961,20 +1010,44 @@ export async function submitDeveloperApp(
       body
     });
 
-    if (!res.ok && res.status === 413) {
+    if (res.status === 413) {
       uploadFailed = true;
+      wasPayloadTooLarge = true;
     }
   } catch (_) {
     uploadFailed = true;
   }
 
-  // Fallback to JSON payload if server capped multipart upload
-  if ((uploadFailed || (res && !res.ok && res.status === 413)) && isFormData) {
+  // Only fall back to JSON if the request hit a 413 / network upload cap AND either:
+  // 1) a directDownloadUrl was provided (so the app still has a real APK download link), OR
+  // 2) no binary apkFile was attached.
+  // Never silently strip apkFile and create a broken submission with no APK and no link.
+  if (uploadFailed && isFormData) {
+    const attachedApk = payload.get('apkFile');
+    const directUrlVal = String(payload.get('directDownloadUrl') || '').trim();
+
+    if (attachedApk instanceof File && !directUrlVal) {
+      const sizeMb = (attachedApk.size / (1024 * 1024)).toFixed(1);
+      throw new Error(
+        wasPayloadTooLarge
+          ? `The APK file (${sizeMb} MB) exceeds the server/gateway upload limit (413). Please paste a Google Drive / cloud Direct Download Link in Option B, or upload a smaller APK.`
+          : `Network error uploading APK file (${sizeMb} MB). For larger APKs, paste a Google Drive / cloud Direct Download Link in Option B.`
+      );
+    }
+
     try {
       const fallbackJson: Record<string, any> = {};
       payload.forEach((value, key) => {
         if (typeof value === 'string') {
-          fallbackJson[key] = value;
+          if (key === 'screenshots') {
+            try {
+              fallbackJson[key] = JSON.parse(value);
+            } catch (_) {
+              fallbackJson[key] = value;
+            }
+          } else {
+            fallbackJson[key] = value;
+          }
         }
       });
 
@@ -990,23 +1063,35 @@ export async function submitDeveloperApp(
   }
 
   if (!res) {
-    throw new Error('Network error submitting application. Please try again.');
+    throw new Error('Network error submitting application. Please check your connection and try again.');
   }
 
-  const data = await res.json();
+  if (res.status === 401) {
+    clearDeveloperToken();
+    try {
+      localStorage.removeItem('zuzu_active_developer');
+    } catch (_) {}
+    const errData = await parseJsonSafely(res);
+    throw new Error(errData.error || 'Developer session expired. Please sign in again.');
+  }
+
+  const data = await parseJsonSafely(res);
   if (!res.ok || !data.success) {
-    throw new Error(data.error || 'Failed to submit application.');
+    throw new Error(data.error || `Failed to submit application (HTTP ${res.status}).`);
   }
 
-  // Also save to Firestore cloud database so admin sees it everywhere
+  // Persist to Firestore cloud database so Super Admin sees it immediately across instances
   if (data.app) {
-    saveAppToFirestore(data.app).catch((e) => console.warn('Cloud draft sync notice:', e));
+    await saveAppToFirestore(data.app).catch((e) => console.warn('Cloud draft sync notice:', e));
   }
 
   return data;
 }
 
 export async function fetchDeveloperMyApps(): Promise<StoreApp[]> {
+  const mergedMap = new Map<string, StoreApp>();
+
+  // 1. Fetch from backend server
   try {
     const res = await fetch('/api/developer/my-apps', {
       headers: {
@@ -1016,13 +1101,41 @@ export async function fetchDeveloperMyApps(): Promise<StoreApp[]> {
     if (res.ok) {
       const data = await res.json();
       if (Array.isArray(data.apps)) {
-        return data.apps;
+        data.apps.forEach((a: StoreApp) => {
+          if (a && a.id) mergedMap.set(a.id, a);
+        });
       }
     }
   } catch (err) {
     console.warn('Developer my-apps fetch error:', err);
   }
-  return [];
+
+  // 2. Merge with Firestore cloud database so submissions never vanish on cold start/multi-instance
+  try {
+    const cachedRaw = localStorage.getItem('zuzu_active_developer');
+    const activeDev: DeveloperUser | null = cachedRaw ? JSON.parse(cachedRaw) : null;
+    if (activeDev) {
+      const devId = activeDev.id?.trim();
+      const devEmail = activeDev.email?.trim().toLowerCase();
+      const cloudApps = await getAppsFromFirestore(true);
+      cloudApps.forEach((appItem) => {
+        const matchesSubmittedBy =
+          appItem.submittedBy &&
+          ((devId && appItem.submittedBy.id === devId) ||
+            (devEmail && appItem.submittedBy.email?.toLowerCase() === devEmail));
+        const matchesLegacyOwner =
+          !appItem.submittedBy && devEmail && appItem.developer?.email?.toLowerCase() === devEmail;
+
+        if ((matchesSubmittedBy || matchesLegacyOwner) && !mergedMap.has(appItem.id)) {
+          mergedMap.set(appItem.id, appItem);
+        }
+      });
+    }
+  } catch (_) {}
+
+  return Array.from(mergedMap.values()).sort(
+    (a, b) => new Date(b.submittedAt || b.createdAt || 0).getTime() - new Date(a.submittedAt || a.createdAt || 0).getTime()
+  );
 }
 
 export async function deleteDeveloperApp(appId: string): Promise<boolean> {
@@ -1033,6 +1146,9 @@ export async function deleteDeveloperApp(appId: string): Promise<boolean> {
         ...getDeveloperAuthHeaders()
       }
     });
+    if (res.ok) {
+      await deleteApkBlob(appId).catch(() => {});
+    }
     return res.ok;
   } catch (_) {
     return false;
@@ -1044,7 +1160,9 @@ export async function deleteDeveloperApp(appId: string): Promise<boolean> {
 // =====================================
 
 export async function fetchPendingSubmissions(): Promise<StoreApp[]> {
-  // 1. Try backend server pending submissions
+  const mergedMap = new Map<string, StoreApp>();
+
+  // 1. Fetch from backend server pending submissions
   try {
     const res = await fetch('/api/admin/submissions/pending', {
       headers: {
@@ -1054,18 +1172,28 @@ export async function fetchPendingSubmissions(): Promise<StoreApp[]> {
     if (res.ok) {
       const data = await res.json();
       if (Array.isArray(data.pending)) {
-        return data.pending;
+        data.pending.forEach((a: StoreApp) => {
+          if (a && a.id) mergedMap.set(a.id, a);
+        });
       }
     }
   } catch (_) {}
 
-  // 2. Fallback: check Firestore cloud database for pending apps
+  // 2. Always check Firestore cloud database and merge so pending apps appear even if backend isn't hydrated yet
   try {
     const all = await getAppsFromFirestore(true);
-    return all.filter((a) => a.approvalStatus === 'pending_approval');
+    all
+      .filter((a) => a.approvalStatus === 'pending_approval')
+      .forEach((a) => {
+        if (a && a.id && !mergedMap.has(a.id)) {
+          mergedMap.set(a.id, a);
+        }
+      });
   } catch (_) {}
 
-  return [];
+  return Array.from(mergedMap.values()).sort(
+    (a, b) => new Date(b.submittedAt || b.createdAt || 0).getTime() - new Date(a.submittedAt || a.createdAt || 0).getTime()
+  );
 }
 
 export async function approveAppSubmission(appId: string): Promise<{ success: boolean; app: StoreApp; message: string }> {

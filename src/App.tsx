@@ -215,8 +215,8 @@ export default function App() {
   }, [admin]);
 
   // Handle APK Download (PUBLIC - NO ACCOUNT REQUIRED, STREAMS IN-APP WITH PROGRESS)
-  const handleDownload = async (appId: string, releaseId?: string) => {
-    const targetApp = apps.find((a) => a.id === appId || a.slug === appId);
+  const handleDownload = async (appId: string, releaseId?: string, overrideApp?: StoreApp, bypassPayment = false) => {
+    const targetApp = overrideApp || apps.find((a) => a.id === appId || a.slug === appId);
     if (!targetApp) return;
 
     const targetRelease = releaseId
@@ -228,7 +228,7 @@ export default function App() {
     // Check if this is a paid application requiring purchase
     const isPaid = targetApp.pricing && targetApp.pricing.type === 'paid' && targetApp.pricing.price > 0;
     const cachedPurchaseToken = getCachedPurchaseToken(targetApp.id);
-    if (isPaid && !cachedPurchaseToken) {
+    if (isPaid && !cachedPurchaseToken && !bypassPayment) {
       setPurchasingApp(targetApp);
       return;
     }
@@ -919,7 +919,7 @@ export default function App() {
                   setCurrentView('detail');
                   window.scrollTo({ top: 0, behavior: 'smooth' });
                 }}
-                onDownloadTest={(appId, relId) => handleDownload(appId, relId)}
+                onDownloadTest={(appId, relId, appObj) => handleDownload(appId, relId, appObj, true)}
                 onAppApproved={(app) => {
                   loadApps();
                   showToast(`App "${app.name}" approved and live on ZuzuStore!`);

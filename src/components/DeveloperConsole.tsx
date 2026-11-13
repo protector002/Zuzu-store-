@@ -28,9 +28,11 @@ import {
   Receipt,
   CreditCard,
   RefreshCw,
-  Percent
+  Percent,
+  X
 } from 'lucide-react';
 import { DeveloperUser, StoreApp, AdminBroadcast, DeveloperWallet, WithdrawalRequest, AppPricingType } from '../types';
+import { saveApkBlob } from '../utils/fileStorage';
 import {
   submitDeveloperApp,
   fetchDeveloperMyApps,
@@ -42,6 +44,96 @@ import {
   fetchDeveloperWithdrawals,
   fetchStoreCommission
 } from '../services/api';
+
+// Compress icon image into a lightweight Data URL (permanent across restarts/instances)
+function convertImageToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const result = e.target?.result as string;
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const canvas = document.createElement('canvas');
+          const maxSize = 256;
+          let width = img.width;
+          let height = img.height;
+          if (width > height) {
+            if (width > maxSize) {
+              height = Math.round((height * maxSize) / width);
+              width = maxSize;
+            }
+          } else {
+            if (height > maxSize) {
+              width = Math.round((width * maxSize) / height);
+              height = maxSize;
+            }
+          }
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            resolve(result);
+            return;
+          }
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/png', 0.92));
+        } catch (_) {
+          resolve(result);
+        }
+      };
+      img.onerror = () => resolve(result);
+      img.src = result;
+    };
+    reader.onerror = () => resolve('/zuzustore-logo.png');
+    reader.readAsDataURL(file);
+  });
+}
+
+// Compress screenshot into a fast-loading JPEG Data URL so it stays well within Firestore 1MB doc limits
+function convertScreenshotToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const result = e.target?.result as string;
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const canvas = document.createElement('canvas');
+          const maxDim = 960;
+          let width = img.width;
+          let height = img.height;
+          if (width > height) {
+            if (width > maxDim) {
+              height = Math.round((height * maxDim) / width);
+              width = maxDim;
+            }
+          } else {
+            if (height > maxDim) {
+              width = Math.round((width * maxDim) / height);
+              height = maxDim;
+            }
+          }
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            resolve(result);
+            return;
+          }
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/jpeg', 0.78));
+        } catch (_) {
+          resolve(result);
+        }
+      };
+      img.onerror = () => resolve(result);
+      img.src = result;
+    };
+    reader.onerror = () => resolve('');
+    reader.readAsDataURL(file);
+  });
+}
 
 interface DeveloperConsoleProps {
   developer: DeveloperUser;
@@ -87,11 +179,10 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
   const [category, setCategory] = useState('Streaming');
   const [version, setVersion] = useState('1.0.0');
   const [packageId, setPackageId] = useState('');
-  const [iconFile, setIconFile] = useState<File | null>(null);
   const [iconPreview, setIconPreview] = useState<string | null>(null);
   const [iconUrlFallback, setIconUrlFallback] = useState('');
-  const [screenshotFiles, setScreenshotFiles] = useState<File[]>([]);
   const [screenshotPreviews, setScreenshotPreviews] = useState<string[]>([]);
+  const [isProcessingAssets, setIsProcessingAssets] = useState(false);
   const [apkFile, setApkFile] = useState<File | null>(null);
   const [directDownloadUrl, setDirectDownloadUrl] = useState('');
   const [minOS, setMinOS] = useState('Android 8.0+');
@@ -153,23 +244,42 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
     });
   }, []);
 
-  // Icon file handler
-  const handleIconChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Icon file handler (compresses to lightweight Data URL so icons persist across restarts/instances)
+  const handleIconChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
-      setIconFile(file);
-      setIconPreview(URL.createObjectURL(file));
+      setIsProcessingAssets(true);
+      try {
+        const dataUrl = await convertImageToDataUrl(file);
+        setIconPreview(dataUrl);
+      } finally {
+        setIsProcessingAssets(false);
+        e.target.value = '';
+      }
     }
   };
 
-  // Screenshots file handler
-  const handleScreenshotsChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) {
+  // Screenshots file handler (compresses to JPEG Data URLs, max 8 screenshots to keep payload fast & Firestore-safe)
+  const handleScreenshotsChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
       const files = Array.from(e.target.files);
-      setScreenshotFiles((prev) => [...prev, ...files]);
-      const newPreviews = files.map((f) => URL.createObjectURL(f));
-      setScreenshotPreviews((prev) => [...prev, ...newPreviews]);
+      setIsProcessingAssets(true);
+      try {
+        const converted: string[] = [];
+        for (const file of files) {
+          const url = await convertScreenshotToDataUrl(file);
+          if (url) converted.push(url);
+        }
+        setScreenshotPreviews((prev) => [...prev, ...converted].slice(0, 8));
+      } finally {
+        setIsProcessingAssets(false);
+        e.target.value = '';
+      }
     }
+  };
+
+  const handleRemoveScreenshot = (idx: number) => {
+    setScreenshotPreviews((prev) => prev.filter((_, i) => i !== idx));
   };
 
   // APK file handler
@@ -195,53 +305,85 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
       return;
     }
 
-    if (!apkFile && !directDownloadUrl.trim()) {
+    const rawDirectUrl = directDownloadUrl.trim();
+    const normalizedDirectUrl =
+      rawDirectUrl && !/^https?:\/\//i.test(rawDirectUrl) ? `https://${rawDirectUrl}` : rawDirectUrl;
+
+    if (!apkFile && !normalizedDirectUrl) {
       setSubmitError('Please upload an APK file or provide a direct download link (e.g. Google Drive / cloud link).');
       return;
+    }
+
+    if (pricingType === 'paid') {
+      const minAllowed = currency === 'USD' ? 1 : 500;
+      if (!price || isNaN(price) || price < minAllowed) {
+        setSubmitError(`Paid app price must be at least ${minAllowed.toLocaleString()} ${currency}.`);
+        return;
+      }
     }
 
     setIsSubmitting(true);
 
     try {
-      const formData = new FormData();
-      formData.append('name', name.trim());
-      formData.append('tagline', briefInfo.trim());
-      formData.append('description', description.trim() || briefInfo.trim());
-      formData.append('appEdition', appEdition);
-      formData.append('platform', appEdition === 'tv' ? 'Android TV' : 'Android');
-      formData.append('category', category);
-      formData.append('version', version.trim() || '1.0.0');
-      formData.append('minOS', minOS.trim() || 'Android 8.0+');
+      const targetPlatform = appEdition === 'tv' ? 'Android TV' : 'Android';
+      const resolvedPkg =
+        packageId.trim() ||
+        `com.${developer.name.toLowerCase().replace(/[^a-z0-9]/g, '') || 'dev'}.${name.toLowerCase().replace(/[^a-z0-9]/g, '') || 'app'}`;
+      const finalIcon = iconPreview || iconUrlFallback.trim() || '/zuzustore-logo.png';
+      const finalScreenshots = screenshotPreviews.length > 0 ? screenshotPreviews : [finalIcon];
 
-      const resolvedPkg = packageId.trim() || `com.${developer.name.toLowerCase().replace(/[^a-z0-9]/g, '')}.${name.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
-      formData.append('packageId', resolvedPkg);
-
+      let payload: FormData | Record<string, any>;
       if (apkFile) {
+        const formData = new FormData();
+        formData.append('name', name.trim());
+        formData.append('tagline', briefInfo.trim());
+        formData.append('description', description.trim() || briefInfo.trim());
+        formData.append('appEdition', appEdition);
+        formData.append('platform', targetPlatform);
+        formData.append('category', category);
+        formData.append('version', version.trim() || '1.0.0');
+        formData.append('minOS', minOS.trim() || 'Android 8.0+');
+        formData.append('packageId', resolvedPkg);
         formData.append('apkFile', apkFile);
-      }
-      if (directDownloadUrl.trim()) {
-        formData.append('directDownloadUrl', directDownloadUrl.trim());
-      }
-      if (iconFile) {
-        formData.append('iconFile', iconFile);
-      }
-      if (iconUrlFallback.trim()) {
-        formData.append('iconUrlFallback', iconUrlFallback.trim());
+        if (normalizedDirectUrl) {
+          formData.append('directDownloadUrl', normalizedDirectUrl);
+        }
+        formData.append('iconUrl', finalIcon);
+        formData.append('screenshots', JSON.stringify(finalScreenshots));
+        formData.append('pricingType', pricingType);
+        formData.append('price', String(pricingType === 'paid' ? price : 0));
+        formData.append('currency', currency);
+        payload = formData;
+      } else {
+        payload = {
+          name: name.trim(),
+          tagline: briefInfo.trim(),
+          description: description.trim() || briefInfo.trim(),
+          appEdition,
+          platform: targetPlatform,
+          category,
+          version: version.trim() || '1.0.0',
+          minOS: minOS.trim() || 'Android 8.0+',
+          packageId: resolvedPkg,
+          directDownloadUrl: normalizedDirectUrl,
+          iconUrl: finalIcon,
+          screenshots: finalScreenshots,
+          pricing: {
+            type: pricingType,
+            price: pricingType === 'paid' ? price : 0,
+            currency
+          }
+        };
       }
 
-      screenshotFiles.forEach((file) => {
-        formData.append('screenshotFiles', file);
-      });
+      const res = await submitDeveloperApp(payload);
 
-      // Append monetization & pricing settings
-      formData.append('pricingType', pricingType);
-      formData.append('price', String(pricingType === 'paid' ? price : 0));
-      formData.append('currency', currency);
-
-      const res = await submitDeveloperApp(formData);
+      if (apkFile && res.app?.id) {
+        await saveApkBlob(res.app.id, apkFile).catch(() => {});
+      }
 
       setSubmitSuccess(res.message || 'Application submitted successfully! It is now waiting for Super Admin review.');
-      
+
       // Reset form
       setName('');
       setBriefInfo('');
@@ -250,10 +392,8 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
       setVersion('1.0.0');
       setApkFile(null);
       setDirectDownloadUrl('');
-      setIconFile(null);
       setIconPreview(null);
       setIconUrlFallback('');
-      setScreenshotFiles([]);
       setScreenshotPreviews([]);
       setPricingType('free');
       setPrice(5000);
@@ -518,9 +658,20 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
             )}
 
             {submitError && (
-              <div className="mb-6 p-4 bg-rose-950/40 border border-rose-800 rounded-2xl flex items-center gap-3 text-rose-300 text-xs">
-                <AlertCircle className="w-5 h-5 text-rose-400 shrink-0" />
-                <span>{submitError}</span>
+              <div className="mb-6 p-4 bg-rose-950/40 border border-rose-800 rounded-2xl flex flex-wrap items-center justify-between gap-3 text-rose-300 text-xs">
+                <div className="flex items-center gap-3">
+                  <AlertCircle className="w-5 h-5 text-rose-400 shrink-0" />
+                  <span>{submitError}</span>
+                </div>
+                {(submitError.toLowerCase().includes('session') || submitError.toLowerCase().includes('sign in')) && (
+                  <button
+                    type="button"
+                    onClick={handleLogout}
+                    className="px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs cursor-pointer shrink-0"
+                  >
+                    Sign Out &amp; Sign In Again
+                  </button>
+                )}
               </div>
             )}
 
@@ -707,12 +858,21 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
                     {screenshotPreviews.length > 0 && (
                       <div className="flex gap-2 overflow-x-auto pb-1 mt-1">
                         {screenshotPreviews.map((url, i) => (
-                          <img
-                            key={i}
-                            src={url}
-                            alt={`Preview ${i}`}
-                            className="w-14 h-24 object-cover rounded-lg border border-neutral-800 shrink-0"
-                          />
+                          <div key={i} className="relative shrink-0 group">
+                            <img
+                              src={url}
+                              alt={`Preview ${i}`}
+                              className="w-14 h-24 object-cover rounded-lg border border-neutral-800"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveScreenshot(i)}
+                              className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-rose-600 text-white flex items-center justify-center shadow hover:bg-rose-500 cursor-pointer"
+                              aria-label={`Remove screenshot ${i + 1}`}
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </div>
                         ))}
                       </div>
                     )}
@@ -727,17 +887,28 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
                 </h3>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="p-4 bg-neutral-950 border border-neutral-800 rounded-2xl space-y-2">
-                    <label className="block text-xs font-semibold text-white">
-                      Option A: Upload APK File
-                    </label>
+                  <div className="p-4 bg-neutral-950 border border-neutral-800 rounded-2xl space-y-2 relative">
+                    <div className="flex items-center justify-between">
+                      <label className="block text-xs font-semibold text-white">
+                        Option A: Upload APK File
+                      </label>
+                      {apkFile && (
+                        <button
+                          type="button"
+                          onClick={() => setApkFile(null)}
+                          className="text-[11px] text-rose-400 hover:text-rose-300 font-semibold cursor-pointer"
+                        >
+                          Clear file
+                        </button>
+                      )}
+                    </div>
                     <label className="flex flex-col items-center justify-center p-4 border-2 border-dashed border-neutral-700 hover:border-amber-500 rounded-xl cursor-pointer transition-colors text-center">
                       <FileCode className="w-8 h-8 text-neutral-500 mb-2" />
-                      <span className="text-xs font-bold text-neutral-200">
+                      <span className="text-xs font-bold text-neutral-200 break-all">
                         {apkFile ? apkFile.name : 'Select .apk File'}
                       </span>
                       <span className="text-[10px] text-neutral-400 mt-1">
-                        {apkFile ? `${(apkFile.size / (1024 * 1024)).toFixed(1)} MB` : 'Supports up to 2GB package sizes'}
+                        {apkFile ? `${(apkFile.size / (1024 * 1024)).toFixed(1)} MB` : 'For large APKs (>25MB), Option B cloud link is recommended'}
                       </span>
                       <input type="file" accept=".apk" onChange={handleApkChange} className="hidden" />
                     </label>
@@ -751,7 +922,7 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
                       Google Drive share link (set to "Anyone with the link"), Dropbox, or GitHub releases.
                     </p>
                     <input
-                      type="url"
+                      type="text"
                       value={directDownloadUrl}
                       onChange={(e) => setDirectDownloadUrl(e.target.value)}
                       placeholder="https://drive.google.com/file/d/.../view"
@@ -847,12 +1018,15 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
                         <div className="relative">
                           <input
                             type="number"
-                            min="500"
-                            step="100"
+                            min={currency === 'USD' ? 1 : 500}
+                            step={currency === 'USD' ? '0.01' : '100'}
                             required={pricingType === 'paid'}
                             value={price}
-                            onChange={(e) => setPrice(Math.max(0, parseInt(e.target.value, 10) || 0))}
-                            placeholder="5000"
+                            onChange={(e) => {
+                              const parsed = currency === 'USD' ? parseFloat(e.target.value) : parseInt(e.target.value, 10);
+                              setPrice(isNaN(parsed) ? 0 : Math.max(0, parsed));
+                            }}
+                            placeholder={currency === 'USD' ? '5' : '5000'}
                             className="w-full bg-neutral-900 border border-neutral-800 focus:border-amber-500 rounded-xl py-2 px-3 text-xs text-white outline-none font-mono"
                           />
                           <span className="absolute right-3 top-2.5 text-xs text-neutral-400 font-mono">
@@ -865,7 +1039,12 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
                         <label className="block text-xs font-semibold text-neutral-300 mb-1.5">Currency</label>
                         <select
                           value={currency}
-                          onChange={(e) => setCurrency(e.target.value)}
+                          onChange={(e) => {
+                            const nextCurr = e.target.value;
+                            setCurrency(nextCurr);
+                            if (nextCurr === 'USD' && price >= 500) setPrice(5);
+                            if (nextCurr === 'UGX' && price < 500) setPrice(5000);
+                          }}
                           className="w-full bg-neutral-900 border border-neutral-800 focus:border-amber-500 rounded-xl py-2 px-3 text-xs text-white outline-none"
                         >
                           <option value="UGX">UGX (Ugandan Shillings)</option>
@@ -914,7 +1093,7 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
                 </div>
                 <button
                   type="submit"
-                  disabled={isSubmitting || isFrozen || isBanned}
+                  disabled={isSubmitting || isProcessingAssets || isFrozen || isBanned}
                   className="w-full sm:w-auto py-3 px-8 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-neutral-950 font-black text-xs rounded-xl shadow-lg transition-transform active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 cursor-pointer"
                 >
                   {isSubmitting ? (
