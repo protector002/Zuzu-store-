@@ -48,6 +48,8 @@ export default function App() {
   const [purchasingApp, setPurchasingApp] = useState<StoreApp | null>(null);
   const [loading, setLoading] = useState(true);
   const [currentView, setCurrentView] = useState<'store' | 'upload' | 'detail' | 'tv' | 'developer_console'>('store');
+  const [publisherTab, setPublisherTab] = useState<'upload-new' | 'update-existing' | 'manage' | 'submissions' | 'god-mode'>('upload-new');
+  const [publisherTabKey, setPublisherTabKey] = useState(0);
   const [detailSourceView, setDetailSourceView] = useState<'store' | 'tv'>('store');
   const [selectedApp, setSelectedApp] = useState<StoreApp | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -652,7 +654,22 @@ export default function App() {
             handleOpenSecretAdmin();
             return;
           }
+          if (view === 'upload') {
+            setPublisherTab('upload-new');
+            setPublisherTabKey((k) => k + 1);
+          }
           setCurrentView(view);
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }}
+        isGodModeActive={currentView === 'upload' && publisherTab === 'god-mode'}
+        onOpenGodMode={() => {
+          if (!admin) {
+            handleOpenSecretAdmin();
+            return;
+          }
+          setPublisherTab('god-mode');
+          setPublisherTabKey((k) => k + 1);
+          setCurrentView('upload');
           window.scrollTo({ top: 0, behavior: 'smooth' });
         }}
         onOpenInstallGuide={() => openGuideModal('Android')}
@@ -696,20 +713,36 @@ export default function App() {
       {/* Floating Publisher Banner when in Admin Studio */}
       {currentView === 'upload' && admin && (
         <div className="bg-neutral-900 border-b border-neutral-800 py-2.5 px-4 sm:px-6">
-          <div className="max-w-7xl mx-auto flex items-center justify-between text-xs">
-            <div className="flex items-center gap-2 text-cyan-400">
+          <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2 text-xs">
+            <div className="flex flex-wrap items-center gap-2 text-cyan-400">
               <span className="font-bold">Publisher Mode:</span>
               <span className="text-neutral-400">
-                You are logged in as <strong className="text-white font-medium">{admin.name || 'Administrator'}</strong> to upload and manage APK packages.
+                Logged in as <strong className="text-white font-medium">{admin.name || 'Administrator'}</strong>
               </span>
             </div>
-            <button
-              onClick={() => setCurrentView('store')}
-              className="text-neutral-300 hover:text-white flex items-center gap-1 font-semibold hover:underline"
-            >
-              <span>Back to Public Storefront</span>
-              <ArrowRight className="w-3.5 h-3.5" />
-            </button>
+            <div className="flex flex-wrap items-center gap-3">
+              {publisherTab !== 'god-mode' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPublisherTab('god-mode');
+                    setPublisherTabKey((k) => k + 1);
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                  }}
+                  className="px-2.5 py-1 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/50 text-amber-300 font-bold text-[11px] flex items-center gap-1 cursor-pointer transition-colors"
+                >
+                  <span>👑 Open God Mode</span>
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setCurrentView('store')}
+                className="text-neutral-300 hover:text-white flex items-center gap-1 font-semibold hover:underline cursor-pointer"
+              >
+                <span>Back to Public Storefront</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -871,6 +904,9 @@ export default function App() {
               <PublisherPortal
                 apps={apps}
                 admin={admin}
+                requestedTab={publisherTab}
+                requestedTabKey={publisherTabKey}
+                onTabChange={setPublisherTab}
                 onOpenLoginModal={() => setIsLoginModalOpen(true)}
                 onUploadApp={handleUploadApp}
                 onUpdateApp={handleUpdateApp}

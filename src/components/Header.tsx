@@ -36,6 +36,8 @@ interface HeaderProps {
   onSearchChange: (query: string) => void;
   apps?: StoreApp[];
   onSelectApp?: (app: StoreApp) => void;
+  isGodModeActive?: boolean;
+  onOpenGodMode?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -55,6 +57,8 @@ export const Header: React.FC<HeaderProps> = ({
   onSearchChange,
   apps = [],
   onSelectApp,
+  isGodModeActive = false,
+  onOpenGodMode,
 }) => {
   // Discreet secret logo multi-tap (3 taps within 2 seconds unlocks admin login modal)
   const [logoTapCount, setLogoTapCount] = useState(0);
@@ -360,23 +364,22 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Right Action Zone */}
         <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
-          {/* Admin God Mode Button: ALWAYS visible on Mobile, Tablet & Desktop when admin is authenticated */}
+          {/* Admin God Mode Button (Tablet & Desktop sm+: mobile uses dedicated admin bar below to avoid clipping) */}
           {admin && (
             <button
               type="button"
-              onClick={() => onNavigate('upload')}
-              className={`group relative px-2 sm:px-3 py-1 sm:py-1.5 rounded-xl font-black flex items-center gap-1 sm:gap-1.5 transition-all duration-300 cursor-pointer overflow-hidden border whitespace-nowrap shrink-0 active:scale-95 ${
-                currentView === 'upload'
+              onClick={() => (onOpenGodMode ? onOpenGodMode() : onNavigate('upload'))}
+              className={`hidden sm:flex group relative px-3 py-1.5 rounded-xl font-black items-center gap-1.5 transition-all duration-300 cursor-pointer overflow-hidden border whitespace-nowrap shrink-0 active:scale-95 ${
+                isGodModeActive
                   ? 'bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 border-amber-300 text-neutral-950 shadow-md shadow-amber-500/30 ring-2 ring-amber-400/80'
                   : 'bg-amber-950/40 hover:bg-amber-900/60 border-amber-500/60 text-amber-300 hover:text-white shadow-xs'
               }`}
               title="Super Admin God Mode & Platform Operations"
               aria-label="Open Super Admin God Mode"
             >
-              <Crown className="w-3.5 h-3.5 text-amber-400 group-hover:rotate-12 transition-transform fill-current shrink-0" />
-              <span className="text-[11px] sm:text-xs tracking-tight font-black">
-                <span className="hidden sm:inline">👑 God Mode</span>
-                <span className="sm:hidden">👑 God Mode</span>
+              <Crown className={`w-3.5 h-3.5 group-hover:rotate-12 transition-transform fill-current shrink-0 ${isGodModeActive ? 'text-neutral-950' : 'text-amber-400'}`} />
+              <span className="text-xs tracking-tight font-black">
+                👑 God Mode
               </span>
             </button>
           )}
@@ -557,10 +560,10 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           )}
 
-          {/* Admin Controls: ONLY visible when admin is authenticated! Hidden from public */}
+          {/* Admin Controls: Tablet/Desktop (sm+) — Mobile uses dedicated admin bar below */}
           {admin && (
-            <div className="flex items-center gap-1.5">
-              <div className="hidden sm:flex items-center gap-1.5 px-2 py-1 rounded-lg bg-emerald-950/60 border border-emerald-800 text-emerald-300 text-[11px] font-semibold">
+            <div className="hidden sm:flex items-center gap-1.5">
+              <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-emerald-950/60 border border-emerald-800 text-emerald-300 text-[11px] font-semibold">
                 <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                 <span className="hidden md:inline">Admin: {admin.name || 'Publisher'}</span>
                 <span className="md:hidden">Admin</span>
@@ -576,6 +579,57 @@ export const Header: React.FC<HeaderProps> = ({
           )}
         </div>
       </div>
+
+      {/* Mobile Admin Quick-Access Bar (< sm): Prevents top-row overflow and guarantees God Mode is 100% accessible on phones */}
+      {admin && (
+        <div className="sm:hidden border-t border-neutral-800/80 bg-neutral-900/75 px-3 py-2 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => (onOpenGodMode ? onOpenGodMode() : onNavigate('upload'))}
+              className={`px-3 py-1.5 rounded-xl font-black flex items-center gap-1.5 transition-all cursor-pointer border text-xs active:scale-95 ${
+                isGodModeActive
+                  ? 'bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 border-amber-300 text-neutral-950 shadow-md shadow-amber-500/30 ring-2 ring-amber-400/80'
+                  : 'bg-amber-950/60 hover:bg-amber-900/70 border-amber-500/70 text-amber-300'
+              }`}
+              title="Open Super Admin God Mode"
+              aria-label="Open Super Admin God Mode"
+            >
+              <Crown className={`w-3.5 h-3.5 fill-current shrink-0 ${isGodModeActive ? 'text-neutral-950' : 'text-amber-400'}`} />
+              <span>👑 God Mode</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onNavigate('upload')}
+              className={`px-2.5 py-1.5 rounded-xl text-[11px] font-bold border flex items-center gap-1 cursor-pointer transition-colors ${
+                currentView === 'upload' && !isGodModeActive
+                  ? 'bg-neutral-800 border-neutral-600 text-white'
+                  : 'bg-neutral-950 border-neutral-800 text-neutral-300'
+              }`}
+            >
+              <UploadCloud className="w-3 h-3 text-cyan-400" />
+              <span>Publisher</span>
+            </button>
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            <span className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-emerald-950/60 border border-emerald-800 text-emerald-300 text-[10px] font-semibold">
+              <ShieldCheck className="w-3 h-3 text-emerald-400" />
+              <span>Admin</span>
+            </span>
+            <button
+              type="button"
+              onClick={onLogout}
+              className="p-1.5 text-neutral-300 hover:text-white bg-neutral-950 hover:bg-neutral-800 border border-neutral-800 rounded-lg transition-colors cursor-pointer"
+              title="Log out of Admin Publisher Account"
+              aria-label="Log out of Admin Account"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Expandable Mobile Search Row (Mobile screens: < md) */}
       {(isMobileSearchOpen || searchQuery) && (

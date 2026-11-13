@@ -105,6 +105,9 @@ interface PublisherPortalProps {
   onDownloadTest: (appId: string, releaseId?: string) => Promise<void>;
   onAppApproved?: (app: StoreApp) => void;
   onRefreshCatalog?: () => void;
+  requestedTab?: 'upload-new' | 'update-existing' | 'manage' | 'submissions' | 'god-mode';
+  requestedTabKey?: number;
+  onTabChange?: (tab: 'upload-new' | 'update-existing' | 'manage' | 'submissions' | 'god-mode') => void;
 }
 
 // Sample mobile screenshots for testing/previewing
@@ -240,8 +243,32 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
   onDownloadTest,
   onAppApproved,
   onRefreshCatalog,
+  requestedTab,
+  requestedTabKey,
+  onTabChange,
 }) => {
-  const [activeTab, setActiveTab] = useState<'upload-new' | 'update-existing' | 'manage' | 'submissions' | 'god-mode'>('upload-new');
+  const [activeTab, setActiveTab] = useState<'upload-new' | 'update-existing' | 'manage' | 'submissions' | 'god-mode'>(
+    requestedTab || 'upload-new'
+  );
+
+  // Sync tab when triggered from Header ("👑 God Mode" or "Publisher Portal") or floating banner
+  useEffect(() => {
+    if (requestedTab) {
+      setActiveTab(requestedTab);
+      if (requestedTab === 'god-mode') {
+        loadDevelopers();
+        loadBroadcastData();
+        loadFinancials();
+      } else if (requestedTab === 'submissions') {
+        loadPending();
+      }
+    }
+  }, [requestedTab, requestedTabKey]);
+
+  // Keep parent view state in sync when internal tabs change
+  useEffect(() => {
+    onTabChange?.(activeTab);
+  }, [activeTab]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -1348,12 +1375,13 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
           </p>
         </div>
 
-        {/* Tab switcher: Fully responsive & horizontally scrollable on all mobile viewports */}
-        <div className="w-full sm:w-auto overflow-x-auto pb-1 sm:pb-0 scrollbar-none">
-          <div className="flex items-center gap-1.5 p-1 bg-neutral-900 border border-neutral-800 rounded-xl min-w-max">
+        {/* Tab switcher: Wraps cleanly on all mobile, tablet, and desktop screens so God Mode is never hidden off-screen */}
+        <div className="w-full sm:w-auto">
+          <div className="flex flex-wrap items-center gap-1.5 p-1.5 bg-neutral-900 border border-neutral-800 rounded-xl">
             <button
+              type="button"
               onClick={() => setActiveTab('upload-new')}
-              className={`px-3 sm:px-3.5 py-2 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
+              className={`px-3 sm:px-3.5 py-2 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer ${
                 activeTab === 'upload-new'
                   ? 'bg-neutral-800 text-white shadow-sm'
                   : 'text-neutral-400 hover:text-neutral-200'
@@ -1363,8 +1391,9 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
               <span>Upload New APK</span>
             </button>
             <button
+              type="button"
               onClick={() => setActiveTab('update-existing')}
-              className={`px-3 sm:px-3.5 py-2 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
+              className={`px-3 sm:px-3.5 py-2 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer ${
                 activeTab === 'update-existing'
                   ? 'bg-neutral-800 text-white shadow-sm'
                   : 'text-neutral-400 hover:text-neutral-200'
@@ -1374,8 +1403,9 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
               <span>Add Version Release</span>
             </button>
             <button
+              type="button"
               onClick={() => setActiveTab('manage')}
-              className={`px-3 sm:px-3.5 py-2 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
+              className={`px-3 sm:px-3.5 py-2 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer ${
                 activeTab === 'manage'
                   ? 'bg-neutral-800 text-white shadow-sm'
                   : 'text-neutral-400 hover:text-neutral-200'
@@ -1384,11 +1414,12 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
               <span>Live Catalog ({apps.length})</span>
             </button>
             <button
+              type="button"
               onClick={() => {
                 setActiveTab('submissions');
                 loadPending();
               }}
-              className={`px-3 sm:px-3.5 py-2 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
+              className={`px-3 sm:px-3.5 py-2 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer ${
                 activeTab === 'submissions'
                   ? 'bg-gradient-to-r from-amber-500 to-amber-600 text-neutral-950 shadow-md'
                   : 'text-neutral-400 hover:text-white'
@@ -1403,10 +1434,12 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
               )}
             </button>
             <button
+              type="button"
               onClick={() => {
                 setActiveTab('god-mode');
                 loadDevelopers();
                 loadBroadcastData();
+                loadFinancials();
               }}
               className={`px-3.5 sm:px-4 py-2 text-xs font-black rounded-lg transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 ${
                 activeTab === 'god-mode'
@@ -1414,7 +1447,7 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
                   : 'text-amber-300 bg-amber-950/40 hover:bg-amber-900/60 border border-amber-500/40'
               }`}
             >
-              <Crown className="w-3.5 h-3.5 text-amber-400 shrink-0 fill-current" />
+              <Crown className={`w-3.5 h-3.5 shrink-0 fill-current ${activeTab === 'god-mode' ? 'text-neutral-950' : 'text-amber-400'}`} />
               <span>👑 God Mode &amp; Developers</span>
             </button>
           </div>
@@ -4312,9 +4345,9 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
                               {w.payoutMethod.replace(/_/g, ' ')}
                             </td>
                             <td className="p-3 font-mono text-[11px]">
-                              <div>{w.payoutDetails.accountName}</div>
-                              <div className="text-amber-400 font-semibold">{w.payoutDetails.accountNumber}</div>
-                              {w.payoutDetails.bankName && (
+                              <div>{w.payoutDetails?.accountName || w.developerName}</div>
+                              <div className="text-amber-400 font-semibold">{w.payoutDetails?.accountNumber || '—'}</div>
+                              {w.payoutDetails?.bankName && (
                                 <div className="text-neutral-500 text-[10px]">
                                   {w.payoutDetails.bankName} {w.payoutDetails.swiftCode ? `(${w.payoutDetails.swiftCode})` : ''}
                                 </div>
