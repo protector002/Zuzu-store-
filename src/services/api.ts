@@ -1564,18 +1564,22 @@ export async function purchaseApp(
   }
 ): Promise<{
   success: boolean;
+  paymentConfirmed: boolean;
+  status: 'pending' | 'completed' | 'failed';
+  saleId: string;
   transaction: AppSaleTransaction;
-  downloadToken: string;
-  directDownloadUrl: string;
+  downloadToken?: string;
+  directDownloadUrl?: string;
   message: string;
   livepay?: {
     initiated: boolean;
     reference: string;
     internalReference?: string;
+    network?: string;
     message?: string;
   };
 }> {
-  const res = await fetch(`/api/apps/${appId}/purchase`, {
+  const res = await fetch(`/api/apps/${encodeURIComponent(appId)}/purchase`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(purchaseData)
@@ -1583,24 +1587,59 @@ export async function purchaseApp(
 
   const data = await res.json();
   if (!res.ok || !data.success) {
-    throw new Error(data.error || 'Failed to complete app purchase.');
+    throw new Error(data.error || data.message || 'Payment could not be processed. Download blocked.');
   }
 
-  // Cache purchase token to localStorage for instant download recognition
-  try {
-    const purchased = JSON.parse(localStorage.getItem('zuzu_purchased_tokens') || '{}');
-    purchased[appId] = data.downloadToken;
-    localStorage.setItem('zuzu_purchased_tokens', JSON.stringify(purchased));
-  } catch (_) {}
+  // STRICT RULE: Only cache downloadToken if payment is genuinely confirmed completed!
+  if (data.paymentConfirmed && data.status === 'completed' && data.downloadToken) {
+    try {
+      const purchased = JSON.parse(localStorage.getItem('zuzu_purchased_tokens') || '{}');
+      purchased[appId] = data.downloadToken;
+      localStorage.setItem('zuzu_purchased_tokens', JSON.stringify(purchased));
+    } catch (_) {}
+  }
+
+  return data;
+}
+
+export async function checkAppPurchaseStatus(
+  appId: string,
+  saleId: string
+): Promise<{
+  success: boolean;
+  paymentConfirmed: boolean;
+  status: 'pending' | 'completed' | 'failed';
+  livepayStatus?: string;
+  message?: string;
+  transaction?: AppSaleTransaction;
+  downloadToken?: string;
+  directDownloadUrl?: string;
+}> {
+  const res = await fetch(
+    `/api/apps/${encodeURIComponent(appId)}/purchases/${encodeURIComponent(saleId)}/status`,
+    { cache: 'no-store' }
+  );
+  const data = await res.json();
+
+  if (data.paymentConfirmed && data.status === 'completed' && data.downloadToken) {
+    try {
+      const purchased = JSON.parse(localStorage.getItem('zuzu_purchased_tokens') || '{}');
+      purchased[appId] = data.downloadToken;
+      localStorage.setItem('zuzu_purchased_tokens', JSON.stringify(purchased));
+    } catch (_) {}
+  }
 
   return data;
 }
 
 export async function verifyAppPurchase(appId: string, token: string): Promise<boolean> {
   try {
-    const res = await fetch(`/api/apps/${appId}/verify-purchase?token=${encodeURIComponent(token)}`);
+    const res = await fetch(
+      `/api/apps/${encodeURIComponent(appId)}/verify-purchase?token=${encodeURIComponent(token)}`,
+      { cache: 'no-store' }
+    );
     const data = await res.json();
-    return Boolean(data.valid);
+    return Boolean(res.ok && data.valid && data.purchased);
   } catch (_) {
     return false;
   }
@@ -1613,6 +1652,16 @@ export function getCachedPurchaseToken(appId: string): string | null {
   } catch (_) {
     return null;
   }
+}
+
+export function clearCachedPurchaseToken(appId: string): void {
+  try {
+    const purchased = JSON.parse(localStorage.getItem('zuzu_purchased_tokens') || '{}');
+    if (purchased && Object.prototype.hasOwnProperty.call(purchased, appId)) {
+      delete purchased[appId];
+      localStorage.setItem('zuzu_purchased_tokens', JSON.stringify(purchased));
+    }
+  } catch (_) {}
 }
 
 export async function fetchDeveloperWallet(): Promise<DeveloperWallet> {

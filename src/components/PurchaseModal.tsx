@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   X,
   CreditCard,
@@ -8,10 +8,17 @@ import {
   Smartphone,
   AlertCircle,
   Sparkles,
-  Receipt
+  Receipt,
+  Clock,
+  RefreshCw,
+  Lock
 } from 'lucide-react';
 import { StoreApp, AppSaleTransaction } from '../types';
-import { purchaseApp, acceptPlatformAgreements } from '../services/api';
+import {
+  purchaseApp,
+  checkAppPurchaseStatus,
+  acceptPlatformAgreements
+} from '../services/api';
 import { AGREEMENTS_VERSION, LegalTab } from './LegalAgreementsModal';
 
 interface PurchaseModalProps {
@@ -28,13 +35,96 @@ export const PurchaseModal: React.FC<PurchaseModalProps> = ({ app, onClose, onSu
 
   const [customerName, setCustomerName] = useState('');
   const [customerEmail, setCustomerEmail] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState<'mtn' | 'airtel' | 'card'>('mtn');
+  const [paymentMethod, setPaymentMethod] = useState<'mtn' | 'airtel'>('mtn');
   const [phoneNumber, setPhoneNumber] = useState('');
   const [agreedToPaymentTerms, setAgreedToPaymentTerms] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isCheckingStatus, setIsCheckingStatus] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [pendingSale, setPendingSale] = useState<AppSaleTransaction | null>(null);
+  const [waitSeconds, setWaitSeconds] = useState(0);
   const [completedTransaction, setCompletedTransaction] = useState<AppSaleTransaction | null>(null);
   const [downloadToken, setDownloadToken] = useState<string | null>(null);
+  const hasTriggeredSuccessRef = useRef(false);
+
+  const handleConfirmedSuccess = (tx: AppSaleTransaction, token: string) => {
+    if (hasTriggeredSuccessRef.current) return;
+    hasTriggeredSuccessRef.current = true;
+    setPendingSale(null);
+    setCompletedTransaction(tx);
+    setDownloadToken(token);
+    onSuccess(tx, token);
+  };
+
+  // Poll payment confirmation status while awaiting Mobile Money PIN entry
+  useEffect(() => {
+    if (!pendingSale || completedTransaction) return;
+
+    let cancelled = false;
+
+    const timerInterval = setInterval(() => {
+      if (!cancelled) {
+        setWaitSeconds((prev) => prev + 1);
+      }
+    }, 1000);
+
+    const checkStatus = async () => {
+      try {
+        const res = await checkAppPurchaseStatus(app.id, pendingSale.id);
+        if (cancelled) return;
+
+        if (res.paymentConfirmed && res.status === 'completed' && res.transaction && res.downloadToken) {
+          handleConfirmedSuccess(res.transaction, res.downloadToken);
+        } else if (res.status === 'failed') {
+          setPendingSale(null);
+          setErrorMessage(
+            res.message || 'Mobile Money payment failed or was cancelled. Download has not started.'
+          );
+        }
+      } catch (_) {
+        // Keep waiting on transient network error
+      }
+    };
+
+    const pollInterval = setInterval(checkStatus, 3000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(timerInterval);
+      clearInterval(pollInterval);
+    };
+  }, [pendingSale?.id, app.id, completedTransaction]);
+
+  const handleManualStatusCheck = async () => {
+    if (!pendingSale || isCheckingStatus) return;
+    setIsCheckingStatus(true);
+    setErrorMessage(null);
+    try {
+      const res = await checkAppPurchaseStatus(app.id, pendingSale.id);
+      if (res.paymentConfirmed && res.status === 'completed' && res.transaction && res.downloadToken) {
+        handleConfirmedSuccess(res.transaction, res.downloadToken);
+      } else if (res.status === 'failed') {
+        setPendingSale(null);
+        setErrorMessage(
+          res.message || 'Mobile Money payment was declined or failed. Download cannot start.'
+        );
+      } else {
+        setErrorMessage(
+          'Payment is still waiting for your Mobile Money PIN confirmation on your handset.'
+        );
+      }
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Unable to verify payment status right now.');
+    } finally {
+      setIsCheckingStatus(false);
+    }
+  };
+
+  const handleCancelPending = () => {
+    setPendingSale(null);
+    setWaitSeconds(0);
+    setErrorMessage('Payment was cancelled before confirmation. Download was not started.');
+  };
 
   const handlePay = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -43,7 +133,7 @@ export const PurchaseModal: React.FC<PurchaseModalProps> = ({ app, onClose, onSu
       return;
     }
 
-    if ((paymentMethod === 'mtn' || paymentMethod === 'airtel') && !phoneNumber.trim()) {
+    if (!phoneNumber.trim()) {
       setErrorMessage('Please provide your Mobile Money phone number.');
       return;
     }
@@ -55,6 +145,7 @@ export const PurchaseModal: React.FC<PurchaseModalProps> = ({ app, onClose, onSu
 
     setIsProcessing(true);
     setErrorMessage(null);
+    setWaitSeconds(0);
 
     try {
       acceptPlatformAgreements({
@@ -66,9 +157,7 @@ export const PurchaseModal: React.FC<PurchaseModalProps> = ({ app, onClose, onSu
       const paymentMethodLabel =
         paymentMethod === 'mtn'
           ? `LivePay MTN Mobile Money (${phoneNumber})`
-          : paymentMethod === 'airtel'
-          ? `LivePay Airtel Money (${phoneNumber})`
-          : 'LivePay Card Online';
+          : `LivePay Airtel Money (${phoneNumber})`;
 
       const res = await purchaseApp(app.id, {
         customerName: customerName.trim(),
@@ -78,11 +167,15 @@ export const PurchaseModal: React.FC<PurchaseModalProps> = ({ app, onClose, onSu
         currency
       });
 
-      setCompletedTransaction(res.transaction);
-      setDownloadToken(res.downloadToken);
-      onSuccess(res.transaction, res.downloadToken);
+      // ONLY unlock and start download when payment is genuinely confirmed completed!
+      if (res.paymentConfirmed && res.status === 'completed' && res.downloadToken) {
+        handleConfirmedSuccess(res.transaction, res.downloadToken);
+      } else {
+        // Payment prompt was sent — wait for user PIN confirmation BEFORE any download starts
+        setPendingSale(res.transaction);
+      }
     } catch (err: any) {
-      setErrorMessage(err.message || 'Payment processing failed. Please try again.');
+      setErrorMessage(err.message || 'Payment processing failed. Download was not started.');
     } finally {
       setIsProcessing(false);
     }
@@ -110,7 +203,11 @@ export const PurchaseModal: React.FC<PurchaseModalProps> = ({ app, onClose, onSu
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="text-base sm:text-lg font-bold text-white leading-tight">
-                  {completedTransaction ? 'Purchase Confirmed' : `Buy ${app.name}`}
+                  {completedTransaction
+                    ? 'Payment Confirmed'
+                    : pendingSale
+                    ? 'Confirm Mobile Money PIN'
+                    : `Buy ${app.name}`}
                 </h3>
                 <span className="px-2 py-0.5 text-[10px] font-black uppercase tracking-wider bg-amber-400 text-neutral-950 rounded-full shadow">
                   Premium APK
@@ -139,8 +236,8 @@ export const PurchaseModal: React.FC<PurchaseModalProps> = ({ app, onClose, onSu
           </div>
         )}
 
-        {/* Success / Download View */}
-        {completedTransaction ? (
+        {/* STATE 1: Payment Confirmed & Download Unlocked */}
+        {completedTransaction && downloadToken ? (
           <div className="space-y-5 animate-fade-in">
             <div className="p-5 bg-emerald-950/40 border border-emerald-800/60 rounded-2xl text-center space-y-2">
               <div className="w-12 h-12 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center mx-auto shadow-lg shadow-emerald-950/40">
@@ -148,8 +245,8 @@ export const PurchaseModal: React.FC<PurchaseModalProps> = ({ app, onClose, onSu
               </div>
               <h4 className="text-base font-bold text-white">Payment Successful!</h4>
               <p className="text-xs text-emerald-200/90 leading-relaxed max-w-sm mx-auto">
-                Thank you, <strong>{completedTransaction.customerName}</strong>! Your purchase of{' '}
-                <strong>{app.name}</strong> is confirmed and direct APK download is now unlocked.
+                Thank you, <strong>{completedTransaction.customerName}</strong>! Your payment for{' '}
+                <strong>{app.name}</strong> is confirmed and APK download has started.
               </p>
             </div>
 
@@ -204,8 +301,72 @@ export const PurchaseModal: React.FC<PurchaseModalProps> = ({ app, onClose, onSu
               </button>
             </div>
           </div>
+        ) : pendingSale ? (
+          /* STATE 2: Waiting for LivePay PIN Confirmation (Download Strictly Locked!) */
+          <div className="space-y-5 animate-fade-in">
+            <div className="p-5 bg-amber-950/35 border border-amber-500/40 rounded-2xl text-center space-y-3">
+              <div className="w-12 h-12 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/40 flex items-center justify-center mx-auto">
+                <Clock className="w-6 h-6 animate-pulse" />
+              </div>
+              <h4 className="text-base font-bold text-white">Waiting for Payment Confirmation</h4>
+              <p className="text-xs text-amber-100/90 leading-relaxed max-w-sm mx-auto">
+                A LivePay Mobile Money prompt for{' '}
+                <strong>
+                  {pendingSale.grossAmount.toLocaleString()} {pendingSale.currency}
+                </strong>{' '}
+                has been sent to{' '}
+                <strong className="font-mono text-amber-300">{pendingSale.phoneNumber || phoneNumber}</strong>.
+              </p>
+              <p className="text-[11px] text-neutral-300 leading-relaxed max-w-sm mx-auto">
+                Please enter your Mobile Money PIN on your phone to approve the payment. Your APK download is{' '}
+                <strong className="text-amber-300">locked</strong> and will start automatically once payment is confirmed.
+              </p>
+            </div>
+
+            <div className="p-4 bg-neutral-950 border border-neutral-800 rounded-2xl space-y-2 text-xs">
+              <div className="flex items-center justify-between text-neutral-400">
+                <span className="flex items-center gap-1.5">
+                  <Lock className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Download Status</span>
+                </span>
+                <span className="px-2 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-300 font-bold text-[10px]">
+                  Locked Until Paid ({waitSeconds}s)
+                </span>
+              </div>
+              {pendingSale.livepayReference && (
+                <div className="flex items-center justify-between text-neutral-400 text-[11px]">
+                  <span>LivePay Reference</span>
+                  <span className="font-mono text-neutral-200">{pendingSale.livepayReference}</span>
+                </div>
+              )}
+              <div className="flex items-center justify-between text-neutral-400 text-[11px]">
+                <span>Transaction ID</span>
+                <span className="font-mono text-neutral-300">{pendingSale.id}</span>
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row items-center gap-3 pt-1">
+              <button
+                type="button"
+                onClick={handleManualStatusCheck}
+                disabled={isCheckingStatus}
+                className="w-full py-3 px-4 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-neutral-950 font-black text-xs rounded-xl shadow-lg shadow-amber-500/20 flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-60"
+              >
+                <RefreshCw className={`w-4 h-4 ${isCheckingStatus ? 'animate-spin' : ''}`} />
+                <span>{isCheckingStatus ? 'Checking LivePay...' : "I've Entered My PIN — Check Status"}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleCancelPending}
+                className="w-full sm:w-auto py-3 px-4 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 hover:text-white font-bold text-xs rounded-xl transition-colors cursor-pointer shrink-0"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
         ) : (
-          /* Payment Form */
+          /* STATE 3: Payment Form */
           <form onSubmit={handlePay} className="space-y-5">
             {/* Price Box */}
             <div className="p-4 bg-gradient-to-r from-amber-950/40 via-neutral-950 to-neutral-950 border border-amber-500/40 rounded-2xl flex items-center justify-between gap-4">
@@ -220,7 +381,7 @@ export const PurchaseModal: React.FC<PurchaseModalProps> = ({ app, onClose, onSu
               <div className="text-right">
                 <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-400 bg-emerald-950/60 border border-emerald-800/80 px-2.5 py-1 rounded-full">
                   <ShieldCheck className="w-3.5 h-3.5" />
-                  <span>Instant APK Access</span>
+                  <span>Pay First to Unlock</span>
                 </span>
                 <p className="text-[10px] text-neutral-500 mt-1">One-time payment • Lifetime updates</p>
               </div>
@@ -268,7 +429,7 @@ export const PurchaseModal: React.FC<PurchaseModalProps> = ({ app, onClose, onSu
                 >
                   <Smartphone className="w-5 h-5 text-amber-400" />
                   <span className="text-xs font-bold">MTN Mobile Money</span>
-                  <span className="text-[10px] text-amber-400/80 font-mono">⚡ Instant LivePay Prompt</span>
+                  <span className="text-[10px] text-amber-400/80 font-mono">Instant LivePay Prompt</span>
                 </button>
 
                 <button
@@ -282,40 +443,38 @@ export const PurchaseModal: React.FC<PurchaseModalProps> = ({ app, onClose, onSu
                 >
                   <Smartphone className="w-5 h-5 text-rose-400" />
                   <span className="text-xs font-bold">Airtel Money</span>
-                  <span className="text-[10px] text-rose-400/80 font-mono">⚡ Instant LivePay Prompt</span>
+                  <span className="text-[10px] text-rose-400/80 font-mono">Instant LivePay Prompt</span>
                 </button>
               </div>
 
-              {(paymentMethod === 'mtn' || paymentMethod === 'airtel') && (
-                <div className="pt-1 space-y-1.5">
-                  <div className="flex items-center justify-between text-[11px]">
-                    <label className="font-semibold text-neutral-300">
-                      {paymentMethod === 'mtn' ? 'MTN' : 'Airtel'} Phone Number
-                    </label>
-                    <span className="text-[10px] text-amber-400 font-mono font-bold">
-                      LivePay: LP260805074398
-                    </span>
-                  </div>
-                  <input
-                    type="tel"
-                    required
-                    value={phoneNumber}
-                    onChange={(e) => setPhoneNumber(e.target.value)}
-                    placeholder="e.g. 0772 123 456"
-                    className="w-full bg-neutral-950 border border-neutral-800 focus:border-amber-400 rounded-xl py-2 px-3 text-xs text-white placeholder-neutral-500 outline-none font-mono"
-                  />
-                  <p className="text-[10px] text-amber-300/80 leading-tight">
-                    ⚡ LivePay will push an instant Mobile Money prompt to your handset. Enter your PIN to approve.
-                  </p>
+              <div className="pt-1 space-y-1.5">
+                <div className="flex items-center justify-between text-[11px]">
+                  <label className="font-semibold text-neutral-300">
+                    {paymentMethod === 'mtn' ? 'MTN' : 'Airtel'} Phone Number
+                  </label>
+                  <span className="text-[10px] text-amber-400 font-mono font-bold">
+                    LivePay: LP260805074398
+                  </span>
                 </div>
-              )}
+                <input
+                  type="tel"
+                  required
+                  value={phoneNumber}
+                  onChange={(e) => setPhoneNumber(e.target.value)}
+                  placeholder="e.g. 0772 123 456"
+                  className="w-full bg-neutral-950 border border-neutral-800 focus:border-amber-400 rounded-xl py-2 px-3 text-xs text-white placeholder-neutral-500 outline-none font-mono"
+                />
+                <p className="text-[10px] text-amber-300/80 leading-tight">
+                  LivePay will push a Mobile Money prompt to your handset. Download begins only after you enter your PIN and payment is confirmed.
+                </p>
+              </div>
             </div>
 
             {/* Platform Guarantee & LivePay Mobile Money Notice */}
             <div className="p-3 bg-neutral-950 rounded-xl border border-neutral-800/80 text-[11px] text-neutral-400 flex items-center gap-2">
               <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
               <span>
-                Processed securely by <strong>Protector Technologies</strong> via <strong>LivePay Uganda Mobile Money</strong> (Account: LP260805074398). Instant automatic unlock upon PIN verification.
+                Processed securely by <strong>Protector Technologies</strong> via <strong>LivePay Uganda Mobile Money</strong> (Account: LP260805074398). APK download remains locked until payment confirmation succeeds.
               </span>
             </div>
 
@@ -343,7 +502,7 @@ export const PurchaseModal: React.FC<PurchaseModalProps> = ({ app, onClose, onSu
                 ) : (
                   <strong className="text-white">Protector Technologies&apos; User Payment Agreement &amp; Terms</strong>
                 )}{' '}
-                (instant digital APK unlock upon PIN approval; purchases are final once unlocked).
+                (instant digital APK unlock upon PIN confirmation; purchases are final once unlocked).
               </span>
             </label>
 
@@ -366,12 +525,12 @@ export const PurchaseModal: React.FC<PurchaseModalProps> = ({ app, onClose, onSu
                 {isProcessing ? (
                   <>
                     <div className="w-3.5 h-3.5 border-2 border-neutral-950 border-t-transparent rounded-full animate-spin" />
-                    <span>Processing Payment...</span>
+                    <span>Sending Prompt...</span>
                   </>
                 ) : (
                   <>
                     <CreditCard className="w-3.5 h-3.5" />
-                    <span>Pay {price.toLocaleString()} {currency} &amp; Download</span>
+                    <span>Pay {price.toLocaleString()} {currency} via LivePay</span>
                   </>
                 )}
               </button>

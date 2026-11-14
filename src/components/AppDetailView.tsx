@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { StoreApp, AppRelease, Platform, AdminUser } from '../types';
 import { getPhoneRelease, getTvRelease, isTvApp, isPhoneApp } from '../utils/editionHelper';
+import { getCachedPurchaseToken } from '../services/api';
 
 interface AppDetailViewProps {
   app: StoreApp;
@@ -314,7 +315,7 @@ export const AppDetailView: React.FC<AppDetailViewProps> = ({
                 <span>Scan for Phone</span>
               </button>
 
-              {gdWebUrl && (
+              {gdWebUrl && (!(app.pricing && app.pricing.type === 'paid' && (app.pricing.price || 0) > 0) || Boolean(getCachedPurchaseToken(app.id))) && (
                 <a
                   href={gdWebUrl}
                   target="_blank"

@@ -277,10 +277,12 @@ export interface AppSaleTransaction {
   livepayInternalRef?: string;
   livepayNetwork?: string;
   livepayStatus?: string;
-  status: 'completed' | 'refunded';
+  status: 'pending' | 'completed' | 'failed' | 'refunded';
+  failureReason?: string;
   transactionType?: 'app_purchase' | 'ownership_transfer';
   downloadToken?: string;
   createdAt: string;
+  completedAt?: string;
 }
 
 export interface DeveloperWallet {

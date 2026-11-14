@@ -34,6 +34,8 @@ import {
   formatBytes,
   fetchBroadcast,
   getCachedPurchaseToken,
+  verifyAppPurchase,
+  clearCachedPurchaseToken,
   acceptPlatformAgreements
 } from './services/api';
 import { PurchaseModal } from './components/PurchaseModal';
@@ -256,8 +258,14 @@ export default function App() {
     };
   }, [admin]);
 
-  // Handle APK Download (PUBLIC - NO ACCOUNT REQUIRED, STREAMS IN-APP WITH PROGRESS)
-  const handleDownload = async (appId: string, releaseId?: string, overrideApp?: StoreApp, bypassPayment = false) => {
+  // Handle APK Download (PUBLIC FOR FREE APPS - STRICTLY PAYMENT-GATED FOR PAID APPS)
+  const handleDownload = async (
+    appId: string,
+    releaseId?: string,
+    overrideApp?: StoreApp,
+    bypassPayment = false,
+    verifiedToken?: string
+  ) => {
     const targetApp = overrideApp || apps.find((a) => a.id === appId || a.slug === appId);
     if (!targetApp) return;
 
@@ -267,12 +275,25 @@ export default function App() {
     const fileName =
       targetRelease?.fileName || `${targetApp.slug || 'app'}-v${targetRelease?.version || '1.0.0'}.apk`;
 
-    // Check if this is a paid application requiring purchase
-    const isPaid = targetApp.pricing && targetApp.pricing.type === 'paid' && targetApp.pricing.price > 0;
-    const cachedPurchaseToken = getCachedPurchaseToken(targetApp.id);
-    if (isPaid && !cachedPurchaseToken && !bypassPayment) {
-      setPurchasingApp(targetApp);
-      return;
+    // Check if this is a paid application requiring confirmed payment
+    const isPaid = Boolean(targetApp.pricing && targetApp.pricing.type === 'paid' && targetApp.pricing.price > 0);
+    let purchaseTokenToUse = verifiedToken || getCachedPurchaseToken(targetApp.id);
+
+    if (isPaid && !bypassPayment) {
+      if (!purchaseTokenToUse) {
+        setPurchasingApp(targetApp);
+        return;
+      }
+
+      // If token came from local cache, verify with backend that the sale is genuinely 'completed'
+      if (!verifiedToken) {
+        const isConfirmed = await verifyAppPurchase(targetApp.id, purchaseTokenToUse);
+        if (!isConfirmed) {
+          clearCachedPurchaseToken(targetApp.id);
+          setPurchasingApp(targetApp);
+          return;
+        }
+      }
     }
 
     // Save active download target for retry support
@@ -397,7 +418,7 @@ export default function App() {
     if (targetApp.packageId) queryParams.append('packageId', targetApp.packageId);
     if (targetRelease?.version) queryParams.append('version', targetRelease.version);
     if (targetRelease?.fileSize) queryParams.append('fileSize', targetRelease.fileSize);
-    if (cachedPurchaseToken) queryParams.append('token', cachedPurchaseToken);
+    if (purchaseTokenToUse) queryParams.append('token', purchaseTokenToUse);
     const downloadUrl = `/api/apps/${targetApp.id}/download?${queryParams.toString()}`;
 
     if (downloadAbortRef.current) {
@@ -459,9 +480,8 @@ export default function App() {
       }
       console.warn('Download stream notice:', err);
 
-      // Graceful Mirror Fallback: If server proxy was interrupted but targetRelease has directDownloadUrl,
-      // trigger immediate direct download without opening external tabs
-      if (targetRelease?.directDownloadUrl) {
+      // Graceful Mirror Fallback ONLY for FREE apps: never bypass paid-app enforcement via mirror URL
+      if (!isPaid && targetRelease?.directDownloadUrl) {
         try {
           const directUrl = targetRelease.directDownloadUrl.trim();
           let cleanUrl = directUrl;
@@ -1058,11 +1078,12 @@ export default function App() {
         <PurchaseModal
           app={purchasingApp}
           onClose={() => setPurchasingApp(null)}
-          onSuccess={(_tx, _token) => {
+          onSuccess={(tx, token) => {
+            if (!tx || tx.status !== 'completed' || !token) return;
             const purchasedTarget = purchasingApp;
             setPurchasingApp(null);
             showToast(`Payment confirmed for ${purchasedTarget.name}! Starting download...`);
-            handleDownload(purchasedTarget.id);
+            handleDownload(purchasedTarget.id, undefined, purchasedTarget, false, token);
           }}
           onOpenLegal={openLegalViewer}
         />

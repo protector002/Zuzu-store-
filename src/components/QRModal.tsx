@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import QRCode from 'qrcode';
 import { X, Smartphone, Check, Copy } from 'lucide-react';
 import { StoreApp, AppRelease } from '../types';
-import { getDownloadUrl } from '../services/api';
+import { getDownloadUrl, getCachedPurchaseToken } from '../services/api';
 
 interface QRModalProps {
   isOpen: boolean;
@@ -16,7 +16,12 @@ export const QRModal: React.FC<QRModalProps> = ({ isOpen, onClose, app, release 
   const [copied, setCopied] = useState(false);
 
   const activeRelease = release || app.releases[0];
-  const downloadPath = getDownloadUrl(app.id, activeRelease?.id);
+  const isPaid = Boolean(app.pricing && app.pricing.type === 'paid' && (app.pricing.price || 0) > 0);
+  const purchaseToken = isPaid ? getCachedPurchaseToken(app.id) : null;
+  const baseDownloadPath = getDownloadUrl(app.id, activeRelease?.id);
+  const downloadPath = purchaseToken
+    ? `${baseDownloadPath}${baseDownloadPath.includes('?') ? '&' : '?'}token=${encodeURIComponent(purchaseToken)}`
+    : baseDownloadPath;
   const fullDownloadUrl = typeof window !== 'undefined' ? `${window.location.origin}${downloadPath}` : downloadPath;
 
   useEffect(() => {

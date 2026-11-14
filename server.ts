@@ -13,7 +13,9 @@ import {
   getDoc,
   setDoc,
   deleteDoc,
-  updateDoc
+  updateDoc,
+  query,
+  where
 } from 'firebase/firestore';
 
 // Ensure data and upload directories exist (use /tmp on Vercel serverless)
@@ -220,10 +222,12 @@ export interface AppSaleTransaction {
   livepayInternalRef?: string;
   livepayNetwork?: string;
   livepayStatus?: string;
-  status: 'completed' | 'refunded';
+  status: 'pending' | 'completed' | 'failed' | 'refunded';
+  failureReason?: string;
   transactionType?: 'app_purchase' | 'ownership_transfer';
   downloadToken?: string;
   createdAt: string;
+  completedAt?: string;
 }
 
 export interface DeveloperWallet {
@@ -1921,8 +1925,21 @@ app.get('/api/apps/:id/download', async (req, res) => {
       : targetApp.releases[0];
   }
 
-  // If app is not found in server local data (e.g. newly loaded from Firestore),
-  // dynamically construct targetApp from query parameters so download NEVER returns 404!
+  // If not found in local memory/file cache, check Firestore before falling back
+  if (!targetApp && firestoreDb) {
+    try {
+      const appDoc = await getDoc(doc(firestoreDb, 'apps', id));
+      if (appDoc.exists()) {
+        targetApp = appDoc.data() as StoreApp;
+        targetRelease = releaseId
+          ? targetApp.releases.find((r) => r.id === releaseId) || targetApp.releases[0]
+          : targetApp.releases[0];
+      }
+    } catch (_) {}
+  }
+
+  // If app is not found in server local data or Firestore (e.g. legacy query-only free link),
+  // dynamically construct targetApp from query parameters so free downloads stay resilient
   if (!targetApp && (queryDirectUrl || queryFileName || queryAppName || id)) {
     const rawDirectUrl = queryDirectUrl ? String(queryDirectUrl).trim() : '';
     const resolvedAppName = queryAppName ? String(queryAppName).trim() : id.replace(/-/g, ' ');
@@ -1988,6 +2005,55 @@ app.get('/api/apps/:id/download', async (req, res) => {
       return res.status(404).send(`<!DOCTYPE html><html lang="en"><head><title>Package Updating | ZuzuStore</title><meta name="viewport" content="width=device-width, initial-scale=1.0"><style>body{background:#0a0a0a;color:#eee;font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:20px;text-align:center;}.box{background:#171717;border:1px solid #262626;border-radius:24px;padding:32px;max-width:440px;}h2{color:#fff;margin:0 0 8px;}p{color:#a3a3a3;font-size:14px;line-height:1.6;}a{display:inline-block;margin-top:16px;padding:10px 20px;background:#0891b2;color:#fff;text-decoration:none;border-radius:12px;font-weight:bold;font-size:14px;}</style></head><body><div class="box"><h2>Package Updating</h2><p>This APK package is being updated by the publisher. Please return to the store catalog to check for available releases.</p><a href="/">Return to Storefront</a></div></body></html>`);
     }
     return res.status(404).json({ error: 'Application package not found.' });
+  }
+
+  // STRICT PAYMENT GATE FOR PAID APPS:
+  // Never stream or allow download of a paid application until payment is genuinely confirmed ('completed').
+  const isPaidApp = Boolean(targetApp.pricing && targetApp.pricing.type === 'paid' && Number(targetApp.pricing.price) > 0);
+  if (isPaidApp) {
+    const authHeader = req.headers.authorization;
+    const bearerToken = authHeader?.startsWith('Bearer ') ? authHeader.split(' ')[1] : '';
+    const isAdmin = bearerToken ? verifyAdminToken(bearerToken) : false;
+
+    if (!isAdmin) {
+      const purchaseToken = req.query.token ? String(req.query.token).trim() : '';
+      if (!purchaseToken) {
+        return res.status(403).json({
+          error: 'Payment confirmation is required before downloading this paid application.'
+        });
+      }
+
+      const sales = getSales();
+      let matchingSale = sales.find(
+        (s) =>
+          s.downloadToken === purchaseToken &&
+          (s.appId === targetApp!.id || s.appId === id || s.appId === targetApp!.slug) &&
+          s.status === 'completed'
+      );
+
+      if (!matchingSale && firestoreDb) {
+        try {
+          const qSnap = await getDocs(
+            query(collection(firestoreDb, 'sales'), where('downloadToken', '==', purchaseToken))
+          );
+          qSnap.forEach((d) => {
+            const candidate = d.data() as AppSaleTransaction;
+            if (
+              (candidate.appId === targetApp!.id || candidate.appId === id || candidate.appId === targetApp!.slug) &&
+              candidate.status === 'completed'
+            ) {
+              matchingSale = candidate;
+            }
+          });
+        } catch (_) {}
+      }
+
+      if (!matchingSale) {
+        return res.status(403).json({
+          error: 'Payment has not been confirmed yet. Download is blocked until payment succeeds.'
+        });
+      }
+    }
   }
 
   // Increment download counter
@@ -3526,6 +3592,16 @@ app.post('/api/developer/transfers/:id/purchase', requireDeveloper, async (req, 
       description: `XFER:${appItem.name.substring(0, 18)}`
     });
     console.log('[LivePay App Transfer Response]:', livepayResult);
+    if (!livepayResult?.ok || livepayResult?.data?.success === false) {
+      const livepayErr =
+        livepayResult?.data?.message ||
+        livepayResult?.data?.error ||
+        livepayResult?.error ||
+        'LivePay Mobile Money collection request failed.';
+      return res.status(402).json({
+        error: `LivePay payment could not be initiated: ${livepayErr}`
+      });
+    }
   }
 
   // Credit 90% to Seller Developer Wallet (10% retained by Super Admin)
@@ -4391,6 +4467,154 @@ async function callLivePayCollect({
   }
 }
 
+// LivePay Transaction Status API (Verify whether Mobile Money prompt was confirmed paid or failed)
+async function callLivePayTransactionStatus({
+  reference,
+  currency = 'UGX'
+}: {
+  reference: string;
+  currency?: string;
+}) {
+  try {
+    const qs = new URLSearchParams({
+      accountNumber: LIVEPAY_ACCOUNT_NUMBER,
+      currency: currency || 'UGX',
+      reference
+    });
+    const res = await fetch(`${LIVEPAY_BASE_URL}/transaction-status?${qs.toString()}`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${LIVEPAY_API_KEY}`
+      },
+      signal: AbortSignal.timeout(12000)
+    });
+    const data = await res.json().catch(() => ({}));
+    return {
+      ok: res.ok,
+      status: res.status,
+      data
+    };
+  } catch (err: any) {
+    console.error('[LivePay Status Check Error]:', err);
+    return {
+      ok: false,
+      status: 500,
+      error: err.message
+    };
+  }
+}
+
+function normalizeLivePayStatus(raw?: string): 'pending' | 'completed' | 'failed' {
+  const s = String(raw || '').trim().toLowerCase();
+  if (!s) return 'pending';
+  if (['success', 'completed', 'paid', 'settled', 'approved', 'successful'].includes(s)) {
+    return 'completed';
+  }
+  if (['failed', 'fail', 'rejected', 'cancelled', 'canceled', 'expired', 'declined', 'error', 'reversed'].includes(s)) {
+    return 'failed';
+  }
+  return 'pending';
+}
+
+function sanitizePendingSale(sale: AppSaleTransaction): AppSaleTransaction {
+  if (sale.status === 'completed') return sale;
+  const { downloadToken: _hidden, ...rest } = sale;
+  return rest;
+}
+
+async function findSaleById(saleId: string): Promise<AppSaleTransaction | null> {
+  const sales = getSales();
+  const local = sales.find((s) => s.id === saleId);
+  if (local) return local;
+
+  if (firestoreDb) {
+    try {
+      const snap = await getDoc(doc(firestoreDb, 'sales', saleId));
+      if (snap.exists()) {
+        const cloudSale = snap.data() as AppSaleTransaction;
+        const refreshed = getSales();
+        if (!refreshed.some((s) => s.id === cloudSale.id)) {
+          refreshed.unshift(cloudSale);
+          saveSales(refreshed);
+        }
+        return cloudSale;
+      }
+    } catch (_) {}
+  }
+  return null;
+}
+
+// Idempotently finalize a confirmed sale and credit the developer wallet once
+function finalizeCompletedSale(
+  saleId: string,
+  meta?: { livepayInternalRef?: string; livepayNetwork?: string; livepayStatus?: string }
+): AppSaleTransaction | null {
+  const sales = getSales();
+  const idx = sales.findIndex((s) => s.id === saleId);
+  if (idx === -1) return null;
+
+  const sale = sales[idx];
+  if (sale.status === 'completed') {
+    return sale;
+  }
+
+  if (!sale.downloadToken) {
+    sale.downloadToken = crypto.randomBytes(24).toString('hex');
+  }
+  sale.status = 'completed';
+  sale.livepayStatus = meta?.livepayStatus || 'completed';
+  if (meta?.livepayInternalRef) sale.livepayInternalRef = meta.livepayInternalRef;
+  if (meta?.livepayNetwork) sale.livepayNetwork = meta.livepayNetwork;
+  sale.completedAt = sale.completedAt || new Date().toISOString();
+
+  sales[idx] = sale;
+  saveSales(sales);
+
+  // Credit Developer Wallet ONLY once payment is confirmed completed
+  const wallets = getWallets();
+  const wallet = getOrCreateWallet(sale.developerId);
+  wallet.totalGrossRevenue += sale.grossAmount;
+  wallet.totalAdminFeesPaid += sale.adminCommissionAmount;
+  wallet.totalNetEarnings += sale.developerNetAmount;
+  wallet.availableBalance += sale.developerNetAmount;
+  wallet.currency = sale.currency;
+  wallet.updatedAt = new Date().toISOString();
+  wallets[sale.developerId] = wallet;
+  saveWallets(wallets);
+
+  if (firestoreDb) {
+    setDoc(doc(firestoreDb, 'sales', sale.id), cleanForFirestore(sale), { merge: true }).catch(() => {});
+    setDoc(doc(firestoreDb, 'wallets', sale.developerId), cleanForFirestore(wallet), { merge: true }).catch(() => {});
+  }
+
+  return sale;
+}
+
+function markSaleFailed(saleId: string, reason?: string, livepayStatus = 'failed'): AppSaleTransaction | null {
+  const sales = getSales();
+  const idx = sales.findIndex((s) => s.id === saleId);
+  if (idx === -1) return null;
+
+  const sale = sales[idx];
+  if (sale.status === 'completed') {
+    return sale;
+  }
+
+  sale.status = 'failed';
+  sale.livepayStatus = livepayStatus;
+  sale.failureReason = reason || 'Mobile Money payment was cancelled or failed.';
+  delete sale.downloadToken;
+  sales[idx] = sale;
+  saveSales(sales);
+
+  if (firestoreDb) {
+    setDoc(doc(firestoreDb, 'sales', sale.id), cleanForFirestore(sale), { merge: true }).catch(() => {});
+  }
+
+  return sale;
+}
+
 // LivePay Send Money API (Direct Payout to Developer Mobile Money)
 async function callLivePayPayout({
   phoneNumber,
@@ -4447,7 +4671,16 @@ app.post('/api/apps/:id/purchase', async (req, res) => {
   const { id } = req.params;
   const { customerName, customerEmail, paymentMethod, phoneNumber, currency = 'UGX' } = req.body;
   const apps = getApps();
-  const appItem = apps.find((a) => a.id === id || a.slug === id);
+  let appItem = apps.find((a) => a.id === id || a.slug === id);
+
+  if (!appItem && firestoreDb) {
+    try {
+      const snap = await getDoc(doc(firestoreDb, 'apps', id));
+      if (snap.exists()) {
+        appItem = snap.data() as StoreApp;
+      }
+    } catch (_) {}
+  }
 
   if (!appItem) {
     return res.status(404).json({ error: 'Application not found.' });
@@ -4469,12 +4702,20 @@ app.post('/api/apps/:id/purchase', async (req, res) => {
   const developerId = appItem.submittedBy?.id || appItem.developer?.email || 'admin';
   const developerEmail = appItem.submittedBy?.email || appItem.developer?.email || ADMIN_EMAIL;
 
-  // Trigger LivePay Collect API if phone number or mobile money method provided
-  let livepayResult: any = null;
   const cleanPhone = normalizeUgandaPhone(phoneNumber || '');
-  if (grossAmount > 0 && cleanPhone) {
-    const livepayRef = `ZUZU${Date.now().toString().slice(-8)}`;
-    console.log(`[LivePay Collection] Requesting ${grossAmount} UGX from ${cleanPhone} on account ${LIVEPAY_ACCOUNT_NUMBER}...`);
+  let livepayResult: any = null;
+  const livepayRef = `ZUZU${Date.now().toString().slice(-8)}`;
+
+  if (grossAmount > 0) {
+    if (!cleanPhone || cleanPhone.length < 10) {
+      return res.status(400).json({
+        success: false,
+        paymentConfirmed: false,
+        error: 'Please enter a valid MTN or Airtel Mobile Money phone number (e.g. 0772 123 456).'
+      });
+    }
+
+    console.log(`[LivePay Collection] Requesting ${grossAmount} ${priceConfig?.currency || currency || 'UGX'} from ${cleanPhone} on account ${LIVEPAY_ACCOUNT_NUMBER}...`);
     livepayResult = await callLivePayCollect({
       phoneNumber: cleanPhone,
       amount: grossAmount,
@@ -4483,7 +4724,27 @@ app.post('/api/apps/:id/purchase', async (req, res) => {
       description: `ZUZU:${appItem.name.substring(0, 18)}`
     });
     console.log('[LivePay Collection Response]:', livepayResult);
+
+    // If LivePay rejected or failed to initiate payment, block the purchase and DO NOT allow download!
+    if (!livepayResult || !livepayResult.ok || livepayResult.data?.success === false) {
+      const upstreamError =
+        livepayResult?.data?.message ||
+        livepayResult?.data?.error ||
+        livepayResult?.error ||
+        'LivePay Mobile Money payment request failed. Please check your phone number and balance.';
+      return res.status(402).json({
+        success: false,
+        paymentConfirmed: false,
+        status: 'failed',
+        error: `Payment failed: ${upstreamError}. Download cannot start without a successful payment.`
+      });
+    }
   }
+
+  // Only mark immediately completed if free (grossAmount <= 0) OR LivePay explicitly returned confirmed completion
+  const initialUpstreamStatus = grossAmount <= 0
+    ? 'completed'
+    : normalizeLivePayStatus(livepayResult?.data?.status);
 
   const transaction: AppSaleTransaction = {
     id: saleId,
@@ -4501,74 +4762,212 @@ app.post('/api/apps/:id/purchase', async (req, res) => {
     currency: priceConfig?.currency || currency || 'UGX',
     paymentMethod: paymentMethod || 'LivePay Mobile Money (MTN / Airtel)',
     phoneNumber: cleanPhone || undefined,
-    livepayReference: livepayResult?.data?.reference || `LP-${Date.now()}`,
+    livepayReference: livepayResult?.data?.reference || livepayRef,
     livepayInternalRef: livepayResult?.data?.internal_reference,
     livepayNetwork: livepayResult?.data?.network,
-    livepayStatus: livepayResult?.ok ? 'initiated' : 'completed',
-    status: 'completed',
+    livepayStatus: initialUpstreamStatus === 'completed' ? 'completed' : 'initiated',
+    status: initialUpstreamStatus === 'completed' ? 'completed' : 'pending',
     downloadToken,
-    createdAt: new Date().toISOString()
+    createdAt: new Date().toISOString(),
+    ...(initialUpstreamStatus === 'completed' ? { completedAt: new Date().toISOString() } : {})
   };
 
-  // 1. Save sale
+  // Save sale (pending until PIN confirmation, or completed if free/already settled)
   const sales = getSales();
   sales.unshift(transaction);
   saveSales(sales);
 
-  // 2. Update Developer Wallet
-  const wallets = getWallets();
-  const wallet = getOrCreateWallet(developerId);
-  wallet.totalGrossRevenue += grossAmount;
-  wallet.totalAdminFeesPaid += adminCommissionAmount;
-  wallet.totalNetEarnings += developerNetAmount;
-  wallet.availableBalance += developerNetAmount;
-  wallet.currency = transaction.currency;
-  wallet.updatedAt = new Date().toISOString();
-  wallets[developerId] = wallet;
-  saveWallets(wallets);
-
-  // Increment total downloads
-  appItem.downloadsTotal = (appItem.downloadsTotal || 0) + 1;
-  saveApps(apps);
-
-  // 3. Persist to Firestore
   if (firestoreDb) {
     setDoc(doc(firestoreDb, 'sales', transaction.id), cleanForFirestore(transaction)).catch(() => {});
-    setDoc(doc(firestoreDb, 'wallets', developerId), cleanForFirestore(wallet), { merge: true }).catch(() => {});
-    setDoc(doc(firestoreDb, 'apps', appItem.id), { downloadsTotal: appItem.downloadsTotal }, { merge: true }).catch(() => {});
   }
 
+  if (transaction.status === 'completed') {
+    // Credit Developer Wallet only when confirmed completed
+    const wallets = getWallets();
+    const wallet = getOrCreateWallet(developerId);
+    wallet.totalGrossRevenue += grossAmount;
+    wallet.totalAdminFeesPaid += adminCommissionAmount;
+    wallet.totalNetEarnings += developerNetAmount;
+    wallet.availableBalance += developerNetAmount;
+    wallet.currency = transaction.currency;
+    wallet.updatedAt = new Date().toISOString();
+    wallets[developerId] = wallet;
+    saveWallets(wallets);
+
+    if (firestoreDb) {
+      setDoc(doc(firestoreDb, 'wallets', developerId), cleanForFirestore(wallet), { merge: true }).catch(() => {});
+    }
+
+    return res.json({
+      success: true,
+      paymentConfirmed: true,
+      status: 'completed',
+      saleId: transaction.id,
+      message: `Payment confirmed! You have purchased ${appItem.name}.`,
+      transaction,
+      sale: transaction,
+      downloadToken,
+      directDownloadUrl: `/api/apps/${appItem.id}/download?token=${downloadToken}`,
+      livepay: {
+        initiated: Boolean(livepayResult?.ok),
+        reference: transaction.livepayReference,
+        internalReference: transaction.livepayInternalRef,
+        network: transaction.livepayNetwork,
+        message: livepayResult?.data?.message || 'Payment confirmed.'
+      }
+    });
+  }
+
+  // Payment is PENDING PIN confirmation: DO NOT return downloadToken or directDownloadUrl yet!
+  const safeTx = sanitizePendingSale(transaction);
   return res.json({
     success: true,
+    paymentConfirmed: false,
+    status: 'pending',
+    saleId: transaction.id,
     message: livepayResult?.data?.message
-      ? `LivePay: ${livepayResult.data.message}. Check your phone to enter your PIN.`
-      : `Payment successful! You have purchased ${appItem.name}.`,
-    transaction,
-    sale: transaction,
-    downloadToken,
-    directDownloadUrl: `/api/apps/${appItem.id}/download?token=${downloadToken}`,
+      ? `LivePay: ${livepayResult.data.message}. Enter your Mobile Money PIN on ${cleanPhone} to confirm payment.`
+      : `Payment prompt sent to ${cleanPhone}. Enter your Mobile Money PIN to confirm payment.`,
+    transaction: safeTx,
+    sale: safeTx,
     livepay: {
       initiated: Boolean(livepayResult?.ok),
-      reference: livepayResult?.data?.reference,
-      internalReference: livepayResult?.data?.internal_reference,
-      network: livepayResult?.data?.network,
-      message: livepayResult?.data?.message || 'Payment prompt processed.'
+      reference: transaction.livepayReference,
+      internalReference: transaction.livepayInternalRef,
+      network: transaction.livepayNetwork,
+      message: livepayResult?.data?.message || 'Waiting for Mobile Money PIN confirmation.'
     }
   });
 });
 
-// Verify purchase token
-app.get('/api/apps/:id/verify-purchase', (req, res) => {
+// Check live payment confirmation status (polls LivePay /transaction-status + webhook state)
+app.get('/api/apps/:id/purchases/:saleId/status', async (req, res) => {
+  const { id, saleId } = req.params;
+  let sale = await findSaleById(saleId);
+
+  if (!sale) {
+    return res.status(404).json({
+      success: false,
+      paymentConfirmed: false,
+      status: 'failed',
+      error: 'Purchase transaction not found.'
+    });
+  }
+
+  const apps = getApps();
+  const appItem = apps.find((a) => a.id === id || a.slug === id);
+  const matchesApp =
+    sale.appId === id ||
+    (appItem ? sale.appId === appItem.id || sale.appId === appItem.slug : false);
+
+  if (!matchesApp) {
+    return res.status(403).json({
+      success: false,
+      paymentConfirmed: false,
+      status: 'failed',
+      error: 'Purchase transaction does not match this application.'
+    });
+  }
+
+  // If still pending, actively check LivePay Transaction Status API
+  if (sale.status === 'pending' && sale.livepayReference) {
+    const statusRes = await callLivePayTransactionStatus({
+      reference: sale.livepayReference,
+      currency: sale.currency || 'UGX'
+    });
+
+    if (statusRes.ok && statusRes.data) {
+      const upstreamRaw = statusRes.data.status || statusRes.data.transaction_status || '';
+      const normalized = normalizeLivePayStatus(upstreamRaw);
+
+      if (normalized === 'completed') {
+        sale =
+          finalizeCompletedSale(sale.id, {
+            livepayInternalRef: statusRes.data.internal_reference || sale.livepayInternalRef,
+            livepayNetwork: statusRes.data.provider || statusRes.data.network || sale.livepayNetwork,
+            livepayStatus: String(upstreamRaw || 'completed')
+          }) || sale;
+      } else if (normalized === 'failed') {
+        const failReason =
+          statusRes.data.message && statusRes.data.message !== 'N/A'
+            ? statusRes.data.message
+            : `Payment ${String(upstreamRaw || 'failed').toLowerCase()}.`;
+        sale = markSaleFailed(sale.id, failReason, String(upstreamRaw || 'failed')) || sale;
+      }
+    }
+  }
+
+  if (sale.status === 'completed' && sale.downloadToken) {
+    return res.json({
+      success: true,
+      paymentConfirmed: true,
+      status: 'completed',
+      livepayStatus: sale.livepayStatus || 'completed',
+      message: 'Payment confirmed! Starting your APK download...',
+      transaction: sale,
+      downloadToken: sale.downloadToken,
+      directDownloadUrl: `/api/apps/${sale.appId}/download?token=${sale.downloadToken}`
+    });
+  }
+
+  if (sale.status === 'failed' || sale.status === 'refunded') {
+    return res.json({
+      success: false,
+      paymentConfirmed: false,
+      status: 'failed',
+      livepayStatus: sale.livepayStatus || 'failed',
+      message: sale.failureReason || 'Payment failed or was cancelled. Download will not start.',
+      transaction: sanitizePendingSale(sale)
+    });
+  }
+
+  return res.json({
+    success: true,
+    paymentConfirmed: false,
+    status: 'pending',
+    livepayStatus: sale.livepayStatus || 'initiated',
+    message: 'Waiting for Mobile Money PIN confirmation on your handset...',
+    transaction: sanitizePendingSale(sale)
+  });
+});
+
+// Verify purchase token (STRICTLY requires status === 'completed')
+app.get('/api/apps/:id/verify-purchase', async (req, res) => {
   const { id } = req.params;
   const { token } = req.query;
   if (!token) {
     return res.status(400).json({ valid: false, error: 'Download token required.' });
   }
 
+  const tokenStr = String(token).trim();
   const sales = getSales();
-  const sale = sales.find((s) => (s.appId === id || s.id === id) && s.downloadToken === token);
+  let sale = sales.find((s) => (s.appId === id || s.id === id) && s.downloadToken === tokenStr);
+
+  if (!sale && firestoreDb) {
+    try {
+      const qSnap = await getDocs(
+        query(collection(firestoreDb, 'sales'), where('downloadToken', '==', tokenStr))
+      );
+      qSnap.forEach((d) => {
+        const candidate = d.data() as AppSaleTransaction;
+        if (candidate.appId === id || candidate.id === id) {
+          sale = candidate;
+        }
+      });
+    } catch (_) {}
+  }
+
   if (!sale) {
-    return res.status(404).json({ valid: false, error: 'Invalid or expired purchase token.' });
+    return res.status(404).json({ valid: false, purchased: false, error: 'Invalid or expired purchase token.' });
+  }
+
+  if (sale.status !== 'completed') {
+    return res.status(403).json({
+      valid: false,
+      purchased: false,
+      status: sale.status,
+      error: 'Payment has not been confirmed yet.'
+    });
   }
 
   return res.json({ valid: true, purchased: true, sale });
@@ -4580,14 +4979,14 @@ app.get('/api/apps/:id/verify-purchase', (req, res) => {
 
 // Super Admin: Platform-wide financial summary (Total Sales, 6% App Sales + 10% Transfer Commission, Payouts)
 app.get('/api/admin/financials', requireAdmin, (req, res) => {
-  const sales = getSales();
+  const completedSales = getSales().filter((s) => s.status === 'completed');
   const withdrawals = getWithdrawals();
 
-  const totalGrossSales = sales.reduce((sum, s) => sum + (s.grossAmount || 0), 0);
-  const totalAdminCommissionEarned = sales.reduce((sum, s) => sum + (s.adminCommissionAmount || 0), 0);
-  const totalDeveloperNetEarnings = sales.reduce((sum, s) => sum + (s.developerNetAmount || 0), 0);
+  const totalGrossSales = completedSales.reduce((sum, s) => sum + (s.grossAmount || 0), 0);
+  const totalAdminCommissionEarned = completedSales.reduce((sum, s) => sum + (s.adminCommissionAmount || 0), 0);
+  const totalDeveloperNetEarnings = completedSales.reduce((sum, s) => sum + (s.developerNetAmount || 0), 0);
 
-  const transferSales = sales.filter((s) => s.transactionType === 'ownership_transfer');
+  const transferSales = completedSales.filter((s) => s.transactionType === 'ownership_transfer');
   const totalTransferGross = transferSales.reduce((sum, s) => sum + (s.grossAmount || 0), 0);
   const totalTransferAdminFees = transferSales.reduce((sum, s) => sum + (s.adminCommissionAmount || 0), 0);
   const totalCompletedTransfersCount = transferSales.length;
@@ -4612,7 +5011,7 @@ app.get('/api/admin/financials', requireAdmin, (req, res) => {
       totalDeveloperNetEarnings,
       totalDisbursedWithdrawals,
       totalPendingWithdrawals,
-      totalPaidTransactionsCount: sales.length,
+      totalPaidTransactionsCount: completedSales.length,
       totalTransferGross,
       totalTransferAdminFees,
       totalCompletedTransfersCount,
@@ -4627,7 +5026,7 @@ app.get('/api/admin/financials', requireAdmin, (req, res) => {
         supportedNetworks: ['MTN Mobile Money', 'Airtel Money']
       }
     },
-    recentSales: sales.slice(0, 50),
+    recentSales: completedSales.slice(0, 50),
     withdrawals
   });
 });
@@ -4899,7 +5298,7 @@ app.post('/api/admin/livepay/ping', requireAdmin, async (req, res) => {
 });
 
 // LivePay Asynchronous Webhook Receiver
-app.post('/api/webhooks/livepay', (req, res) => {
+app.post('/api/webhooks/livepay', async (req, res) => {
   try {
     const event = req.body || {};
     const sigHeader = req.headers['x-webhook-signature'];
@@ -4914,23 +5313,47 @@ app.post('/api/webhooks/livepay', (req, res) => {
     });
 
     const customerRef = event.customer_reference || event.reference;
-    if (customerRef) {
+    const internalRef = event.internal_reference;
+
+    if (customerRef || internalRef) {
       const sales = getSales();
-      const saleIndex = sales.findIndex(
-        (s) => s.livepayReference === customerRef || s.id === customerRef
+      let matchedSale = sales.find(
+        (s) =>
+          (customerRef && (s.livepayReference === customerRef || s.id === customerRef)) ||
+          (internalRef && s.livepayInternalRef === internalRef)
       );
 
-      if (saleIndex !== -1) {
-        const sale = sales[saleIndex];
-        if (event.status === 'Success' || event.status === 'completed') {
-          sale.status = 'completed';
-          sale.livepayStatus = 'completed';
-          sale.livepayInternalRef = event.internal_reference || sale.livepayInternalRef;
-          saveSales(sales);
+      if (!matchedSale && firestoreDb && customerRef) {
+        try {
+          const qSnap = await getDocs(
+            query(collection(firestoreDb, 'sales'), where('livepayReference', '==', customerRef))
+          );
+          qSnap.forEach((d) => {
+            const candidate = d.data() as AppSaleTransaction;
+            matchedSale = candidate;
+            const refreshed = getSales();
+            if (!refreshed.some((s) => s.id === candidate.id)) {
+              refreshed.unshift(candidate);
+              saveSales(refreshed);
+            }
+          });
+        } catch (_) {}
+      }
 
-          if (firestoreDb) {
-            setDoc(doc(firestoreDb, 'sales', sale.id), cleanForFirestore(sale), { merge: true }).catch(() => {});
-          }
+      if (matchedSale) {
+        const normalized = normalizeLivePayStatus(event.status);
+        if (normalized === 'completed') {
+          finalizeCompletedSale(matchedSale.id, {
+            livepayInternalRef: internalRef || matchedSale.livepayInternalRef,
+            livepayNetwork: event.provider || event.network || matchedSale.livepayNetwork,
+            livepayStatus: String(event.status || 'completed')
+          });
+        } else if (normalized === 'failed') {
+          markSaleFailed(
+            matchedSale.id,
+            event.message || `LivePay payment ${String(event.status || 'failed').toLowerCase()}.`,
+            String(event.status || 'failed')
+          );
         }
       }
     }
