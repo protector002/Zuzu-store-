@@ -61,6 +61,16 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    // Automated transactional dispatch logs
+    match /email_logs/{logId} {
+      allow read, write: if true;
+    }
+
+    // In-app developer inbox notifications
+    match /developer_notifications/{notifId} {
+      allow read, write: if true;
+    }
+
     match /test/{docId} {
       allow read, write: if true;
     }

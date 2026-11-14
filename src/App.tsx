@@ -40,19 +40,22 @@ import {
   acceptPlatformAgreements
 } from './services/api';
 import { PurchaseModal } from './components/PurchaseModal';
+import { ReceiptPage } from './components/ReceiptPage';
+import { MyPurchasesModal } from './components/MyPurchasesModal';
 import {
   LegalAgreementsModal,
   LegalTab,
   AGREEMENTS_STORAGE_KEY,
   AGREEMENTS_VERSION
 } from './components/LegalAgreementsModal';
-import { StoreApp, AppRelease, Platform, AdminUser, DeveloperUser, DownloadProgressState, AdminBroadcast } from './types';
+import { StoreApp, AppRelease, Platform, AdminUser, DeveloperUser, DownloadProgressState, AdminBroadcast, BuyerReceipt } from './types';
 import { getApkBlob, deleteApkBlob } from './utils/fileStorage';
 import { filterPhoneApps, filterTvApps, getPhoneRelease, getTvRelease, isTvApp } from './utils/editionHelper';
 import {
   parseAppRouteFromLocation,
   findAppByRouteIdentifier,
   getAppPath,
+  getReceiptPath,
   shareOrCopyAppLink,
   updateDocumentAppMeta
 } from './utils/appLinks';
@@ -66,10 +69,18 @@ export default function App() {
   const [apps, setApps] = useState<StoreApp[]>([]);
   const [purchasingApp, setPurchasingApp] = useState<StoreApp | null>(null);
   const [loading, setLoading] = useState(true);
-  const [currentView, setCurrentView] = useState<'store' | 'upload' | 'detail' | 'tv' | 'developer_console'>(() =>
-    initialRoute.isTvHub ? 'tv' : 'store'
+  const [currentView, setCurrentView] = useState<'store' | 'upload' | 'detail' | 'tv' | 'developer_console' | 'receipt'>(() =>
+    initialRoute.receiptSaleId ? 'receipt' : initialRoute.isTvHub ? 'tv' : 'store'
   );
-  const [publisherTab, setPublisherTab] = useState<'upload-new' | 'update-existing' | 'manage' | 'submissions' | 'god-mode'>('upload-new');
+  const [activeReceiptRoute, setActiveReceiptRoute] = useState<{ saleId: string; token: string } | null>(() =>
+    initialRoute.receiptSaleId
+      ? { saleId: initialRoute.receiptSaleId, token: initialRoute.receiptToken || '' }
+      : null
+  );
+  const [isMyPurchasesOpen, setIsMyPurchasesOpen] = useState<boolean>(() =>
+    typeof window !== 'undefined' && window.location.pathname.toLowerCase().replace(/\/+$/, '') === '/my-purchases'
+  );
+  const [publisherTab, setPublisherTab] = useState<'upload-new' | 'update-existing' | 'manage' | 'submissions' | 'god-mode' | 'email-logs'>('upload-new');
   const [publisherTabKey, setPublisherTabKey] = useState(0);
   const [detailSourceView, setDetailSourceView] = useState<'store' | 'tv'>(() =>
     initialRoute.edition === 'tv' ? 'tv' : 'store'
@@ -80,8 +91,8 @@ export default function App() {
   const [selectedApp, setSelectedApp] = useState<StoreApp | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Opening Logo Splash Screen (bypass automatically when opening a direct shared /app/:slug link for instant arrival)
-  const [showSplash, setShowSplash] = useState<boolean>(() => !initialRoute.appIdentifier);
+  // Opening Logo Splash Screen (bypass automatically when opening a direct shared /app/:slug or /receipt/:saleId link)
+  const [showSplash, setShowSplash] = useState<boolean>(() => !initialRoute.appIdentifier && !initialRoute.receiptSaleId);
 
   // Admin state
   const [admin, setAdmin] = useState<AdminUser | null>(null);
@@ -203,7 +214,7 @@ export default function App() {
   };
 
   const navigateToView = (
-    view: 'store' | 'upload' | 'detail' | 'tv' | 'developer_console',
+    view: 'store' | 'upload' | 'detail' | 'tv' | 'developer_console' | 'receipt',
     skipHistoryPush = false
   ) => {
     setCurrentView(view);
@@ -219,6 +230,25 @@ export default function App() {
       }
     }
 
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const openReceiptPage = (receipt: BuyerReceipt) => {
+    setIsMyPurchasesOpen(false);
+    setActiveReceiptRoute({ saleId: receipt.saleId, token: receipt.downloadToken });
+    setCurrentView('receipt');
+    updateDocumentAppMeta(null);
+    if (typeof window !== 'undefined') {
+      const targetPath = getReceiptPath(receipt.saleId, receipt.downloadToken);
+      const currentPath = `${window.location.pathname}${window.location.search}`;
+      if (currentPath !== targetPath) {
+        window.history.pushState(
+          { view: 'receipt', saleId: receipt.saleId, token: receipt.downloadToken },
+          '',
+          targetPath
+        );
+      }
+    }
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -264,7 +294,11 @@ export default function App() {
 
       setApps(data);
 
-      if (route.appIdentifier) {
+      if (route.receiptSaleId) {
+        setActiveReceiptRoute({ saleId: route.receiptSaleId, token: route.receiptToken || '' });
+        setCurrentView('receipt');
+        updateDocumentAppMeta(null);
+      } else if (route.appIdentifier) {
         if (matchedDeepLinkApp) {
           const resolvedEdition: 'phone' | 'tv' =
             route.edition ||
@@ -374,7 +408,13 @@ export default function App() {
       }
 
       const route = parseAppRouteFromLocation();
-      if (route.appIdentifier) {
+      if (route.receiptSaleId) {
+        setActiveReceiptRoute({ saleId: route.receiptSaleId, token: route.receiptToken || '' });
+        setCurrentView('receipt');
+        updateDocumentAppMeta(null);
+      } else if (pathname === '/my-purchases') {
+        setIsMyPurchasesOpen(true);
+      } else if (route.appIdentifier) {
         const list = appsRef.current;
         let target = findAppByRouteIdentifier(route.appIdentifier, list, route.edition);
         if (!target) {
@@ -392,7 +432,7 @@ export default function App() {
       } else if (route.isTvHub) {
         navigateToView('tv', true);
       } else if (pathname === '' || pathname === '/') {
-        setCurrentView((prev) => (prev === 'detail' || prev === 'tv' ? 'store' : prev));
+        setCurrentView((prev) => (prev === 'detail' || prev === 'tv' || prev === 'receipt' ? 'store' : prev));
         updateDocumentAppMeta(null);
       }
     };
@@ -897,6 +937,7 @@ export default function App() {
             setIsDevAuthModalOpen(true);
           }
         }}
+        onOpenMyPurchases={() => setIsMyPurchasesOpen(true)}
         onOpenLoginModal={() => setIsLoginModalOpen(true)}
         onLogout={handleLogout}
         onSecretAdminTrigger={handleOpenSecretAdmin}
@@ -1140,6 +1181,28 @@ export default function App() {
                 onOpenLegal={openLegalViewer}
               />
             )}
+
+            {currentView === 'receipt' && activeReceiptRoute && (
+              <ReceiptPage
+                saleId={activeReceiptRoute.saleId}
+                token={activeReceiptRoute.token}
+                apps={apps}
+                onBackToStore={() => navigateToView('store')}
+                onOpenAppDetail={(targetApp) => {
+                  const ed = isTvApp(targetApp) && !getPhoneRelease(targetApp) ? 'tv' : 'phone';
+                  navigateToApp(targetApp, ed === 'tv' ? 'tv' : 'store', ed);
+                }}
+                onTriggerApkDownload={(receipt) => {
+                  const matched = apps.find((a) => a.id === receipt.appId || a.slug === receipt.appId);
+                  if (matched) {
+                    handleDownload(matched.id, undefined, matched, false, receipt.downloadToken);
+                  } else {
+                    window.location.href = receipt.directDownloadUrl;
+                  }
+                }}
+                onOpenMyPurchases={() => setIsMyPurchasesOpen(true)}
+              />
+            )}
           </>
         )}
       </main>
@@ -1165,6 +1228,7 @@ export default function App() {
             setIsDevAuthModalOpen(true);
           }
         }}
+        onOpenMyPurchases={() => setIsMyPurchasesOpen(true)}
         onSecretAdminTrigger={handleOpenSecretAdmin}
         onOpenLegal={openLegalViewer}
       />
@@ -1256,6 +1320,22 @@ export default function App() {
           appName={screenshotTargetApp.name}
         />
       )}
+
+      {/* My Purchases & Receipts Lookup Modal */}
+      <MyPurchasesModal
+        isOpen={isMyPurchasesOpen}
+        onClose={() => setIsMyPurchasesOpen(false)}
+        onOpenReceipt={openReceiptPage}
+        onDownloadReceiptApk={(receipt) => {
+          setIsMyPurchasesOpen(false);
+          const matched = apps.find((a) => a.id === receipt.appId || a.slug === receipt.appId);
+          if (matched) {
+            handleDownload(matched.id, undefined, matched, false, receipt.downloadToken);
+          } else {
+            window.location.href = receipt.directDownloadUrl;
+          }
+        }}
+      />
 
       {/* Toast Notification */}
       {toastMessage && (

@@ -17,6 +17,25 @@ import {
   query,
   where
 } from 'firebase/firestore';
+import {
+  DeveloperNotification,
+  EmailLogEntry,
+  getDeveloperNotificationsForAccount,
+  getEmailLogs,
+  getSmtpStatusInfo,
+  hydrateDeveloperNotificationsFromCloud,
+  hydrateEmailLogsFromCloud,
+  markAllDeveloperNotificationsRead,
+  markDeveloperNotificationRead,
+  markEmailLogManuallyDispatched,
+  registerDeveloperNotificationFirestoreSync,
+  registerEmailLogFirestoreSync,
+  resendEmailLogById,
+  sendAppApprovedEmail,
+  sendAppRejectedEmail,
+  sendCompletedSaleEmails,
+  verifyAndOptionallySendTestEmail
+} from './server/emailService';
 
 // Ensure data and upload directories exist (use /tmp on Vercel serverless)
 const isVercel = process.env.VERCEL === '1';
@@ -560,6 +579,20 @@ function cleanForFirestore<T>(data: T): any {
   return JSON.parse(JSON.stringify(data));
 }
 
+registerEmailLogFirestoreSync(async (entry) => {
+  if (!firestoreDb || !entry?.id) return;
+  try {
+    await setDoc(doc(firestoreDb, 'email_logs', entry.id), cleanForFirestore(entry), { merge: true });
+  } catch (_) {}
+});
+
+registerDeveloperNotificationFirestoreSync(async (notif) => {
+  if (!firestoreDb || !notif?.id) return;
+  try {
+    await setDoc(doc(firestoreDb, 'developer_notifications', notif.id), cleanForFirestore(notif), { merge: true });
+  } catch (_) {}
+});
+
 // In-memory cache for developers & broadcasts
 let memoryDevelopers: Record<string, DeveloperAccount> = {};
 let memoryBroadcast: AdminBroadcast | null = null;
@@ -883,6 +916,33 @@ async function syncFromFirestore() {
       saveTransfers(cloudTransfers);
       console.log(`[Firestore Server] Synchronized ${cloudTransfers.length} app ownership transfer listings.`);
     }
+
+    // 9. Sync email delivery logs & developer in-app notifications
+    try {
+      const emailSnap = await getDocs(collection(firestoreDb, 'email_logs'));
+      const cloudLogs: EmailLogEntry[] = [];
+      emailSnap.forEach((d) => {
+        const log = d.data() as EmailLogEntry;
+        if (log && log.id) cloudLogs.push(log);
+      });
+      if (cloudLogs.length > 0) {
+        hydrateEmailLogsFromCloud(cloudLogs);
+        console.log(`[Firestore Server] Synchronized ${cloudLogs.length} dispatch logs.`);
+      }
+    } catch (_) {}
+
+    try {
+      const notifSnap = await getDocs(collection(firestoreDb, 'developer_notifications'));
+      const cloudNotifs: DeveloperNotification[] = [];
+      notifSnap.forEach((d) => {
+        const notif = d.data() as DeveloperNotification;
+        if (notif && notif.id) cloudNotifs.push(notif);
+      });
+      if (cloudNotifs.length > 0) {
+        hydrateDeveloperNotificationsFromCloud(cloudNotifs);
+        console.log(`[Firestore Server] Synchronized ${cloudNotifs.length} developer notifications.`);
+      }
+    } catch (_) {}
   } catch (err) {
     console.warn('[Firestore Server] Initial sync notice:', err);
   }
@@ -3917,6 +3977,64 @@ app.get('/api/admin/submissions/pending', requireAdmin, (req, res) => {
   return res.json({ success: true, pending, count: pending.length });
 });
 
+async function resolveDeveloperContactForApp(appItem: StoreApp): Promise<{ email: string; name: string }> {
+  const directEmail =
+    appItem.submittedBy?.email ||
+    appItem.developer?.email ||
+    '';
+  const directName =
+    appItem.submittedBy?.name ||
+    appItem.developer?.name ||
+    'Developer';
+
+  if (appItem.submittedBy?.id || directEmail) {
+    try {
+      const devAccount = await findDeveloperByIdOrEmail(appItem.submittedBy?.id || directEmail);
+      if (devAccount) {
+        return {
+          email: devAccount.email || directEmail || ADMIN_EMAIL,
+          name: devAccount.name || directName
+        };
+      }
+    } catch (_) {}
+  }
+
+  return {
+    email: directEmail || ADMIN_EMAIL,
+    name: directName
+  };
+}
+
+function getRequestBaseOrigin(req?: express.Request): string | undefined {
+  if (!req) return undefined;
+  const proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'https').split(',')[0].trim();
+  const host = String(req.headers['x-forwarded-host'] || req.get('host') || '');
+  if (!host || host.includes('localhost') || host.includes('127.0.0.1') || host.includes('0.0.0.0')) {
+    return undefined;
+  }
+  return `${proto}://${host}`;
+}
+
+function fireCompletedSaleNotifications(sale: AppSaleTransaction, walletBalance?: number, origin?: string): void {
+  const apps = getApps();
+  const matchedApp = apps.find((a) => a.id === sale.appId || a.slug === sale.appId);
+  Promise.resolve()
+    .then(async () => {
+      const contact = matchedApp
+        ? await resolveDeveloperContactForApp(matchedApp)
+        : { email: sale.developerEmail || ADMIN_EMAIL, name: 'Developer' };
+      await sendCompletedSaleEmails({
+        sale,
+        appItem: matchedApp,
+        developerEmail: sale.developerEmail || contact.email,
+        developerName: contact.name,
+        walletBalance,
+        baseUrlOverride: origin
+      });
+    })
+    .catch((err) => console.warn('[EmailService] Sale notification dispatch notice:', err));
+}
+
 // Super Admin: Approve submission (Publishes to live storefront)
 app.post('/api/admin/submissions/:id/approve', requireAdmin, async (req, res) => {
   const { id } = req.params;
@@ -3941,9 +4059,22 @@ app.post('/api/admin/submissions/:id/approve', requireAdmin, async (req, res) =>
     } catch (_) {}
   }
 
+  // Automatically notify developer via email that their APK has been approved and published
+  const reqOrigin = getRequestBaseOrigin(req);
+  resolveDeveloperContactForApp(appItem)
+    .then((contact) =>
+      sendAppApprovedEmail({
+        appItem,
+        developerEmail: contact.email,
+        developerName: contact.name,
+        baseUrlOverride: reqOrigin
+      })
+    )
+    .catch((err) => console.warn('[EmailService] Approval email dispatch notice:', err));
+
   return res.json({
     success: true,
-    message: `Application "${appItem.name}" approved! It is now live on Zuzu Store.`,
+    message: `Application "${appItem.name}" approved! It is now live on Zuzu Store and notification email processed.`,
     app: appItem
   });
 });
@@ -3973,10 +4104,180 @@ app.post('/api/admin/submissions/:id/reject', requireAdmin, async (req, res) => 
     } catch (_) {}
   }
 
+  // Automatically notify developer via email with reviewer feedback
+  const reqOrigin = getRequestBaseOrigin(req);
+  resolveDeveloperContactForApp(appItem)
+    .then((contact) =>
+      sendAppRejectedEmail({
+        appItem,
+        developerEmail: contact.email,
+        developerName: contact.name,
+        reason: appItem.rejectionReason || 'Does not meet store guidelines.',
+        baseUrlOverride: reqOrigin
+      })
+    )
+    .catch((err) => console.warn('[EmailService] Rejection email dispatch notice:', err));
+
   return res.json({
     success: true,
-    message: `Application "${appItem.name}" rejected. Feedback sent to developer.`,
+    message: `Application "${appItem.name}" rejected. Feedback notification sent to developer.`,
     app: appItem
+  });
+});
+
+// ==========================================
+// DEVELOPER IN-APP NOTIFICATIONS (ZERO-API INBOX)
+// ==========================================
+
+app.get('/api/developer/notifications', requireDeveloper, async (req, res) => {
+  const dev = (req as any).developer as DeveloperAccount;
+
+  if (firestoreDb) {
+    try {
+      const snap = await getDocs(collection(firestoreDb, 'developer_notifications'));
+      const cloudNotifs: DeveloperNotification[] = [];
+      snap.forEach((d) => {
+        const item = d.data() as DeveloperNotification;
+        if (item && item.id) cloudNotifs.push(item);
+      });
+      if (cloudNotifs.length > 0) {
+        hydrateDeveloperNotificationsFromCloud(cloudNotifs);
+      }
+    } catch (_) {}
+  }
+
+  const notifications = getDeveloperNotificationsForAccount(dev.id, dev.email);
+  const unreadCount = notifications.filter((n) => !n.read).length;
+  return res.json({
+    success: true,
+    notifications,
+    unreadCount
+  });
+});
+
+app.post('/api/developer/notifications/:id/read', requireDeveloper, (req, res) => {
+  const dev = (req as any).developer as DeveloperAccount;
+  const { id } = req.params;
+  const updated = markDeveloperNotificationRead(id, dev.id, dev.email);
+  if (!updated) {
+    return res.status(404).json({ error: 'Notification not found for your account.' });
+  }
+  const notifications = getDeveloperNotificationsForAccount(dev.id, dev.email);
+  return res.json({
+    success: true,
+    notification: updated,
+    unreadCount: notifications.filter((n) => !n.read).length
+  });
+});
+
+app.post('/api/developer/notifications/read-all', requireDeveloper, (req, res) => {
+  const dev = (req as any).developer as DeveloperAccount;
+  const markedCount = markAllDeveloperNotificationsRead(dev.id, dev.email);
+  return res.json({
+    success: true,
+    markedCount,
+    unreadCount: 0
+  });
+});
+
+// ==========================================
+// SUPER ADMIN DISPATCH LOGS (ZERO-API MAILTO/.EML + OPTIONAL SMTP)
+// ==========================================
+
+app.get('/api/admin/email-logs', requireAdmin, async (req, res) => {
+  if (firestoreDb) {
+    try {
+      const snap = await getDocs(collection(firestoreDb, 'email_logs'));
+      const cloudLogs: EmailLogEntry[] = [];
+      snap.forEach((d) => {
+        const entry = d.data() as EmailLogEntry;
+        if (entry && entry.id) cloudLogs.push(entry);
+      });
+      if (cloudLogs.length > 0) {
+        hydrateEmailLogsFromCloud(cloudLogs);
+      }
+    } catch (_) {}
+  }
+
+  const statusFilter = req.query.status ? String(req.query.status).toLowerCase() : 'all';
+  const search = req.query.search ? String(req.query.search).toLowerCase().trim() : '';
+
+  const allLogs = getEmailLogs();
+  const filteredLogs = allLogs.filter((entry) => {
+    if (statusFilter === 'delivered_in_app') {
+      if (entry.status !== 'ready_in_app' && entry.status !== 'queued_no_smtp') return false;
+    } else if (statusFilter !== 'all' && entry.status !== statusFilter) {
+      return false;
+    }
+    if (search) {
+      return (
+        entry.recipientEmail?.toLowerCase().includes(search) ||
+        entry.recipientName?.toLowerCase().includes(search) ||
+        entry.subject?.toLowerCase().includes(search) ||
+        entry.relatedAppName?.toLowerCase().includes(search) ||
+        entry.relatedSaleId?.toLowerCase().includes(search)
+      );
+    }
+    return true;
+  });
+
+  const summary = {
+    total: allLogs.length,
+    deliveredInApp: allLogs.filter((l) => l.status === 'ready_in_app' || l.status === 'queued_no_smtp').length,
+    sent: allLogs.filter((l) => l.status === 'sent').length,
+    failed: allLogs.filter((l) => l.status === 'failed').length,
+    queuedNoSmtp: allLogs.filter((l) => l.status === 'queued_no_smtp').length,
+    manualDispatches: allLogs.reduce((sum, l) => sum + (l.manualDispatches || 0), 0)
+  };
+
+  return res.json({
+    success: true,
+    zeroApiMode: true,
+    logs: filteredLogs,
+    summary,
+    smtpStatus: getSmtpStatusInfo()
+  });
+});
+
+app.post('/api/admin/email-logs/:id/manual-dispatch', requireAdmin, (req, res) => {
+  const { id } = req.params;
+  const updated = markEmailLogManuallyDispatched(id);
+  if (!updated) {
+    return res.status(404).json({ error: 'Dispatch log entry not found.' });
+  }
+  return res.json({
+    success: true,
+    log: updated,
+    message: `Recorded manual mail dispatch for ${updated.recipientEmail}.`
+  });
+});
+
+app.post('/api/admin/email-logs/:id/resend', requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const updated = await resendEmailLogById(id);
+  if (!updated) {
+    return res.status(404).json({ error: 'Email log entry not found.' });
+  }
+
+  return res.json({
+    success: updated.status === 'sent' || updated.status === 'ready_in_app',
+    log: updated,
+    smtpStatus: getSmtpStatusInfo(),
+    message:
+      updated.status === 'sent'
+        ? `Email delivered successfully via SMTP to ${updated.recipientEmail}.`
+        : updated.status === 'ready_in_app'
+        ? `Zero-API notification active for ${updated.recipientEmail}. Use Mailto or .EML to send from your own mail app.`
+        : updated.errorMessage || 'Email delivery did not complete yet.'
+  });
+});
+
+app.post('/api/admin/email-logs/verify-smtp', requireAdmin, async (req, res) => {
+  const { testRecipientEmail } = req.body || {};
+  const result = await verifyAndOptionallySendTestEmail(testRecipientEmail);
+  return res.json({
+    success: result.verified,
+    ...result
   });
 });
 
@@ -4627,6 +4928,9 @@ function finalizeCompletedSale(
     setDoc(doc(firestoreDb, 'wallets', sale.developerId), cleanForFirestore(wallet), { merge: true }).catch(() => {});
   }
 
+  // Trigger buyer receipt (+ download link) and developer payout alert emails asynchronously
+  fireCompletedSaleNotifications(sale, wallet.availableBalance);
+
   return sale;
 }
 
@@ -4837,6 +5141,9 @@ app.post('/api/apps/:id/purchase', async (req, res) => {
       setDoc(doc(firestoreDb, 'wallets', developerId), cleanForFirestore(wallet), { merge: true }).catch(() => {});
     }
 
+    // Trigger buyer receipt (+ download link) and developer payout alert emails asynchronously
+    fireCompletedSaleNotifications(transaction, wallet.availableBalance, getRequestBaseOrigin(req));
+
     return res.json({
       success: true,
       paymentConfirmed: true,
@@ -4967,6 +5274,115 @@ app.get('/api/apps/:id/purchases/:saleId/status', async (req, res) => {
     livepayStatus: sale.livepayStatus || 'initiated',
     message: 'Waiting for Mobile Money PIN confirmation on your handset...',
     transaction: sanitizePendingSale(sale)
+  });
+});
+
+function buildBuyerReceiptFromSale(sale: AppSaleTransaction, appsList: StoreApp[], baseOrigin?: string) {
+  const matchedApp = appsList.find((a) => a.id === sale.appId || a.slug === sale.appId);
+  const slugSegment = matchedApp?.slug ? `${matchedApp.slug}--${matchedApp.id}` : sale.appId;
+  const edition: 'phone' | 'tv' = matchedApp?.appEdition === 'tv' ? 'tv' : 'phone';
+  const appPath = `/app/${encodeURIComponent(slugSegment)}${edition === 'tv' ? '?edition=tv' : ''}`;
+  const token = sale.downloadToken || '';
+  const directDownloadUrl = `/api/apps/${encodeURIComponent(sale.appId)}/download?token=${encodeURIComponent(token)}`;
+  const receiptPath = `/receipt/${encodeURIComponent(sale.id)}?token=${encodeURIComponent(token)}`;
+  const prefix = baseOrigin ? baseOrigin.replace(/\/+$/, '') : '';
+
+  return {
+    saleId: sale.id,
+    appId: sale.appId,
+    appName: sale.appName || matchedApp?.name || 'ZuzuStore APK',
+    appIcon: sale.appIcon || matchedApp?.iconUrl || '/zuzustore-logo.png',
+    appVersion: matchedApp?.currentVersion || '1.0.0',
+    edition,
+    customerName: sale.customerName || 'Customer',
+    customerEmail: sale.customerEmail || '',
+    grossAmount: Number(sale.grossAmount || 0),
+    currency: sale.currency || 'UGX',
+    paymentMethod: sale.paymentMethod || 'Mobile Money',
+    reference: sale.livepayReference || sale.livepayInternalRef || sale.id,
+    status: 'completed' as const,
+    downloadToken: token,
+    directDownloadUrl,
+    appUrl: prefix ? `${prefix}${appPath}` : appPath,
+    receiptUrl: prefix ? `${prefix}${receiptPath}` : receiptPath,
+    createdAt: sale.createdAt,
+    completedAt: sale.completedAt || sale.createdAt
+  };
+}
+
+// Public Confirmed Receipt Lookup ("My Purchases" by exact buyer email OR exact transaction/LivePay reference)
+app.get('/api/purchases/lookup', async (req, res) => {
+  const rawQuery = String(req.query.q || req.query.email || req.query.ref || '').trim().toLowerCase();
+  if (!rawQuery || rawQuery.length < 4) {
+    return res.status(400).json({
+      error: 'Enter your checkout email address or transaction reference to look up confirmed receipts.'
+    });
+  }
+
+  let allSales = getSales();
+  if (firestoreDb) {
+    try {
+      const snap = await getDocs(collection(firestoreDb, 'sales'));
+      const map = new Map<string, AppSaleTransaction>();
+      for (const s of allSales) if (s?.id) map.set(s.id, s);
+      snap.forEach((d) => {
+        const s = d.data() as AppSaleTransaction;
+        if (s?.id && (!map.has(s.id) || s.status === 'completed')) {
+          map.set(s.id, s);
+        }
+      });
+      allSales = Array.from(map.values());
+    } catch (_) {}
+  }
+
+  const appsList = getApps();
+  const origin = getRequestBaseOrigin(req);
+
+  const matches = allSales
+    .filter((s) => {
+      if (s.status !== 'completed' || !s.downloadToken) return false;
+      const emailMatch = s.customerEmail && s.customerEmail.toLowerCase().trim() === rawQuery;
+      const idMatch = s.id.toLowerCase().trim() === rawQuery;
+      const refMatch = s.livepayReference && s.livepayReference.toLowerCase().trim() === rawQuery;
+      const internalRefMatch = s.livepayInternalRef && s.livepayInternalRef.toLowerCase().trim() === rawQuery;
+      return Boolean(emailMatch || idMatch || refMatch || internalRefMatch);
+    })
+    .sort((a, b) => new Date(b.completedAt || b.createdAt).getTime() - new Date(a.completedAt || a.createdAt).getTime())
+    .slice(0, 25)
+    .map((sale) => buildBuyerReceiptFromSale(sale, appsList, origin));
+
+  return res.json({
+    success: true,
+    receipts: matches
+  });
+});
+
+// Token-verified Official Receipt endpoint for /receipt/:saleId?token=...
+app.get('/api/purchases/:saleId/receipt', async (req, res) => {
+  const { saleId } = req.params;
+  const token = String(req.query.token || '').trim();
+  const sale = await findSaleById(saleId);
+
+  if (!sale) {
+    return res.status(404).json({ error: 'Receipt not found.' });
+  }
+
+  if (sale.status !== 'completed' || !sale.downloadToken) {
+    return res.status(402).json({
+      error: 'Payment has not been confirmed for this transaction yet. Receipt and APK download remain locked.'
+    });
+  }
+
+  if (!token || token !== sale.downloadToken) {
+    return res.status(403).json({
+      error: 'Valid receipt verification token required. Look up your purchase in My Purchases using your checkout email or reference.'
+    });
+  }
+
+  const receipt = buildBuyerReceiptFromSale(sale, getApps(), getRequestBaseOrigin(req));
+  return res.json({
+    success: true,
+    receipt
   });
 });
 
@@ -5466,8 +5882,8 @@ function injectAppShareMeta(html: string, req: express.Request, slugOrId?: strin
     );
 }
 
-// Frontend Admin & Storefront direct route handler (supports /admin, /login, /publisher, /tv, /app/:slug)
-app.get(['/admin', '/admin/*', '/login', '/publisher', '/tv'], (req, res, next) => {
+// Frontend Admin & Storefront direct route handler (supports /admin, /login, /publisher, /tv, /app/:slug, /receipt/:saleId, /my-purchases)
+app.get(['/admin', '/admin/*', '/login', '/publisher', '/tv', '/receipt/:saleId', '/my-purchases'], (req, res, next) => {
   const distPath = path.resolve(process.cwd(), 'dist');
   const indexHtml = path.resolve(distPath, 'index.html');
   if (fs.existsSync(indexHtml)) {

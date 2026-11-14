@@ -1,10 +1,12 @@
-import { StoreApp } from '../types';
+import { StoreApp, BuyerReceipt } from '../types';
 import { getPhoneRelease, getTvRelease, isTvApp } from './editionHelper';
 
 export interface ParsedAppRoute {
   appIdentifier: string | null;
   edition?: 'phone' | 'tv';
   isTvHub: boolean;
+  receiptSaleId?: string | null;
+  receiptToken?: string | null;
 }
 
 /**
@@ -92,6 +94,21 @@ export function parseAppRouteFromLocation(
   const edition: 'phone' | 'tv' | undefined =
     rawEdition === 'tv' ? 'tv' : rawEdition === 'phone' ? 'phone' : undefined;
 
+  const receiptMatch = cleanPath.match(/^\/receipt\/([^/]+)$/i);
+  if (receiptMatch && receiptMatch[1]) {
+    let decodedSaleId = receiptMatch[1];
+    try {
+      decodedSaleId = decodeURIComponent(receiptMatch[1]);
+    } catch (_) {}
+    return {
+      appIdentifier: null,
+      edition,
+      isTvHub: false,
+      receiptSaleId: decodedSaleId.trim() || null,
+      receiptToken: params.get('token')?.trim() || null
+    };
+  }
+
   const match = cleanPath.match(/^\/app\/([^/]+)$/i);
   if (match && match[1]) {
     let decoded = match[1];
@@ -101,15 +118,57 @@ export function parseAppRouteFromLocation(
     return {
       appIdentifier: decoded.trim() || null,
       edition,
-      isTvHub: false
+      isTvHub: false,
+      receiptSaleId: null,
+      receiptToken: null
     };
   }
 
   return {
     appIdentifier: null,
     edition,
-    isTvHub: cleanPath.toLowerCase() === '/tv'
+    isTvHub: cleanPath.toLowerCase() === '/tv',
+    receiptSaleId: null,
+    receiptToken: null
   };
+}
+
+const LOCAL_RECEIPTS_KEY = 'zuzustore_saved_receipts_v1';
+
+export function getReceiptPath(saleId: string, downloadToken?: string): string {
+  const cleanId = encodeURIComponent(String(saleId || '').trim());
+  const tokenQuery = downloadToken ? `?token=${encodeURIComponent(downloadToken)}` : '';
+  return `/receipt/${cleanId}${tokenQuery}`;
+}
+
+export function getReceiptShareUrl(saleId: string, downloadToken?: string): string {
+  const path = getReceiptPath(saleId, downloadToken);
+  if (typeof window === 'undefined' || !window.location?.origin) return path;
+  return `${window.location.origin}${path}`;
+}
+
+export function getLocalReceiptBookmarks(): BuyerReceipt[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = window.localStorage.getItem(LOCAL_RECEIPTS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveLocalReceiptBookmark(receipt: BuyerReceipt): BuyerReceipt[] {
+  if (typeof window === 'undefined' || !receipt?.saleId) return [];
+  try {
+    const existing = getLocalReceiptBookmarks().filter((r) => r.saleId !== receipt.saleId);
+    const updated = [receipt, ...existing].slice(0, 30);
+    window.localStorage.setItem(LOCAL_RECEIPTS_KEY, JSON.stringify(updated));
+    return updated;
+  } catch {
+    return [];
+  }
 }
 
 /**

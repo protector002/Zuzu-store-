@@ -11,15 +11,19 @@ import {
   Receipt,
   Clock,
   RefreshCw,
-  Lock
+  Lock,
+  Copy,
+  Check,
+  ExternalLink
 } from 'lucide-react';
-import { StoreApp, AppSaleTransaction } from '../types';
+import { StoreApp, AppSaleTransaction, BuyerReceipt } from '../types';
 import {
   purchaseApp,
   checkAppPurchaseStatus,
   acceptPlatformAgreements
 } from '../services/api';
 import { AGREEMENTS_VERSION, LegalTab } from './LegalAgreementsModal';
+import { getAppShareUrl, getReceiptPath, getReceiptShareUrl, saveLocalReceiptBookmark } from '../utils/appLinks';
 
 interface PurchaseModalProps {
   app: StoreApp;
@@ -45,6 +49,7 @@ export const PurchaseModal: React.FC<PurchaseModalProps> = ({ app, onClose, onSu
   const [waitSeconds, setWaitSeconds] = useState(0);
   const [completedTransaction, setCompletedTransaction] = useState<AppSaleTransaction | null>(null);
   const [downloadToken, setDownloadToken] = useState<string | null>(null);
+  const [copiedReceipt, setCopiedReceipt] = useState(false);
   const hasTriggeredSuccessRef = useRef(false);
 
   const handleConfirmedSuccess = (tx: AppSaleTransaction, token: string) => {
@@ -53,6 +58,32 @@ export const PurchaseModal: React.FC<PurchaseModalProps> = ({ app, onClose, onSu
     setPendingSale(null);
     setCompletedTransaction(tx);
     setDownloadToken(token);
+
+    // Automatically save permanent Official Receipt locally (Zero external email API needed)
+    const edition: 'phone' | 'tv' = app.appEdition === 'tv' ? 'tv' : 'phone';
+    const bookmark: BuyerReceipt = {
+      saleId: tx.id,
+      appId: app.id,
+      appName: app.name,
+      appIcon: app.iconUrl,
+      appVersion: app.currentVersion,
+      edition,
+      customerName: tx.customerName,
+      customerEmail: tx.customerEmail,
+      grossAmount: Number(tx.grossAmount || 0),
+      currency: tx.currency || 'UGX',
+      paymentMethod: tx.paymentMethod,
+      reference: tx.livepayReference || tx.livepayInternalRef || tx.id,
+      status: 'completed',
+      downloadToken: token,
+      directDownloadUrl: `/api/apps/${app.id}/download?token=${token}`,
+      appUrl: getAppShareUrl(app),
+      receiptUrl: getReceiptShareUrl(tx.id, token),
+      createdAt: tx.createdAt,
+      completedAt: tx.completedAt || tx.createdAt
+    };
+    saveLocalReceiptBookmark(bookmark);
+
     onSuccess(tx, token);
   };
 
@@ -283,22 +314,56 @@ export const PurchaseModal: React.FC<PurchaseModalProps> = ({ app, onClose, onSu
               </div>
             </div>
 
-            <div className="flex flex-col sm:flex-row items-center gap-3 pt-2">
-              <a
-                href={`/api/apps/${app.id}/download?token=${downloadToken}`}
-                download
-                className="w-full py-3 px-4 bg-gradient-to-r from-amber-400 via-amber-500 to-amber-400 hover:from-amber-300 hover:to-amber-400 text-neutral-950 font-black text-xs rounded-xl shadow-lg shadow-amber-500/20 flex items-center justify-center gap-2 transition-all cursor-pointer active:scale-95"
-              >
-                <Download className="w-4 h-4" />
-                <span>Download {app.name} APK Now</span>
-              </a>
-              <button
-                type="button"
-                onClick={onClose}
-                className="w-full sm:w-auto py-3 px-4 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 hover:text-white font-bold text-xs rounded-xl transition-colors cursor-pointer"
-              >
-                Close
-              </button>
+            <div className="space-y-2.5 pt-2">
+              <div className="flex flex-col sm:flex-row items-center gap-3">
+                <a
+                  href={`/api/apps/${app.id}/download?token=${downloadToken}`}
+                  download
+                  className="w-full py-3 px-4 bg-gradient-to-r from-amber-400 via-amber-500 to-amber-400 hover:from-amber-300 hover:to-amber-400 text-neutral-950 font-black text-xs rounded-xl shadow-lg shadow-amber-500/20 flex items-center justify-center gap-2 transition-all cursor-pointer active:scale-95 whitespace-nowrap"
+                >
+                  <Download className="w-4 h-4" />
+                  <span>Download {app.name} APK Now</span>
+                </a>
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="w-full sm:w-auto py-3 px-4 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 hover:text-white font-bold text-xs rounded-xl transition-colors cursor-pointer whitespace-nowrap"
+                >
+                  Close
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <a
+                  href={getReceiptPath(completedTransaction.id, downloadToken)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="py-2 px-3 rounded-xl bg-neutral-950 hover:bg-neutral-800 border border-neutral-800 text-xs font-semibold text-emerald-300 flex items-center justify-center gap-1.5 whitespace-nowrap"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  <span>Open Official Receipt</span>
+                </a>
+
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const url = getReceiptShareUrl(completedTransaction.id, downloadToken);
+                    try {
+                      await navigator.clipboard.writeText(url);
+                      setCopiedReceipt(true);
+                      setTimeout(() => setCopiedReceipt(false), 2000);
+                    } catch (_) {}
+                  }}
+                  className="py-2 px-3 rounded-xl bg-neutral-950 hover:bg-neutral-800 border border-neutral-800 text-xs font-semibold text-neutral-200 flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap"
+                >
+                  {copiedReceipt ? (
+                    <Check className="w-3.5 h-3.5 text-emerald-400" />
+                  ) : (
+                    <Copy className="w-3.5 h-3.5 text-amber-400" />
+                  )}
+                  <span>{copiedReceipt ? 'Receipt Link Copied' : 'Copy Receipt Link'}</span>
+                </button>
+              </div>
             </div>
           </div>
         ) : pendingSale ? (

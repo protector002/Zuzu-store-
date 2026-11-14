@@ -10,7 +10,11 @@ import {
   WithdrawalRequest,
   AdminFinancialSummary,
   AppPriceConfig,
-  AppTransferListing
+  AppTransferListing,
+  EmailLogEntry,
+  SmtpStatusInfo,
+  DeveloperNotification,
+  BuyerReceipt
 } from '../types';
 import {
   getAppsFromFirestore,
@@ -2084,4 +2088,183 @@ export async function purchaseDeveloperAppTransfer(
   return data;
 }
 
+// ==========================================
+// SUPER ADMIN EMAIL LOGS & SMTP DIAGNOSTICS
+// ==========================================
+
+export async function fetchAdminEmailLogs(params?: {
+  status?: string;
+  search?: string;
+}): Promise<{
+  success: boolean;
+  zeroApiMode?: boolean;
+  logs: EmailLogEntry[];
+  summary: {
+    total: number;
+    deliveredInApp?: number;
+    sent: number;
+    failed: number;
+    queuedNoSmtp: number;
+    manualDispatches?: number;
+  };
+  smtpStatus: SmtpStatusInfo;
+}> {
+  const qs = new URLSearchParams();
+  if (params?.status && params.status !== 'all') qs.set('status', params.status);
+  if (params?.search) qs.set('search', params.search);
+
+  const res = await fetch(`/api/admin/email-logs${qs.toString() ? `?${qs.toString()}` : ''}`, {
+    headers: { ...getAuthHeaders() }
+  });
+  const data = await parseJsonSafely(res);
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || 'Failed to fetch dispatch logs.');
+  }
+  return data;
+}
+
+export async function recordAdminManualDispatch(logId: string): Promise<{
+  success: boolean;
+  log: EmailLogEntry;
+  message: string;
+}> {
+  const res = await fetch(`/api/admin/email-logs/${encodeURIComponent(logId)}/manual-dispatch`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeaders()
+    }
+  });
+  const data = await parseJsonSafely(res);
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || 'Failed to record manual dispatch.');
+  }
+  return data;
+}
+
+export async function resendAdminEmailLog(logId: string): Promise<{
+  success: boolean;
+  log: EmailLogEntry;
+  smtpStatus: SmtpStatusInfo;
+  message: string;
+}> {
+  const res = await fetch(`/api/admin/email-logs/${encodeURIComponent(logId)}/resend`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeaders()
+    }
+  });
+  const data = await parseJsonSafely(res);
+  if (!res.ok && !data.log) {
+    throw new Error(data.error || 'Failed to dispatch notification.');
+  }
+  return data;
+}
+
+export async function verifyOrTestAdminSmtp(testRecipientEmail?: string): Promise<{
+  success: boolean;
+  verified: boolean;
+  smtpStatus: SmtpStatusInfo;
+  message: string;
+  log?: EmailLogEntry;
+}> {
+  const res = await fetch('/api/admin/email-logs/verify-smtp', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeaders()
+    },
+    body: JSON.stringify({ testRecipientEmail: testRecipientEmail || undefined })
+  });
+  const data = await parseJsonSafely(res);
+  if (!res.ok && data.error) {
+    throw new Error(data.error);
+  }
+  return data;
+}
+
+// ==========================================
+// DEVELOPER IN-APP NOTIFICATIONS (ZERO-API)
+// ==========================================
+
+export async function fetchDeveloperNotifications(): Promise<{
+  success: boolean;
+  notifications: DeveloperNotification[];
+  unreadCount: number;
+}> {
+  const res = await fetch('/api/developer/notifications', {
+    headers: { ...getDeveloperAuthHeaders() }
+  });
+  const data = await parseJsonSafely(res);
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || 'Failed to load developer notifications.');
+  }
+  return data;
+}
+
+export async function markDeveloperNotificationAsRead(notifId: string): Promise<{
+  success: boolean;
+  notification: DeveloperNotification;
+  unreadCount: number;
+}> {
+  const res = await fetch(`/api/developer/notifications/${encodeURIComponent(notifId)}/read`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getDeveloperAuthHeaders()
+    }
+  });
+  const data = await parseJsonSafely(res);
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || 'Failed to mark notification as read.');
+  }
+  return data;
+}
+
+export async function markAllDeveloperNotificationsAsRead(): Promise<{
+  success: boolean;
+  markedCount: number;
+  unreadCount: number;
+}> {
+  const res = await fetch('/api/developer/notifications/read-all', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getDeveloperAuthHeaders()
+    }
+  });
+  const data = await parseJsonSafely(res);
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || 'Failed to mark notifications as read.');
+  }
+  return data;
+}
+
+// ==========================================
+// BUYER OFFICIAL RECEIPT & PURCHASE LOOKUP
+// ==========================================
+
+export async function lookupBuyerPurchases(query: string): Promise<{
+  success: boolean;
+  receipts: BuyerReceipt[];
+}> {
+  const res = await fetch(`/api/purchases/lookup?q=${encodeURIComponent(query.trim())}`);
+  const data = await parseJsonSafely(res);
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || 'Unable to look up purchases.');
+  }
+  return data;
+}
+
+export async function fetchBuyerReceipt(saleId: string, token: string): Promise<BuyerReceipt> {
+  const res = await fetch(
+    `/api/purchases/${encodeURIComponent(saleId)}/receipt?token=${encodeURIComponent(token)}`
+  );
+  const data = await parseJsonSafely(res);
+  if (!res.ok || !data.receipt) {
+    throw new Error(data.error || 'Unable to verify payment receipt.');
+  }
+  return data.receipt;
+}
 

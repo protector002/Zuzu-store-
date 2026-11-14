@@ -50,8 +50,10 @@ import {
   CreditCard,
   Percent,
   ArrowLeftRight,
-  History
+  History,
+  Mail
 } from 'lucide-react';
+import { EmailLogsTab } from './EmailLogsTab';
 import {
   StoreApp,
   Platform,
@@ -105,9 +107,9 @@ interface PublisherPortalProps {
   onDownloadTest: (appId: string, releaseId?: string, appObj?: StoreApp) => Promise<void>;
   onAppApproved?: (app: StoreApp) => void;
   onRefreshCatalog?: () => void;
-  requestedTab?: 'upload-new' | 'update-existing' | 'manage' | 'submissions' | 'god-mode';
+  requestedTab?: 'upload-new' | 'update-existing' | 'manage' | 'submissions' | 'god-mode' | 'email-logs';
   requestedTabKey?: number;
-  onTabChange?: (tab: 'upload-new' | 'update-existing' | 'manage' | 'submissions' | 'god-mode') => void;
+  onTabChange?: (tab: 'upload-new' | 'update-existing' | 'manage' | 'submissions' | 'god-mode' | 'email-logs') => void;
 }
 
 // Sample mobile screenshots for testing/previewing
@@ -247,7 +249,7 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
   requestedTabKey,
   onTabChange,
 }) => {
-  const [activeTab, setActiveTab] = useState<'upload-new' | 'update-existing' | 'manage' | 'submissions' | 'god-mode'>(
+  const [activeTab, setActiveTab] = useState<'upload-new' | 'update-existing' | 'manage' | 'submissions' | 'god-mode' | 'email-logs'>(
     requestedTab || 'upload-new'
   );
 
@@ -1449,6 +1451,18 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
             >
               <Crown className={`w-3.5 h-3.5 shrink-0 fill-current ${activeTab === 'god-mode' ? 'text-neutral-950' : 'text-amber-400'}`} />
               <span>👑 God Mode &amp; Developers</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('email-logs')}
+              className={`px-3 sm:px-3.5 py-2 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 ${
+                activeTab === 'email-logs'
+                  ? 'bg-emerald-500 text-neutral-950 shadow-md shadow-emerald-950/40'
+                  : 'text-emerald-300 bg-emerald-950/30 hover:bg-emerald-900/50 border border-emerald-500/30'
+              }`}
+            >
+              <Mail className="w-3.5 h-3.5 shrink-0" />
+              <span>Email Logs</span>
             </button>
           </div>
         </div>
@@ -5771,6 +5785,11 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* TAB 6: EMAIL DELIVERY LOGS & SMTP DIAGNOSTICS */}
+      {activeTab === 'email-logs' && (
+        <EmailLogsTab adminEmail={admin?.email} />
       )}
     </div>
   );

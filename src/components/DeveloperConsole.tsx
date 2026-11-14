@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Upload,
   Clock,
@@ -37,7 +37,8 @@ import {
   History,
   ShoppingBag,
   Sparkles,
-  Tag
+  Tag,
+  Bell
 } from 'lucide-react';
 import {
   DeveloperUser,
@@ -46,7 +47,8 @@ import {
   DeveloperWallet,
   WithdrawalRequest,
   AppPricingType,
-  AppTransferListing
+  AppTransferListing,
+  DeveloperNotification
 } from '../types';
 import { saveApkBlob } from '../utils/fileStorage';
 import {
@@ -66,9 +68,13 @@ import {
   purchaseDeveloperAppTransfer,
   updateDeveloperOwnedApp,
   addDeveloperOwnedAppRelease,
-  acceptDeveloperAgreements
+  acceptDeveloperAgreements,
+  fetchDeveloperNotifications,
+  markDeveloperNotificationAsRead,
+  markAllDeveloperNotificationsAsRead
 } from '../services/api';
 import { AGREEMENTS_VERSION, LegalTab } from './LegalAgreementsModal';
+import { DeveloperNotificationsTab } from './DeveloperNotificationsTab';
 
 // Compress icon image into a lightweight Data URL (permanent across restarts/instances)
 function convertImageToDataUrl(file: File): Promise<string> {
@@ -175,12 +181,22 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
   onDeveloperUpdated,
   onOpenLegal,
 }) => {
-  const [activeTab, setActiveTab] = useState<'submit' | 'my-apps' | 'transfers' | 'wallet'>('submit');
+  const [activeTab, setActiveTab] = useState<'submit' | 'my-apps' | 'transfers' | 'wallet' | 'notifications'>('submit');
   const [isAcceptingAgreement, setIsAcceptingAgreement] = useState(false);
   const [myApps, setMyApps] = useState<StoreApp[]>([]);
   const [isLoadingApps, setIsLoadingApps] = useState(false);
   const [myAppsMessage, setMyAppsMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [broadcast, setBroadcast] = useState<AdminBroadcast | null>(null);
+
+  // In-App Developer Notifications Inbox & Opt-in Browser Alerts State
+  const [notifications, setNotifications] = useState<DeveloperNotification[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [isLoadingNotifs, setIsLoadingNotifs] = useState(false);
+  const [browserAlertPermission, setBrowserAlertPermission] = useState<NotificationPermission | 'unsupported'>(() =>
+    typeof window !== 'undefined' && 'Notification' in window ? window.Notification.permission : 'unsupported'
+  );
+  const seenNotifIdsRef = useRef<Set<string>>(new Set());
+  const hasHydratedNotifsRef = useRef(false);
 
   // Wallet & Earnings State
   const [wallet, setWallet] = useState<DeveloperWallet | null>(null);
@@ -340,10 +356,88 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
     }
   };
 
+  const loadNotifications = async (silent = false) => {
+    if (!silent) setIsLoadingNotifs(true);
+    try {
+      const data = await fetchDeveloperNotifications();
+      const list = data.notifications || [];
+      setNotifications(list);
+      setUnreadCount(data.unreadCount ?? list.filter((n) => !n.read).length);
+
+      if (hasHydratedNotifsRef.current) {
+        const newlyArrived = list.filter((n) => !n.read && !seenNotifIdsRef.current.has(n.id));
+        if (
+          newlyArrived.length > 0 &&
+          typeof window !== 'undefined' &&
+          'Notification' in window &&
+          window.Notification.permission === 'granted'
+        ) {
+          newlyArrived.slice(0, 3).forEach((item) => {
+            try {
+              new window.Notification(item.title, {
+                body: item.message,
+                icon: '/zuzustore-logo.png',
+                tag: item.id
+              });
+            } catch (_) {}
+          });
+        }
+      }
+
+      list.forEach((n) => seenNotifIdsRef.current.add(n.id));
+      hasHydratedNotifsRef.current = true;
+    } catch (e) {
+      if (!silent) console.warn('Failed to load developer notifications:', e);
+    } finally {
+      if (!silent) setIsLoadingNotifs(false);
+    }
+  };
+
+  const handleMarkNotifRead = async (id: string) => {
+    try {
+      await markDeveloperNotificationAsRead(id);
+      setNotifications((prev) =>
+        prev.map((n) => (n.id === id ? { ...n, read: true, readAt: n.readAt || new Date().toISOString() } : n))
+      );
+      setUnreadCount((prev) => Math.max(0, prev - 1));
+    } catch (e) {
+      console.warn('Failed to mark notification read:', e);
+    }
+  };
+
+  const handleMarkAllNotifsRead = async () => {
+    try {
+      await markAllDeveloperNotificationsAsRead();
+      const now = new Date().toISOString();
+      setNotifications((prev) => prev.map((n) => ({ ...n, read: true, readAt: n.readAt || now })));
+      setUnreadCount(0);
+    } catch (e) {
+      console.warn('Failed to mark all notifications read:', e);
+    }
+  };
+
+  const handleEnableBrowserAlerts = async () => {
+    if (typeof window === 'undefined' || !('Notification' in window)) {
+      setBrowserAlertPermission('unsupported');
+      return;
+    }
+    try {
+      const permission = await window.Notification.requestPermission();
+      setBrowserAlertPermission(permission);
+      if (permission === 'granted') {
+        new window.Notification('ZuzuStore Alerts Enabled', {
+          body: 'You will receive instant desktop/browser alerts for APK sales and app reviews.',
+          icon: '/zuzustore-logo.png'
+        });
+      }
+    } catch (_) {}
+  };
+
   useEffect(() => {
     loadMyApps();
     loadWallet();
     loadTransfers();
+    loadNotifications();
     fetchStoreCommission().then((data) => {
       if (data) {
         setAdminCommissionPercent(data.adminCommissionPercent ?? 6);
@@ -353,6 +447,11 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
     fetchBroadcast().then((b) => {
       if (b && b.active) setBroadcast(b);
     });
+
+    const notifTimer = setInterval(() => {
+      loadNotifications(true);
+    }, 20000);
+    return () => clearInterval(notifTimer);
   }, []);
 
   // Icon file handler (compresses to lightweight Data URL so icons persist across restarts/instances)
@@ -1028,6 +1127,31 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
               {wallet && wallet.availableBalance > 0 && (
                 <span className="ml-0.5 px-1.5 py-0.2 bg-emerald-500/20 text-emerald-400 font-mono text-[10px] rounded-full border border-emerald-500/30">
                   {wallet.availableBalance.toLocaleString()} {wallet.currency}
+                </span>
+              )}
+            </button>
+            <button
+              onClick={() => {
+                setActiveTab('notifications');
+                loadNotifications();
+              }}
+              className={`flex items-center gap-2 py-2 px-3.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+                activeTab === 'notifications'
+                  ? 'bg-gradient-to-r from-amber-500 to-amber-600 text-neutral-950 shadow-md'
+                  : 'text-neutral-400 hover:text-white'
+              }`}
+            >
+              <Bell className="w-4 h-4 shrink-0" />
+              <span>Notifications</span>
+              {unreadCount > 0 && (
+                <span
+                  className={`ml-0.5 px-1.5 py-0.2 font-mono tabular-nums font-black text-[10px] rounded-full ${
+                    activeTab === 'notifications'
+                      ? 'bg-neutral-950 text-amber-400'
+                      : 'bg-amber-500 text-neutral-950'
+                  }`}
+                >
+                  {unreadCount}
                 </span>
               )}
             </button>
@@ -2605,6 +2729,20 @@ export const DeveloperConsole: React.FC<DeveloperConsoleProps> = ({
               )}
             </div>
           </div>
+        )}
+
+        {/* TAB 5: DEVELOPER NOTIFICATIONS INBOX */}
+        {activeTab === 'notifications' && (
+          <DeveloperNotificationsTab
+            notifications={notifications}
+            unreadCount={unreadCount}
+            loading={isLoadingNotifs}
+            onRefresh={() => loadNotifications(false)}
+            onMarkRead={handleMarkNotifRead}
+            onMarkAllRead={handleMarkAllNotifsRead}
+            browserAlertPermission={browserAlertPermission}
+            onEnableBrowserAlerts={handleEnableBrowserAlerts}
+          />
         )}
       </main>
 

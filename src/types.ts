@@ -355,4 +355,85 @@ export interface AdminFinancialSummary {
   livepayConfig?: LivePayConfigStatus;
 }
 
+export type EmailEventType =
+  | 'sale_buyer'
+  | 'sale_developer'
+  | 'app_approved'
+  | 'app_rejected'
+  | 'smtp_test';
 
+export type EmailDeliveryStatus = 'ready_in_app' | 'sent' | 'failed' | 'queued_no_smtp';
+
+export interface EmailLogEntry {
+  id: string;
+  eventType: EmailEventType;
+  recipientEmail: string;
+  recipientName?: string;
+  subject: string;
+  htmlBody: string;
+  textBody?: string;
+  status: EmailDeliveryStatus;
+  errorMessage?: string;
+  relatedAppId?: string;
+  relatedAppName?: string;
+  relatedSaleId?: string;
+  messageId?: string;
+  attempts: number;
+  manualDispatches?: number;
+  lastManualDispatchAt?: string;
+  createdAt: string;
+  lastAttemptAt?: string;
+  sentAt?: string;
+}
+
+export interface SmtpStatusInfo {
+  configured: boolean;
+  host: string;
+  port: number;
+  secure: boolean;
+  userMasked: string;
+  fromEmail: string;
+  fromName: string;
+}
+
+export interface DeveloperNotification {
+  id: string;
+  developerId: string;
+  developerEmail: string;
+  eventType: 'sale_developer' | 'app_approved' | 'app_rejected';
+  title: string;
+  message: string;
+  relatedAppId?: string;
+  relatedAppName?: string;
+  relatedSaleId?: string;
+  grossAmount?: number;
+  netEarnings?: number;
+  currency?: string;
+  appUrl?: string;
+  rejectionReason?: string;
+  read: boolean;
+  createdAt: string;
+  readAt?: string;
+}
+
+export interface BuyerReceipt {
+  saleId: string;
+  appId: string;
+  appName: string;
+  appIcon?: string;
+  appVersion?: string;
+  edition?: 'phone' | 'tv';
+  customerName: string;
+  customerEmail: string;
+  grossAmount: number;
+  currency: string;
+  paymentMethod: string;
+  reference: string;
+  status: 'completed';
+  downloadToken: string;
+  directDownloadUrl: string;
+  appUrl: string;
+  receiptUrl: string;
+  createdAt: string;
+  completedAt: string;
+}

@@ -13,13 +13,14 @@ import {
   ArrowRight,
   ExternalLink,
   Code2,
-  Crown
+  Crown,
+  Receipt
 } from 'lucide-react';
 import { StoreApp, AdminUser, DeveloperUser } from '../types';
 import { getPhoneRelease, getTvRelease } from '../utils/editionHelper';
 
 interface HeaderProps {
-  currentView: 'store' | 'upload' | 'detail' | 'tv' | 'developer_console';
+  currentView: 'store' | 'upload' | 'detail' | 'tv' | 'developer_console' | 'receipt';
   onNavigate: (view: 'store' | 'upload' | 'tv' | 'developer_console') => void;
   onOpenInstallGuide: () => void;
   onQuickDownload?: () => void;
@@ -28,6 +29,7 @@ interface HeaderProps {
   admin: AdminUser | null;
   developer?: DeveloperUser | null;
   onOpenDeveloperPortal?: () => void;
+  onOpenMyPurchases?: () => void;
   onOpenLoginModal: () => void;
   onLogout: () => void;
   onSecretAdminTrigger?: () => void;
@@ -50,6 +52,7 @@ export const Header: React.FC<HeaderProps> = ({
   admin,
   developer,
   onOpenDeveloperPortal,
+  onOpenMyPurchases,
   onOpenLoginModal: _onOpenLoginModal,
   onLogout,
   onSecretAdminTrigger,
@@ -381,6 +384,25 @@ export const Header: React.FC<HeaderProps> = ({
               <span className="text-xs tracking-tight font-black">
                 👑 God Mode
               </span>
+            </button>
+          )}
+
+          {/* My Purchases & Receipts Lookup Button */}
+          {onOpenMyPurchases && (
+            <button
+              type="button"
+              onClick={onOpenMyPurchases}
+              className={`px-2 sm:px-3 py-1 sm:py-1.5 rounded-xl font-bold flex items-center gap-1.5 transition-colors cursor-pointer border whitespace-nowrap shrink-0 text-[11px] sm:text-xs ${
+                currentView === 'receipt'
+                  ? 'bg-emerald-500/20 border-emerald-500/60 text-emerald-300'
+                  : 'bg-neutral-900/90 hover:bg-neutral-800 border-neutral-800 text-neutral-300 hover:text-white'
+              }`}
+              title="Look up payment receipts and re-download purchased APKs"
+              aria-label="My Purchases and Receipts"
+            >
+              <Receipt className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+              <span className="hidden sm:inline">My Purchases</span>
+              <span className="sm:hidden">Receipts</span>
             </button>
           )}
 

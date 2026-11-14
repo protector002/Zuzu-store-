@@ -283,6 +283,58 @@
         "acceptedAt": { "type": "string" }
       },
       "required": ["id", "role", "version", "acceptedAt"]
+    },
+    "EmailLogEntry": {
+      "title": "EmailLogEntry",
+      "description": "Audit log and retry state for transactional emails sent to buyers and developers",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "eventType": { "type": "string", "enum": ["sale_buyer", "sale_developer", "app_approved", "app_rejected", "smtp_test"] },
+        "recipientEmail": { "type": "string" },
+        "recipientName": { "type": "string" },
+        "subject": { "type": "string" },
+        "htmlBody": { "type": "string" },
+        "textBody": { "type": "string" },
+        "status": { "type": "string", "enum": ["ready_in_app", "sent", "failed", "queued_no_smtp"] },
+        "errorMessage": { "type": "string" },
+        "relatedAppId": { "type": "string" },
+        "relatedAppName": { "type": "string" },
+        "relatedSaleId": { "type": "string" },
+        "messageId": { "type": "string" },
+        "attempts": { "type": "number" },
+        "manualDispatches": { "type": "number" },
+        "lastManualDispatchAt": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "lastAttemptAt": { "type": "string" },
+        "sentAt": { "type": "string" }
+      },
+      "required": ["id", "eventType", "recipientEmail", "subject", "status", "createdAt"]
+    },
+    "DeveloperNotification": {
+      "title": "DeveloperNotification",
+      "description": "In-app notification inbox record delivered to developers with zero external APIs",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "developerId": { "type": "string" },
+        "developerEmail": { "type": "string" },
+        "eventType": { "type": "string", "enum": ["sale_developer", "app_approved", "app_rejected"] },
+        "title": { "type": "string" },
+        "message": { "type": "string" },
+        "relatedAppId": { "type": "string" },
+        "relatedAppName": { "type": "string" },
+        "relatedSaleId": { "type": "string" },
+        "grossAmount": { "type": "number" },
+        "netEarnings": { "type": "number" },
+        "currency": { "type": "string" },
+        "appUrl": { "type": "string" },
+        "rejectionReason": { "type": "string" },
+        "read": { "type": "boolean" },
+        "createdAt": { "type": "string" },
+        "readAt": { "type": "string" }
+      },
+      "required": ["id", "developerId", "developerEmail", "eventType", "title", "message", "read", "createdAt"]
     }
   },
   "firestore": {
@@ -333,6 +385,18 @@
         "$ref": "#/entities/AgreementAcceptance"
       },
       "description": "User and developer acceptances of Protector Technologies Terms and Payment Agreements"
+    },
+    "/email_logs/{logId}": {
+      "schema": {
+        "$ref": "#/entities/EmailLogEntry"
+      },
+      "description": "Audit log and dispatch payload for automated buyer receipts and developer notifications"
+    },
+    "/developer_notifications/{notifId}": {
+      "schema": {
+        "$ref": "#/entities/DeveloperNotification"
+      },
+      "description": "In-app developer inbox alerts for confirmed APK sales, approvals, and review updates"
     }
   }
 }

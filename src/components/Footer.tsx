@@ -1,5 +1,5 @@
 import React from 'react';
-import { ShieldCheck, Smartphone, Lock, UploadCloud, Layers, Tv, Code2 } from 'lucide-react';
+import { ShieldCheck, Smartphone, Lock, UploadCloud, Layers, Tv, Code2, Receipt } from 'lucide-react';
 import { AdminUser, DeveloperUser } from '../types';
 import { LegalTab } from './LegalAgreementsModal';
 
@@ -10,6 +10,7 @@ interface FooterProps {
   admin?: AdminUser | null;
   developer?: DeveloperUser | null;
   onOpenDeveloperPortal?: () => void;
+  onOpenMyPurchases?: () => void;
   onSecretAdminTrigger?: () => void;
   onOpenLegal?: (tab: LegalTab) => void;
 }
@@ -21,6 +22,7 @@ export const Footer: React.FC<FooterProps> = ({
   admin,
   developer,
   onOpenDeveloperPortal,
+  onOpenMyPurchases,
   onSecretAdminTrigger,
   onOpenLegal,
 }) => {
@@ -79,11 +81,22 @@ export const Footer: React.FC<FooterProps> = ({
                 </a>
               </li>
               <li>
-                <button onClick={onOpenGuide} className="hover:text-cyan-400 transition-colors text-left flex items-center gap-1.5">
+                <button onClick={onOpenGuide} className="hover:text-cyan-400 transition-colors text-left flex items-center gap-1.5 cursor-pointer">
                   <Smartphone className="w-3 h-3 text-cyan-400" />
                   <span>Android Installation Guide</span>
                 </button>
               </li>
+              {onOpenMyPurchases && (
+                <li>
+                  <button
+                    onClick={onOpenMyPurchases}
+                    className="hover:text-emerald-300 transition-colors text-left flex items-center gap-1.5 text-emerald-400 font-semibold cursor-pointer"
+                  >
+                    <Receipt className="w-3 h-3 text-emerald-400" />
+                    <span>My Purchases &amp; Receipts</span>
+                  </button>
+                </li>
+              )}
             </ul>
           </div>
 
