@@ -53,32 +53,32 @@
     "createdAt": "2026-11-09T11:34:44.386Z"
   },
   "dev-1794238697139-n0g3u": {
-    "name": "Bonane Kabene",
+    "companyName": "Kreative Minds",
+    "status": "active",
     "updatedAt": "2026-11-09T15:38:19.472Z",
+    "passwordHash": "3144d7cb23f163e7db236f6982f83ac30c35902a8113402115915f14f140d1de",
+    "name": "Bonane Kabene",
     "id": "dev-1794238697139-n0g3u",
     "email": "bonanekabene67@gmail.com",
-    "passwordHash": "3144d7cb23f163e7db236f6982f83ac30c35902a8113402115915f14f140d1de",
-    "companyName": "Kreative Minds",
-    "createdAt": "2026-11-09T15:38:17.139Z",
-    "status": "active"
+    "createdAt": "2026-11-09T15:38:17.139Z"
   },
   "dev-1794247485074-hdqfg": {
-    "name": "Bold",
     "updatedAt": "2026-11-13T09:33:05.443Z",
-    "status": "active",
     "id": "dev-1794247485074-hdqfg",
-    "createdAt": "2026-11-09T18:04:45.074Z",
-    "email": "kintujoshua123@gmail.com"
+    "email": "kintujoshua123@gmail.com",
+    "name": "Bold",
+    "status": "active",
+    "createdAt": "2026-11-09T18:04:45.074Z"
   },
   "dev-1794475972832-4m44r": {
-    "companyName": "CEO SMITH APKS",
-    "updatedAt": "2026-11-13T08:54:44.328Z",
     "status": "active",
-    "email": "ugandansoul1@gmail.com",
-    "passwordHash": "7db593a94ee6b20da1c82581e8327c0cecd4d30c0d4dcbf086d452092c4b2473",
-    "createdAt": "2026-11-12T09:32:52.833Z",
     "name": "CeoSmithDev",
-    "id": "dev-1794475972832-4m44r"
+    "createdAt": "2026-11-12T09:32:52.833Z",
+    "passwordHash": "7db593a94ee6b20da1c82581e8327c0cecd4d30c0d4dcbf086d452092c4b2473",
+    "email": "ugandansoul1@gmail.com",
+    "id": "dev-1794475972832-4m44r",
+    "updatedAt": "2026-11-13T20:20:42.095Z",
+    "companyName": "CEO SMITH APKS"
   },
   "dev-1794476608250-raonw": {
     "id": "dev-1794476608250-raonw",

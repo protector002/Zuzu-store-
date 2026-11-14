@@ -75,11 +75,14 @@ async function parseJsonSafely(res: Response): Promise<any> {
   try {
     return JSON.parse(text);
   } catch (_) {
+    if (res.status === 413) {
+      return { error: 'Upload exceeds server payload size limit (413 Payload Too Large).' };
+    }
+    if (res.status >= 500) {
+      return { error: `Authentication service unavailable (HTTP ${res.status}). Please retry in a moment.` };
+    }
     return {
-      error:
-        res.status === 413
-          ? 'Upload exceeds server payload size limit (413 Payload Too Large).'
-          : `Unexpected server response (HTTP ${res.status}).`
+      error: `Unexpected server response (HTTP ${res.status}).`
     };
   }
 }
@@ -297,7 +300,7 @@ export async function adminLogin(
     body: JSON.stringify({ email, password })
   });
 
-  const data = await res.json();
+  const data = await parseJsonSafely(res);
   if (!res.ok || !data.success) {
     throw new Error(data.error || 'Invalid administrator credentials.');
   }
@@ -317,7 +320,7 @@ export async function checkAdminSession(): Promise<{ authenticated: boolean; adm
       }
     });
     if (!res.ok) return { authenticated: false };
-    return res.json();
+    return await parseJsonSafely(res);
   } catch (err) {
     return { authenticated: false };
   }
@@ -875,7 +878,7 @@ export async function developerRegister(payload: {
     body: JSON.stringify(payload)
   });
 
-  const data = await res.json();
+  const data = await parseJsonSafely(res);
   if (!res.ok || !data.success) {
     throw new Error(data.error || 'Failed to register developer account.');
   }
@@ -941,7 +944,7 @@ export async function developerLogin(
     body: JSON.stringify({ email, password })
   });
 
-  const data = await res.json();
+  const data = await parseJsonSafely(res);
   if (!res.ok || !data.success) {
     throw new Error(data.error || 'Failed to sign in as developer.');
   }
@@ -979,7 +982,7 @@ export async function checkDeveloperSession(): Promise<{
       }
     });
     if (res.ok) {
-      const data = await res.json();
+      const data = await parseJsonSafely(res);
       if (data.authenticated && data.developer) {
         saveDeveloperToFirestore(data.developer).catch(() => {});
         try {

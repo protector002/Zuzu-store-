@@ -4,6 +4,7 @@ import path from 'path';
 import crypto from 'crypto';
 import multer from 'multer';
 import { Readable } from 'stream';
+import { fileURLToPath } from 'url';
 import { initializeApp, getApps as getFirebaseApps, getApp } from 'firebase/app';
 import {
   getFirestore,
@@ -18,8 +19,8 @@ import {
   where
 } from 'firebase/firestore';
 import {
-  DeveloperNotification,
-  EmailLogEntry,
+  type DeveloperNotification,
+  type EmailLogEntry,
   getDeveloperNotificationsForAccount,
   getEmailLogs,
   getSmtpStatusInfo,
@@ -35,7 +36,7 @@ import {
   sendAppRejectedEmail,
   sendCompletedSaleEmails,
   verifyAndOptionallySendTestEmail
-} from './server/emailService';
+} from './server/emailService.ts';
 
 // Ensure data and upload directories exist (use /tmp on Vercel serverless)
 const isVercel = process.env.VERCEL === '1';
@@ -555,20 +556,40 @@ export interface AdminBroadcast {
   linkText?: string;
 }
 
-// Initialize Firestore in Server
+// Initialize Firestore in Server (works both locally and inside Vercel serverless bundles)
 let firestoreDb: any = null;
 try {
-  const configPath = path.resolve(process.cwd(), 'firebase-applet-config.json');
-  if (fs.existsSync(configPath)) {
-    const raw = fs.readFileSync(configPath, 'utf-8');
-    const firebaseConfig = JSON.parse(raw);
-    const fbApp = getFirebaseApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
-    firestoreDb =
-      firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== '(default)'
-        ? getFirestore(fbApp, firebaseConfig.firestoreDatabaseId)
-        : getFirestore(fbApp);
-    console.log('[Firestore Server] Connected to persistent database:', firebaseConfig.firestoreDatabaseId || '(default)');
+  let firebaseConfig: Record<string, any> | null = null;
+  const currentDir = path.dirname(fileURLToPath(import.meta.url));
+  const candidateConfigPaths = [
+    path.resolve(process.cwd(), 'firebase-applet-config.json'),
+    path.resolve(currentDir, 'firebase-applet-config.json'),
+    path.resolve(currentDir, '..', 'firebase-applet-config.json')
+  ];
+  for (const cfgPath of candidateConfigPaths) {
+    if (fs.existsSync(cfgPath)) {
+      const raw = fs.readFileSync(cfgPath, 'utf-8');
+      firebaseConfig = JSON.parse(raw);
+      break;
+    }
   }
+  if (!firebaseConfig) {
+    firebaseConfig = {
+      projectId: 'gen-lang-client-0880832866',
+      appId: '1:358841783957:web:ea44dd38fe8d6f3c9ded9c',
+      apiKey: 'AIzaSyCXfk9lDcnmrcN83C2pc8Ru4FQgq9zv6Nk',
+      authDomain: 'gen-lang-client-0880832866.firebaseapp.com',
+      firestoreDatabaseId: 'ai-studio-animeapkhub-74ad66d4-4e48-46f3-b3c2-15f1949dfe83',
+      storageBucket: 'gen-lang-client-0880832866.firebasestorage.app',
+      messagingSenderId: '358841783957'
+    };
+  }
+  const fbApp = getFirebaseApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
+  firestoreDb =
+    firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== '(default)'
+      ? getFirestore(fbApp, firebaseConfig.firestoreDatabaseId)
+      : getFirestore(fbApp);
+  console.log('[Firestore Server] Connected to persistent database:', firebaseConfig.firestoreDatabaseId || '(default)');
 } catch (err) {
   console.warn('[Firestore Server] Init warning:', err);
 }
@@ -636,7 +657,7 @@ async function findDeveloperByIdOrEmail(idOrEmail: string): Promise<DeveloperAcc
 
   // 1. Check in-memory developers
   for (const dev of Object.values(memoryDevelopers)) {
-    if (dev.id === idOrEmail || dev.email.toLowerCase().trim() === norm) {
+    if (dev && (dev.id === idOrEmail || dev.email?.toLowerCase().trim() === norm)) {
       return dev;
     }
   }
@@ -644,7 +665,7 @@ async function findDeveloperByIdOrEmail(idOrEmail: string): Promise<DeveloperAcc
   // 2. Check local file
   const local = getLocalDevelopers();
   for (const dev of Object.values(local)) {
-    if (dev.id === idOrEmail || dev.email.toLowerCase().trim() === norm) {
+    if (dev && (dev.id === idOrEmail || dev.email?.toLowerCase().trim() === norm)) {
       memoryDevelopers[dev.id] = dev;
       return dev;
     }
@@ -698,17 +719,27 @@ async function persistDeveloper(dev: DeveloperAccount): Promise<void> {
 
   if (firestoreDb) {
     try {
-      await setDoc(doc(firestoreDb, 'developers', dev.id), {
-        ...dev,
-        updatedAt: new Date().toISOString()
-      }, { merge: true });
+      const normalizedEmail = dev.email.toLowerCase().trim();
+      await setDoc(
+        doc(firestoreDb, 'developers', dev.id),
+        cleanForFirestore({
+          ...dev,
+          email: normalizedEmail,
+          updatedAt: new Date().toISOString()
+        }),
+        { merge: true }
+      );
 
       // Mirror to email index for instant lookup
-      await setDoc(doc(firestoreDb, 'developers', `email_${dev.email.toLowerCase().trim()}`), {
-        developerId: dev.id,
-        email: dev.email.toLowerCase().trim(),
-        updatedAt: new Date().toISOString()
-      }, { merge: true });
+      await setDoc(
+        doc(firestoreDb, 'developers', `email_${normalizedEmail}`),
+        cleanForFirestore({
+          developerId: dev.id,
+          email: normalizedEmail,
+          updatedAt: new Date().toISOString()
+        }),
+        { merge: true }
+      );
     } catch (e) {
       console.error('[Firestore] Error persisting developer to cloud:', e);
     }
@@ -1303,172 +1334,202 @@ const requireDeveloper = async (req: express.Request, res: express.Response, nex
 
 // Login endpoint for admin
 app.post('/api/auth/login', (req, res) => {
-  const { email, password } = req.body;
+  try {
+    const body = (req.body && typeof req.body === 'object' ? req.body : {}) as Record<string, any>;
+    const email = typeof body.email === 'string' ? body.email : '';
+    const password = typeof body.password === 'string' ? body.password : '';
 
-  if (!email || !password) {
-    return res.status(400).json({ error: 'Email and password are required.' });
-  }
+    if (!email.trim() || !password) {
+      return res.status(400).json({ error: 'Email and password are required.' });
+    }
 
-  const normalizedEmail = email.trim().toLowerCase();
-  const targetEmail = ADMIN_EMAIL.toLowerCase();
+    const normalizedEmail = email.trim().toLowerCase();
+    const targetEmail = ADMIN_EMAIL.toLowerCase();
 
-  if (normalizedEmail === targetEmail && password === ADMIN_PASSWORD) {
-    const token = createAdminToken();
+    if (normalizedEmail === targetEmail && password === ADMIN_PASSWORD) {
+      const token = createAdminToken();
 
-    // Also store session locally for backward compatibility
-    const session: Session = {
-      token,
-      email: ADMIN_EMAIL,
-      role: 'admin',
-      createdAt: Date.now(),
-      expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000
-    };
-    const sessions = getSessions();
-    sessions[token] = session;
-    saveSessions(sessions);
+      // Also store session locally for backward compatibility
+      try {
+        const session: Session = {
+          token,
+          email: ADMIN_EMAIL,
+          role: 'admin',
+          createdAt: Date.now(),
+          expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000
+        };
+        const sessions = getSessions();
+        sessions[token] = session;
+        saveSessions(sessions);
+      } catch (_) {}
 
-    return res.json({
-      success: true,
-      token,
-      admin: {
-        email: ADMIN_EMAIL,
-        name: 'John Sseruwagi',
-        role: 'Admin Publisher'
-      }
+      return res.json({
+        success: true,
+        token,
+        admin: {
+          email: ADMIN_EMAIL,
+          name: 'John Sseruwagi',
+          role: 'Admin Publisher'
+        }
+      });
+    }
+
+    return res.status(401).json({
+      error: 'Invalid administrator credentials. Only authorized publisher accounts can publish apps.'
     });
+  } catch (err: any) {
+    console.error('[Admin Login Error]:', err);
+    return res.status(500).json({ error: 'Unable to verify administrator login right now. Please try again.' });
   }
-
-  return res.status(401).json({
-    error: 'Invalid administrator credentials. Only authorized publisher accounts can publish apps.'
-  });
 });
 
 // Developer registration endpoint
 app.post('/api/developer/auth/register', async (req, res) => {
-  const { name, email, password, companyName, acceptedAgreements, agreementsVersion } = req.body;
+  try {
+    const body = (req.body && typeof req.body === 'object' ? req.body : {}) as Record<string, any>;
+    const name = typeof body.name === 'string' ? body.name : '';
+    const email = typeof body.email === 'string' ? body.email : '';
+    const password = typeof body.password === 'string' ? body.password : '';
+    const companyName = typeof body.companyName === 'string' ? body.companyName : '';
+    const acceptedAgreements = body.acceptedAgreements;
+    const agreementsVersion = body.agreementsVersion;
 
-  if (!name || !name.trim()) {
-    return res.status(400).json({ error: 'Developer or studio name is required.' });
-  }
-
-  if (!email || !email.trim() || !email.includes('@')) {
-    return res.status(400).json({ error: 'Valid email address is required.' });
-  }
-
-  if (!password || password.length < 6) {
-    return res.status(400).json({ error: 'Password must be at least 6 characters.' });
-  }
-
-  if (acceptedAgreements !== true) {
-    return res.status(400).json({
-      error: 'You must agree to Protector Technologies Terms & Conditions and Developer Payment Agreement.'
-    });
-  }
-
-  const normalizedEmail = email.trim().toLowerCase();
-
-  // Protect Super Admin email from developer collisions
-  if (normalizedEmail === ADMIN_EMAIL.toLowerCase()) {
-    return res.status(400).json({ error: 'This email is reserved for platform Super Admin.' });
-  }
-
-  const existing = await findDeveloperByIdOrEmail(normalizedEmail);
-  if (existing) {
-    return res.status(400).json({ error: 'A developer account already exists with this email. Please sign in.' });
-  }
-
-  const devId = `dev-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
-  const passwordHash = crypto.createHash('sha256').update(password + 'zuzu_dev_salt_2026').digest('hex');
-  const nowIso = new Date().toISOString();
-  const ver = String(agreementsVersion || '2026-11-v1');
-
-  const newDev: DeveloperAccount = {
-    id: devId,
-    name: name.trim(),
-    email: normalizedEmail,
-    passwordHash,
-    companyName: companyName ? companyName.trim() : undefined,
-    status: 'active',
-    agreementsAccepted: true,
-    agreementsAcceptedAt: nowIso,
-    agreementsVersion: ver,
-    createdAt: nowIso
-  };
-
-  await persistDeveloper(newDev);
-
-  if (firestoreDb) {
-    try {
-      const accId = `agr-dev-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-      await setDoc(doc(firestoreDb, 'agreements', accId), {
-        id: accId,
-        role: 'developer',
-        version: ver,
-        developerId: devId,
-        email: normalizedEmail,
-        acceptedAt: nowIso
-      });
-    } catch (_) {}
-  }
-
-  const token = createDeveloperToken(devId, normalizedEmail);
-
-  return res.status(201).json({
-    success: true,
-    token,
-    developer: {
-      id: newDev.id,
-      name: newDev.name,
-      email: newDev.email,
-      companyName: newDev.companyName,
-      status: newDev.status,
-      agreementsAccepted: newDev.agreementsAccepted,
-      agreementsAcceptedAt: newDev.agreementsAcceptedAt,
-      agreementsVersion: newDev.agreementsVersion,
-      createdAt: newDev.createdAt
+    if (!name.trim()) {
+      return res.status(400).json({ error: 'Developer or studio name is required.' });
     }
-  });
+
+    if (!email.trim() || !email.includes('@')) {
+      return res.status(400).json({ error: 'Valid email address is required.' });
+    }
+
+    if (!password || password.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+    }
+
+    if (acceptedAgreements !== true) {
+      return res.status(400).json({
+        error: 'You must agree to Protector Technologies Terms & Conditions and Developer Payment Agreement.'
+      });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+
+    // Protect Super Admin email from developer collisions
+    if (normalizedEmail === ADMIN_EMAIL.toLowerCase()) {
+      return res.status(400).json({ error: 'This email is reserved for platform Super Admin.' });
+    }
+
+    const existing = await findDeveloperByIdOrEmail(normalizedEmail);
+    if (existing) {
+      return res.status(400).json({ error: 'A developer account already exists with this email. Please sign in.' });
+    }
+
+    const devId = `dev-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+    const passwordHash = crypto.createHash('sha256').update(password + 'zuzu_dev_salt_2026').digest('hex');
+    const nowIso = new Date().toISOString();
+    const ver = String(agreementsVersion || '2026-11-v1');
+
+    const newDev: DeveloperAccount = {
+      id: devId,
+      name: name.trim(),
+      email: normalizedEmail,
+      passwordHash,
+      ...(companyName.trim() ? { companyName: companyName.trim() } : {}),
+      status: 'active',
+      agreementsAccepted: true,
+      agreementsAcceptedAt: nowIso,
+      agreementsVersion: ver,
+      createdAt: nowIso
+    };
+
+    await persistDeveloper(newDev);
+
+    if (firestoreDb) {
+      try {
+        const accId = `agr-dev-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+        await setDoc(
+          doc(firestoreDb, 'agreements', accId),
+          cleanForFirestore({
+            id: accId,
+            role: 'developer',
+            version: ver,
+            developerId: devId,
+            email: normalizedEmail,
+            acceptedAt: nowIso
+          })
+        );
+      } catch (_) {}
+    }
+
+    const token = createDeveloperToken(devId, normalizedEmail);
+
+    return res.status(201).json({
+      success: true,
+      token,
+      developer: {
+        id: newDev.id,
+        name: newDev.name,
+        email: newDev.email,
+        companyName: newDev.companyName,
+        status: newDev.status,
+        agreementsAccepted: newDev.agreementsAccepted,
+        agreementsAcceptedAt: newDev.agreementsAcceptedAt,
+        agreementsVersion: newDev.agreementsVersion,
+        createdAt: newDev.createdAt
+      }
+    });
+  } catch (err: any) {
+    console.error('[Developer Register Error]:', err);
+    return res.status(500).json({ error: 'Unable to create developer account right now. Please try again.' });
+  }
 });
 
 // Developer login endpoint
 app.post('/api/developer/auth/login', async (req, res) => {
-  const { email, password } = req.body;
+  try {
+    const body = (req.body && typeof req.body === 'object' ? req.body : {}) as Record<string, any>;
+    const email = typeof body.email === 'string' ? body.email : '';
+    const password = typeof body.password === 'string' ? body.password : '';
 
-  if (!email || !password) {
-    return res.status(400).json({ error: 'Email and password are required.' });
-  }
-
-  const normalizedEmail = email.trim().toLowerCase();
-  const dev = await findDeveloperByIdOrEmail(normalizedEmail);
-
-  if (!dev) {
-    return res.status(401).json({ error: 'No developer account found with this email. Please create an account.' });
-  }
-
-  const passwordHash = crypto.createHash('sha256').update(password + 'zuzu_dev_salt_2026').digest('hex');
-  if (dev.passwordHash !== passwordHash) {
-    return res.status(401).json({ error: 'Incorrect developer password. Please try again.' });
-  }
-
-  const token = createDeveloperToken(dev.id, dev.email);
-
-  return res.json({
-    success: true,
-    token,
-    developer: {
-      id: dev.id,
-      name: dev.name,
-      email: dev.email,
-      companyName: dev.companyName,
-      status: dev.status || 'active',
-      banReason: dev.banReason,
-      bannedAt: dev.bannedAt,
-      agreementsAccepted: dev.agreementsAccepted,
-      agreementsAcceptedAt: dev.agreementsAcceptedAt,
-      agreementsVersion: dev.agreementsVersion,
-      createdAt: dev.createdAt
+    if (!email.trim() || !password) {
+      return res.status(400).json({ error: 'Email and password are required.' });
     }
-  });
+
+    const normalizedEmail = email.trim().toLowerCase();
+    const dev = await findDeveloperByIdOrEmail(normalizedEmail);
+
+    if (!dev) {
+      return res.status(401).json({ error: 'No developer account found with this email. Please create an account.' });
+    }
+
+    const passwordHash = crypto.createHash('sha256').update(password + 'zuzu_dev_salt_2026').digest('hex');
+    if (dev.passwordHash !== passwordHash) {
+      return res.status(401).json({ error: 'Incorrect developer password. Please try again.' });
+    }
+
+    const token = createDeveloperToken(dev.id, dev.email);
+
+    return res.json({
+      success: true,
+      token,
+      developer: {
+        id: dev.id,
+        name: dev.name,
+        email: dev.email,
+        companyName: dev.companyName,
+        status: dev.status || 'active',
+        banReason: dev.banReason,
+        bannedAt: dev.bannedAt,
+        agreementsAccepted: dev.agreementsAccepted,
+        agreementsAcceptedAt: dev.agreementsAcceptedAt,
+        agreementsVersion: dev.agreementsVersion,
+        createdAt: dev.createdAt
+      }
+    });
+  } catch (err: any) {
+    console.error('[Developer Login Error]:', err);
+    return res.status(500).json({ error: 'Unable to sign in as developer right now. Please try again.' });
+  }
 });
 
 // Check active session (Unified for Super Admin & Developer)
