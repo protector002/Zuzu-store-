@@ -9,17 +9,21 @@ import {
   UploadCloud,
   Smartphone,
   Layers,
-  ArrowRight
+  ArrowRight,
+  Share2
 } from 'lucide-react';
 import { StoreApp, AdminUser, Platform } from '../types';
 import { filterTvApps, getTvRelease } from '../utils/editionHelper';
+import { shareOrCopyAppLink } from '../utils/appLinks';
 
 interface TvPageProps {
   apps: StoreApp[];
+  allApps?: StoreApp[];
   admin: AdminUser | null;
   onDownloadApp: (appId: string, releaseId?: string) => Promise<void>;
   onSelectApp: (app: StoreApp) => void;
   onOpenQR: (app: StoreApp) => void;
+  onShareApp?: (app: StoreApp) => Promise<void> | void;
   onNavigateToUpload: () => void;
   onOpenGuide: (platform?: Platform) => void;
   onNavigateToPhoneStore?: () => void;
@@ -29,16 +33,30 @@ interface TvPageProps {
 
 export const TvPage: React.FC<TvPageProps> = ({
   apps,
+  allApps,
   admin,
   onDownloadApp,
   onSelectApp,
   onOpenQR,
+  onShareApp,
   onNavigateToUpload,
   onNavigateToPhoneStore,
   searchQuery,
   onClearSearch,
 }) => {
   const [downloadingTvId, setDownloadingTvId] = useState<string | null>(null);
+  const [copiedTvId, setCopiedTvId] = useState<string | null>(null);
+
+  const handleShareTvClick = async (e: React.MouseEvent, app: StoreApp) => {
+    e.stopPropagation();
+    if (onShareApp) {
+      await onShareApp(app);
+    } else {
+      await shareOrCopyAppLink(app, allApps || apps, 'tv');
+    }
+    setCopiedTvId(app.id);
+    setTimeout(() => setCopiedTvId((prev) => (prev === app.id ? null : prev)), 2000);
+  };
 
   // Strictly filter apps for Smart TV edition
   const tvApps = filterTvApps(apps);
@@ -194,18 +212,41 @@ export const TvPage: React.FC<TvPageProps> = ({
                 <div className="flex items-center gap-2 w-full">
                   <button
                     onClick={() => onOpenQR(featuredTvApp)}
-                    className="flex-1 px-4 py-2.5 rounded-xl bg-neutral-950 hover:bg-neutral-800 border border-neutral-800 text-xs font-semibold text-neutral-200 hover:text-white transition-colors flex items-center justify-center gap-2 cursor-pointer"
+                    className="flex-1 px-3 py-2.5 rounded-xl bg-neutral-950 hover:bg-neutral-800 border border-neutral-800 text-xs font-semibold text-neutral-200 hover:text-white transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
                     title="Scan QR Code on TV or Mobile"
                   >
                     <QrCode className="w-4 h-4 text-amber-400" />
-                    <span>TV QR Code</span>
+                    <span>TV QR</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={(e) => handleShareTvClick(e, featuredTvApp)}
+                    className={`flex-1 px-3 py-2.5 rounded-xl border text-xs font-semibold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                      copiedTvId === featuredTvApp.id
+                        ? 'bg-emerald-950/70 border-emerald-500/50 text-emerald-300'
+                        : 'bg-neutral-950 hover:bg-neutral-800 border-neutral-800 text-neutral-200 hover:text-white'
+                    }`}
+                    title="Copy direct Smart TV app link or share"
+                  >
+                    {copiedTvId === featuredTvApp.id ? (
+                      <>
+                        <Check className="w-4 h-4 text-emerald-400" />
+                        <span>Copied</span>
+                      </>
+                    ) : (
+                      <>
+                        <Share2 className="w-4 h-4 text-amber-400" />
+                        <span>Share</span>
+                      </>
+                    )}
                   </button>
 
                   <button
                     onClick={() => onSelectApp(featuredTvApp)}
-                    className="flex-1 px-4 py-2.5 rounded-xl bg-neutral-950 hover:bg-neutral-800 border border-neutral-800 text-xs font-semibold text-neutral-200 hover:text-white transition-colors flex items-center justify-center gap-2 cursor-pointer"
+                    className="flex-1 px-3 py-2.5 rounded-xl bg-neutral-950 hover:bg-neutral-800 border border-neutral-800 text-xs font-semibold text-neutral-200 hover:text-white transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
                   >
-                    <span>View Details</span>
+                    <span>Details</span>
                     <ArrowRight className="w-3.5 h-3.5 text-neutral-400" />
                   </button>
                 </div>
@@ -269,16 +310,36 @@ export const TvPage: React.FC<TvPageProps> = ({
                       </div>
 
                       <div className="flex items-center justify-between pt-3 border-t border-neutral-800/80">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onOpenQR(app);
-                          }}
-                          className="p-1.5 text-neutral-400 hover:text-white bg-neutral-800 rounded-lg cursor-pointer"
-                          title="Show TV QR"
-                        >
-                          <QrCode className="w-3.5 h-3.5 text-amber-400" />
-                        </button>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onOpenQR(app);
+                            }}
+                            className="p-1.5 text-neutral-400 hover:text-white bg-neutral-800 rounded-lg cursor-pointer"
+                            title="Show TV QR"
+                          >
+                            <QrCode className="w-3.5 h-3.5 text-amber-400" />
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={(e) => handleShareTvClick(e, app)}
+                            aria-label={`Copy share link for ${app.name}`}
+                            title={copiedTvId === app.id ? 'Link copied!' : `Copy direct link for ${app.name}`}
+                            className={`p-1.5 rounded-lg border transition-colors cursor-pointer ${
+                              copiedTvId === app.id
+                                ? 'bg-emerald-950/70 border-emerald-500/50 text-emerald-400'
+                                : 'text-neutral-400 hover:text-white bg-neutral-800 border-neutral-700/60 hover:bg-neutral-700'
+                            }`}
+                          >
+                            {copiedTvId === app.id ? (
+                              <Check className="w-3.5 h-3.5" />
+                            ) : (
+                              <Share2 className="w-3.5 h-3.5 text-amber-400" />
+                            )}
+                          </button>
+                        </div>
 
                         <button
                           onClick={(e) => {

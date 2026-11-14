@@ -19,14 +19,17 @@ import {
   Trash2,
   AlertTriangle,
   Smartphone,
-  Tv
+  Tv,
+  Share2
 } from 'lucide-react';
 import { StoreApp, AppRelease, Platform, AdminUser } from '../types';
 import { getPhoneRelease, getTvRelease, isTvApp, isPhoneApp } from '../utils/editionHelper';
 import { getCachedPurchaseToken } from '../services/api';
+import { shareOrCopyAppLink } from '../utils/appLinks';
 
 interface AppDetailViewProps {
   app: StoreApp;
+  allApps?: StoreApp[];
   admin?: AdminUser | null;
   initialPlatformPreference?: 'phone' | 'tv';
   onBack: () => void;
@@ -37,10 +40,12 @@ interface AppDetailViewProps {
   onPreviewScreenshot: (index: number) => void;
   onDeleteRelease?: (releaseId: string) => Promise<any>;
   onDeleteApp?: () => Promise<void>;
+  onShareApp?: (app: StoreApp, edition?: 'phone' | 'tv') => Promise<void> | void;
 }
 
 export const AppDetailView: React.FC<AppDetailViewProps> = ({
   app,
+  allApps = [],
   admin,
   initialPlatformPreference = 'phone',
   onBack,
@@ -51,11 +56,13 @@ export const AppDetailView: React.FC<AppDetailViewProps> = ({
   onPreviewScreenshot,
   onDeleteRelease,
   onDeleteApp,
+  onShareApp,
 }) => {
   const [downloadingRelId, setDownloadingRelId] = useState<string | null>(null);
   const [showAllVersions, setShowAllVersions] = useState(false);
   const [showReviewForm, setShowReviewForm] = useState(false);
   const [copiedChecksum, setCopiedChecksum] = useState(false);
+  const [copiedAppLink, setCopiedAppLink] = useState(false);
 
 
   // Deletion modal states
@@ -162,6 +169,20 @@ export const AppDetailView: React.FC<AppDetailViewProps> = ({
     navigator.clipboard.writeText(checksum);
     setCopiedChecksum(true);
     setTimeout(() => setCopiedChecksum(false), 2000);
+  };
+
+  const handleShareClick = async () => {
+    const activeEdition: 'phone' | 'tv' =
+      primaryRelease?.platform === 'Android TV' || primaryRelease?.platform === 'Fire TV'
+        ? 'tv'
+        : 'phone';
+    if (onShareApp) {
+      await onShareApp(app, activeEdition);
+    } else {
+      await shareOrCopyAppLink(app, allApps, activeEdition);
+    }
+    setCopiedAppLink(true);
+    setTimeout(() => setCopiedAppLink(false), 2200);
   };
 
   return (
@@ -313,6 +334,29 @@ export const AppDetailView: React.FC<AppDetailViewProps> = ({
               >
                 <QrCode className="w-4 h-4 text-amber-400" />
                 <span>Scan for Phone</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleShareClick}
+                className={`px-4 py-3.5 text-xs sm:text-sm font-semibold rounded-xl border transition-all flex items-center gap-2 cursor-pointer ${
+                  copiedAppLink
+                    ? 'bg-emerald-950/70 border-emerald-500/50 text-emerald-300'
+                    : 'bg-neutral-800 hover:bg-neutral-700 border-neutral-700/80 text-neutral-200 hover:text-white'
+                }`}
+                title="Copy direct app link or share to another user"
+              >
+                {copiedAppLink ? (
+                  <>
+                    <Check className="w-4 h-4 text-emerald-400" />
+                    <span>Link Copied</span>
+                  </>
+                ) : (
+                  <>
+                    <Share2 className="w-4 h-4 text-amber-400" />
+                    <span>Share Link</span>
+                  </>
+                )}
               </button>
 
               {gdWebUrl && (!(app.pricing && app.pricing.type === 'paid' && (app.pricing.price || 0) > 0) || Boolean(getCachedPurchaseToken(app.id))) && (

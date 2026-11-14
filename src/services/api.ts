@@ -176,6 +176,24 @@ export async function fetchApps(params?: { category?: string; search?: string; p
 }
 
 export async function fetchApp(idOrSlug: string): Promise<StoreApp> {
+  const doubleDashIdx = idOrSlug.lastIndexOf('--');
+  const candidateId = doubleDashIdx !== -1 ? idOrSlug.slice(doubleDashIdx + 2).trim() : idOrSlug;
+
+  // 1. Try Firestore cloud catalog first for freshest real-time approved state
+  try {
+    const cloudApps = await getAppsFromFirestore(false);
+    const matched = cloudApps.find(
+      (a) =>
+        a.id === candidateId ||
+        a.id === idOrSlug ||
+        (a.slug && a.slug.toLowerCase() === idOrSlug.toLowerCase())
+    );
+    if (matched) {
+      return matched;
+    }
+  } catch (_) {}
+
+  // 2. Fallback to backend API
   const res = await fetch(`/api/apps/${encodeURIComponent(idOrSlug)}`);
   if (!res.ok) {
     throw new Error('App not found in store');

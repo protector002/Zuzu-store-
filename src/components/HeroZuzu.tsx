@@ -1,11 +1,14 @@
 import React, { useState } from 'react';
-import { Download, QrCode, ShieldCheck, CheckCircle2, Smartphone, Laptop, HelpCircle, Tv, ArrowRight } from 'lucide-react';
+import { Download, QrCode, ShieldCheck, CheckCircle2, Smartphone, Laptop, HelpCircle, Tv, ArrowRight, Share2, Check } from 'lucide-react';
 import { StoreApp, Platform } from '../types';
+import { shareOrCopyAppLink } from '../utils/appLinks';
 
 interface HeroZuzuProps {
   app: StoreApp;
+  allApps?: StoreApp[];
   onDownload: (appId: string, releaseId?: string) => Promise<void>;
   onOpenQR: (app: StoreApp) => void;
+  onShareApp?: (app: StoreApp, edition?: 'phone' | 'tv') => Promise<void> | void;
   onOpenGuide: (platform: Platform) => void;
   onViewDetails: (app: StoreApp) => void;
   onPreviewScreenshot: (index: number) => void;
@@ -14,8 +17,10 @@ interface HeroZuzuProps {
 
 export const HeroZuzu: React.FC<HeroZuzuProps> = ({
   app,
+  allApps = [],
   onDownload,
   onOpenQR,
+  onShareApp,
   onOpenGuide,
   onViewDetails,
   onPreviewScreenshot,
@@ -24,6 +29,7 @@ export const HeroZuzu: React.FC<HeroZuzuProps> = ({
   const [selectedPlatform, setSelectedPlatform] = useState<Platform>('Android');
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadSuccess, setDownloadSuccess] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
 
   const matchingRelease = app.releases.find((r) => r.platform === selectedPlatform) || app.releases[0];
 
@@ -191,6 +197,39 @@ export const HeroZuzu: React.FC<HeroZuzuProps> = ({
               >
                 <QrCode className="w-4 h-4 text-amber-400" />
                 <span>Scan for Phone</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={async () => {
+                  const edition =
+                    selectedPlatform === 'Android TV' || selectedPlatform === 'Fire TV' ? 'tv' : 'phone';
+                  if (onShareApp) {
+                    await onShareApp(app, edition);
+                  } else {
+                    await shareOrCopyAppLink(app, allApps, edition);
+                  }
+                  setCopiedLink(true);
+                  setTimeout(() => setCopiedLink(false), 2200);
+                }}
+                className={`px-4 py-3.5 text-xs sm:text-sm font-medium border rounded-xl transition-all flex items-center gap-2 cursor-pointer ${
+                  copiedLink
+                    ? 'bg-emerald-950/70 border-emerald-500/50 text-emerald-300'
+                    : 'text-neutral-200 bg-neutral-900 hover:bg-neutral-800 border-neutral-800 hover:text-white'
+                }`}
+                title="Copy direct app link or share to another user"
+              >
+                {copiedLink ? (
+                  <>
+                    <Check className="w-4 h-4 text-emerald-400" />
+                    <span>Link Copied</span>
+                  </>
+                ) : (
+                  <>
+                    <Share2 className="w-4 h-4 text-amber-400" />
+                    <span>Share Link</span>
+                  </>
+                )}
               </button>
 
               <button

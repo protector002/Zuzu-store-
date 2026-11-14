@@ -16,16 +16,20 @@ import {
   Layers,
   ArrowRight,
   ShieldCheck,
-  Smartphone
+  Smartphone,
+  Share2
 } from 'lucide-react';
 import { StoreApp, AppCategory, Platform, AdminUser } from '../types';
 import { filterPhoneApps, getPhoneRelease } from '../utils/editionHelper';
+import { shareOrCopyAppLink } from '../utils/appLinks';
 
 interface AppCatalogProps {
   apps: StoreApp[];
+  allApps?: StoreApp[];
   onSelectApp: (app: StoreApp) => void;
   onQuickDownload: (app: StoreApp, releaseId?: string) => void;
   onOpenQR: (app: StoreApp) => void;
+  onShareApp?: (app: StoreApp) => Promise<void> | void;
   onOpenUpload: () => void;
   admin?: AdminUser | null;
   searchQuery?: string;
@@ -45,9 +49,11 @@ const CATEGORIES: ('All' | AppCategory | string)[] = [
 
 export const AppCatalog: React.FC<AppCatalogProps> = ({
   apps,
+  allApps,
   onSelectApp,
   onQuickDownload,
   onOpenQR,
+  onShareApp,
   onOpenUpload,
   admin,
   searchQuery,
@@ -58,6 +64,7 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [chartType, setChartType] = useState<'top-free' | 'trending' | 'top-rated'>('top-free');
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
 
   const activeSearch = searchQuery !== undefined ? searchQuery : internalSearch;
 
@@ -103,6 +110,17 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
     const phoneRel = getPhoneRelease(app);
     await onQuickDownload(app, phoneRel?.id);
     setTimeout(() => setDownloadingId(null), 3000);
+  };
+
+  const handleShareClick = async (e: React.MouseEvent, app: StoreApp) => {
+    e.stopPropagation();
+    if (onShareApp) {
+      await onShareApp(app);
+    } else {
+      await shareOrCopyAppLink(app, allApps || apps, 'phone');
+    }
+    setCopiedId(app.id);
+    setTimeout(() => setCopiedId((prev) => (prev === app.id ? null : prev)), 2000);
   };
 
   // Shelves computation for "For You" Play Store style
@@ -291,29 +309,44 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
                   </div>
                 </div>
 
-                {/* Direct Download Action Button */}
-                <button
-                  type="button"
-                  onClick={(e) => handleDownloadClick(e, app)}
-                  disabled={isCurrentlyDownloading}
-                  className={`mt-2.5 w-full py-1.5 px-2 rounded-xl text-[11px] font-bold text-neutral-950 transition-all flex items-center justify-center gap-1 shadow-xs active:scale-95 ${
-                    isCurrentlyDownloading
-                      ? 'bg-neutral-700 text-neutral-300'
-                      : 'bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400'
-                  }`}
-                >
-                  {isCurrentlyDownloading ? (
-                    <>
-                      <Check className="w-3 h-3 text-emerald-400" />
-                      <span>Downloading</span>
-                    </>
-                  ) : (
-                    <>
-                      <Download className="w-3 h-3" />
-                      <span>{isPaid ? 'Buy APK' : 'Get APK'}</span>
-                    </>
-                  )}
-                </button>
+                {/* Direct Download & Share Action Row */}
+                <div className="mt-2.5 flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={(e) => handleDownloadClick(e, app)}
+                    disabled={isCurrentlyDownloading}
+                    className={`flex-1 py-1.5 px-2 rounded-xl text-[11px] font-bold text-neutral-950 transition-all flex items-center justify-center gap-1 shadow-xs active:scale-95 ${
+                      isCurrentlyDownloading
+                        ? 'bg-neutral-700 text-neutral-300'
+                        : 'bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400'
+                    }`}
+                  >
+                    {isCurrentlyDownloading ? (
+                      <>
+                        <Check className="w-3 h-3 text-emerald-400" />
+                        <span>Downloading</span>
+                      </>
+                    ) : (
+                      <>
+                        <Download className="w-3 h-3" />
+                        <span>{isPaid ? 'Buy APK' : 'Get APK'}</span>
+                      </>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => handleShareClick(e, app)}
+                    aria-label={`Copy share link for ${app.name}`}
+                    title={copiedId === app.id ? 'Link copied!' : `Copy direct link for ${app.name}`}
+                    className={`p-1.5 rounded-xl border transition-all shrink-0 cursor-pointer ${
+                      copiedId === app.id
+                        ? 'bg-emerald-950/70 border-emerald-500/50 text-emerald-400'
+                        : 'bg-neutral-800 hover:bg-neutral-700 border-neutral-700/80 text-neutral-300 hover:text-white'
+                    }`}
+                  >
+                    {copiedId === app.id ? <Check className="w-3.5 h-3.5" /> : <Share2 className="w-3.5 h-3.5 text-amber-400" />}
+                  </button>
+                </div>
               </div>
             );
           })}
@@ -482,19 +515,34 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
                       </div>
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={(e) => handleDownloadClick(e, app)}
-                      disabled={isCurrentlyDownloading}
-                      className={`mt-2.5 w-full py-1.5 px-2 rounded-xl text-[11px] font-bold text-neutral-950 transition-all flex items-center justify-center gap-1 ${
-                        isCurrentlyDownloading
-                          ? 'bg-neutral-700 text-neutral-300'
-                          : 'bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400'
-                      }`}
-                    >
-                      <Download className="w-3 h-3" />
-                      <span>{isCurrentlyDownloading ? 'Downloading' : (isPaid ? 'Buy APK' : 'Get APK')}</span>
-                    </button>
+                    <div className="mt-2.5 flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={(e) => handleDownloadClick(e, app)}
+                        disabled={isCurrentlyDownloading}
+                        className={`flex-1 py-1.5 px-2 rounded-xl text-[11px] font-bold text-neutral-950 transition-all flex items-center justify-center gap-1 ${
+                          isCurrentlyDownloading
+                            ? 'bg-neutral-700 text-neutral-300'
+                            : 'bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400'
+                        }`}
+                      >
+                        <Download className="w-3 h-3" />
+                        <span>{isCurrentlyDownloading ? 'Downloading' : (isPaid ? 'Buy APK' : 'Get APK')}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => handleShareClick(e, app)}
+                        aria-label={`Copy share link for ${app.name}`}
+                        title={copiedId === app.id ? 'Link copied!' : `Copy direct link for ${app.name}`}
+                        className={`p-1.5 rounded-xl border transition-all shrink-0 cursor-pointer ${
+                          copiedId === app.id
+                            ? 'bg-emerald-950/70 border-emerald-500/50 text-emerald-400'
+                            : 'bg-neutral-800 hover:bg-neutral-700 border-neutral-700/80 text-neutral-300 hover:text-white'
+                        }`}
+                      >
+                        {copiedId === app.id ? <Check className="w-3.5 h-3.5" /> : <Share2 className="w-3.5 h-3.5 text-amber-400" />}
+                      </button>
+                    </div>
                   </div>
                 );
               })}
@@ -585,28 +633,43 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
                             </div>
                           </div>
 
-                          <button
-                            type="button"
-                            onClick={(e) => handleDownloadClick(e, app)}
-                            disabled={isCurrentlyDownloading}
-                            className={`mt-2.5 w-full py-1.5 px-2 rounded-xl text-[11px] font-bold text-neutral-950 transition-all flex items-center justify-center gap-1 shadow-xs active:scale-95 ${
-                              isCurrentlyDownloading
-                                ? 'bg-neutral-700 text-neutral-300'
-                                : 'bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400'
-                            }`}
-                          >
-                            {isCurrentlyDownloading ? (
-                              <>
-                                <Check className="w-3 h-3 text-emerald-400" />
-                                <span>Downloading</span>
-                              </>
-                            ) : (
-                              <>
-                                <Download className="w-3 h-3" />
-                                <span>{isPaid ? 'Buy APK' : 'Get APK'}</span>
-                              </>
-                            )}
-                          </button>
+                          <div className="mt-2.5 flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={(e) => handleDownloadClick(e, app)}
+                              disabled={isCurrentlyDownloading}
+                              className={`flex-1 py-1.5 px-2 rounded-xl text-[11px] font-bold text-neutral-950 transition-all flex items-center justify-center gap-1 shadow-xs active:scale-95 ${
+                                isCurrentlyDownloading
+                                  ? 'bg-neutral-700 text-neutral-300'
+                                  : 'bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400'
+                              }`}
+                            >
+                              {isCurrentlyDownloading ? (
+                                <>
+                                  <Check className="w-3 h-3 text-emerald-400" />
+                                  <span>Downloading</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Download className="w-3 h-3" />
+                                  <span>{isPaid ? 'Buy APK' : 'Get APK'}</span>
+                                </>
+                              )}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => handleShareClick(e, app)}
+                              aria-label={`Copy share link for ${app.name}`}
+                              title={copiedId === app.id ? 'Link copied!' : `Copy direct link for ${app.name}`}
+                              className={`p-1.5 rounded-xl border transition-all shrink-0 cursor-pointer ${
+                                copiedId === app.id
+                                  ? 'bg-emerald-950/70 border-emerald-500/50 text-emerald-400'
+                                  : 'bg-neutral-800 hover:bg-neutral-700 border-neutral-700/80 text-neutral-300 hover:text-white'
+                              }`}
+                            >
+                              {copiedId === app.id ? <Check className="w-3.5 h-3.5" /> : <Share2 className="w-3.5 h-3.5 text-amber-400" />}
+                            </button>
+                          </div>
                         </div>
                       );
                     })}
@@ -801,8 +864,21 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
                         </div>
                       </div>
 
-                      {/* Right Action: Download Button */}
+                      {/* Right Action: Share + QR + Download Button */}
                       <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={(e) => handleShareClick(e, app)}
+                          aria-label={`Copy share link for ${app.name}`}
+                          className={`p-1.5 rounded-lg border transition-colors cursor-pointer ${
+                            copiedId === app.id
+                              ? 'bg-emerald-950/70 border-emerald-500/50 text-emerald-400'
+                              : 'text-neutral-400 hover:text-white bg-neutral-800 border-neutral-700/60 hover:bg-neutral-700'
+                          }`}
+                          title={copiedId === app.id ? 'Link copied!' : `Copy direct link for ${app.name}`}
+                        >
+                          {copiedId === app.id ? <Check className="w-3.5 h-3.5" /> : <Share2 className="w-3.5 h-3.5 text-amber-400" />}
+                        </button>
                         <button
                           type="button"
                           onClick={(e) => {
@@ -910,19 +986,34 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
                         </div>
                       </div>
 
-                      <button
-                        type="button"
-                        onClick={(e) => handleDownloadClick(e, app)}
-                        disabled={isCurrentlyDownloading}
-                        className={`mt-2.5 w-full py-1.5 px-2 rounded-xl text-[11px] font-bold text-neutral-950 transition-all flex items-center justify-center gap-1 ${
-                          isCurrentlyDownloading
-                            ? 'bg-neutral-700 text-neutral-300'
-                            : 'bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400'
-                        }`}
-                      >
-                        <Download className="w-3 h-3" />
-                        <span>{isCurrentlyDownloading ? 'Downloading' : (isPaid ? 'Buy APK' : 'Get APK')}</span>
-                      </button>
+                      <div className="mt-2.5 flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={(e) => handleDownloadClick(e, app)}
+                          disabled={isCurrentlyDownloading}
+                          className={`flex-1 py-1.5 px-2 rounded-xl text-[11px] font-bold text-neutral-950 transition-all flex items-center justify-center gap-1 ${
+                            isCurrentlyDownloading
+                              ? 'bg-neutral-700 text-neutral-300'
+                              : 'bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400'
+                          }`}
+                        >
+                          <Download className="w-3 h-3" />
+                          <span>{isCurrentlyDownloading ? 'Downloading' : (isPaid ? 'Buy APK' : 'Get APK')}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => handleShareClick(e, app)}
+                          aria-label={`Copy share link for ${app.name}`}
+                          title={copiedId === app.id ? 'Link copied!' : `Copy direct link for ${app.name}`}
+                          className={`p-1.5 rounded-xl border transition-all shrink-0 cursor-pointer ${
+                            copiedId === app.id
+                              ? 'bg-emerald-950/70 border-emerald-500/50 text-emerald-400'
+                              : 'bg-neutral-800 hover:bg-neutral-700 border-neutral-700/80 text-neutral-300 hover:text-white'
+                          }`}
+                        >
+                          {copiedId === app.id ? <Check className="w-3.5 h-3.5" /> : <Share2 className="w-3.5 h-3.5 text-amber-400" />}
+                        </button>
+                      </div>
                     </div>
                   );
                 })}

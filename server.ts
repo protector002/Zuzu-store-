@@ -1648,11 +1648,50 @@ app.get('/api/apps', (req, res) => {
   return res.json(filtered);
 });
 
+function toServerUrlSlug(input: string): string {
+  return String(input || '')
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .replace(/-{2,}/g, '-');
+}
+
+function resolveServerAppByIdentifier(identifier: string, apps: any[]): any | undefined {
+  const raw = String(identifier || '').trim();
+  if (!raw) return undefined;
+  const lower = raw.toLowerCase();
+
+  const doubleDashIdx = raw.lastIndexOf('--');
+  if (doubleDashIdx !== -1) {
+    const idPart = raw.slice(doubleDashIdx + 2).trim();
+    const bySuffix = apps.find((a) => a.id === idPart);
+    if (bySuffix) return bySuffix;
+  }
+
+  const byId = apps.find((a) => a.id === raw || String(a.id || '').toLowerCase() === lower);
+  if (byId) return byId;
+
+  const byExactSlug = apps.find((a) => a.slug && String(a.slug).trim().toLowerCase() === lower);
+  if (byExactSlug) return byExactSlug;
+
+  const normTarget = toServerUrlSlug(raw);
+  if (normTarget) {
+    return apps.find(
+      (a) =>
+        toServerUrlSlug(a.slug || '') === normTarget ||
+        toServerUrlSlug(a.name || '') === normTarget
+    );
+  }
+  return undefined;
+}
+
 // Get single app by slug or ID (Public)
 app.get('/api/apps/:id', (req, res) => {
   const { id } = req.params;
   const apps = getApps();
-  const appItem = apps.find((a) => a.id === id || a.slug === id);
+  const appItem = resolveServerAppByIdentifier(id, apps);
 
   if (!appItem) {
     return res.status(404).json({ error: 'App not found in store.' });
@@ -5366,14 +5405,89 @@ app.post('/api/webhooks/livepay', async (req, res) => {
   }
 });
 
-// Frontend Admin direct route handler (supports visiting /admin, /login, /publisher directly)
-app.get(['/admin', '/admin/*', '/login', '/publisher'], (req, res, next) => {
+function escapeHtmlAttr(val: string): string {
+  return String(val || '')
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function injectAppShareMeta(html: string, req: express.Request, slugOrId?: string): string {
+  if (!slugOrId) return html;
+  const apps = getApps().filter(
+    (a) => !a.isTakenDown && (a.approvalStatus === 'approved' || !a.approvalStatus)
+  );
+  const appItem = resolveServerAppByIdentifier(slugOrId, apps);
+  if (!appItem) return html;
+
+  const proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'https').split(',')[0].trim();
+  const host = String(req.headers['x-forwarded-host'] || req.get('host') || '');
+  const origin = host ? `${proto}://${host}` : '';
+  const priceLabel =
+    appItem.pricing && appItem.pricing.type === 'paid' && (appItem.pricing.price || 0) > 0
+      ? ` • ${Number(appItem.pricing.price).toLocaleString()} ${appItem.pricing.currency || 'UGX'}`
+      : ' • Free APK';
+  const title = escapeHtmlAttr(`${appItem.name} (v${appItem.currentVersion || '1.0.0'})${priceLabel} — ZuzuStore`);
+  const desc = escapeHtmlAttr(
+    appItem.tagline ||
+      (appItem.description ? String(appItem.description).slice(0, 160) : '') ||
+      `Download ${appItem.name} APK directly on ZuzuStore by Protector Technologies.`
+  );
+  const rawIcon = String(appItem.iconUrl || appItem.heroImageUrl || '/zuzustore-logo.png');
+  const ogImage = escapeHtmlAttr(
+    rawIcon.startsWith('http://') || rawIcon.startsWith('https://') || !origin
+      ? rawIcon
+      : `${origin}${rawIcon.startsWith('/') ? rawIcon : `/${rawIcon}`}`
+  );
+  const ogUrl = escapeHtmlAttr(`${origin}${req.originalUrl}`);
+
+  return html
+    .replace(/<title>[\s\S]*?<\/title>/i, `<title>${title}</title>`)
+    .replace(
+      /<meta\s+name="description"\s+content="[^"]*"\s*\/?>/i,
+      `<meta name="description" content="${desc}" />`
+    )
+    .replace(
+      /<meta\s+property="og:title"\s+content="[^"]*"\s*\/?>/i,
+      `<meta property="og:title" content="${title}" />`
+    )
+    .replace(
+      /<meta\s+property="og:description"\s+content="[^"]*"\s*\/?>/i,
+      `<meta property="og:description" content="${desc}" />`
+    )
+    .replace(
+      /<meta\s+property="og:image"\s+content="[^"]*"\s*\/?>/i,
+      `<meta property="og:image" content="${ogImage}" />`
+    )
+    .replace(
+      /<\/head>/i,
+      `  <meta property="og:url" content="${ogUrl}" />\n  </head>`
+    );
+}
+
+// Frontend Admin & Storefront direct route handler (supports /admin, /login, /publisher, /tv, /app/:slug)
+app.get(['/admin', '/admin/*', '/login', '/publisher', '/tv'], (req, res, next) => {
   const distPath = path.resolve(process.cwd(), 'dist');
   const indexHtml = path.resolve(distPath, 'index.html');
   if (fs.existsSync(indexHtml)) {
     return res.sendFile(indexHtml);
   }
-  return res.redirect('/#admin');
+  return next();
+});
+
+app.get('/app/:slug', (req, res, next) => {
+  const distPath = path.resolve(process.cwd(), 'dist');
+  const indexHtml = path.resolve(distPath, 'index.html');
+  if (process.env.NODE_ENV === 'production' && fs.existsSync(indexHtml)) {
+    try {
+      const rawHtml = fs.readFileSync(indexHtml, 'utf-8');
+      return res.status(200).set({ 'Content-Type': 'text/html' }).send(injectAppShareMeta(rawHtml, req, req.params.slug));
+    } catch (_) {
+      return res.sendFile(indexHtml);
+    }
+  }
+  return next();
 });
 
 // Global error handling middleware (handles payload too large and Multer errors)
@@ -5401,6 +5515,20 @@ async function startServer() {
       server: { middlewareMode: true },
       appType: 'spa'
     });
+
+    // Inject dynamic OpenGraph meta tags for shared /app/:slug links in dev mode
+    app.get('/app/:slug', async (req, res, next) => {
+      try {
+        const templatePath = path.resolve(process.cwd(), 'index.html');
+        let template = fs.readFileSync(templatePath, 'utf-8');
+        template = injectAppShareMeta(template, req, req.params.slug);
+        const html = await vite.transformIndexHtml(req.originalUrl, template);
+        return res.status(200).set({ 'Content-Type': 'text/html' }).end(html);
+      } catch (e) {
+        return next(e);
+      }
+    });
+
     app.use(vite.middlewares);
   } else {
     const distPath = path.resolve(process.cwd(), 'dist');

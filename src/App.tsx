@@ -17,6 +17,7 @@ import { TvPage } from './components/TvPage';
 import { Footer } from './components/Footer';
 import {
   fetchApps,
+  fetchApp,
   getDownloadUrl,
   recordDownload,
   checkAdminSession,
@@ -47,24 +48,40 @@ import {
 } from './components/LegalAgreementsModal';
 import { StoreApp, AppRelease, Platform, AdminUser, DeveloperUser, DownloadProgressState, AdminBroadcast } from './types';
 import { getApkBlob, deleteApkBlob } from './utils/fileStorage';
-import { filterPhoneApps, filterTvApps, getPhoneRelease, getTvRelease } from './utils/editionHelper';
+import { filterPhoneApps, filterTvApps, getPhoneRelease, getTvRelease, isTvApp } from './utils/editionHelper';
+import {
+  parseAppRouteFromLocation,
+  findAppByRouteIdentifier,
+  getAppPath,
+  shareOrCopyAppLink,
+  updateDocumentAppMeta
+} from './utils/appLinks';
 import { CheckCircle2, ArrowRight, Megaphone } from 'lucide-react';
 
 
 
 export default function App() {
+  const initialRoute = parseAppRouteFromLocation();
+
   const [apps, setApps] = useState<StoreApp[]>([]);
   const [purchasingApp, setPurchasingApp] = useState<StoreApp | null>(null);
   const [loading, setLoading] = useState(true);
-  const [currentView, setCurrentView] = useState<'store' | 'upload' | 'detail' | 'tv' | 'developer_console'>('store');
+  const [currentView, setCurrentView] = useState<'store' | 'upload' | 'detail' | 'tv' | 'developer_console'>(() =>
+    initialRoute.isTvHub ? 'tv' : 'store'
+  );
   const [publisherTab, setPublisherTab] = useState<'upload-new' | 'update-existing' | 'manage' | 'submissions' | 'god-mode'>('upload-new');
   const [publisherTabKey, setPublisherTabKey] = useState(0);
-  const [detailSourceView, setDetailSourceView] = useState<'store' | 'tv'>('store');
+  const [detailSourceView, setDetailSourceView] = useState<'store' | 'tv'>(() =>
+    initialRoute.edition === 'tv' ? 'tv' : 'store'
+  );
+  const [detailEditionOverride, setDetailEditionOverride] = useState<'phone' | 'tv' | undefined>(
+    initialRoute.edition
+  );
   const [selectedApp, setSelectedApp] = useState<StoreApp | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Opening Logo Splash Screen
-  const [showSplash, setShowSplash] = useState(true);
+  // Opening Logo Splash Screen (bypass automatically when opening a direct shared /app/:slug link for instant arrival)
+  const [showSplash, setShowSplash] = useState<boolean>(() => !initialRoute.appIdentifier);
 
   // Admin state
   const [admin, setAdmin] = useState<AdminUser | null>(null);
@@ -147,18 +164,125 @@ export default function App() {
   };
 
 
-  // Load apps and check admin session on mount
+  const appsRef = useRef<StoreApp[]>([]);
+  useEffect(() => {
+    appsRef.current = apps;
+  }, [apps]);
+
+  const navigateToApp = (
+    app: StoreApp,
+    sourceView?: 'store' | 'tv',
+    editionOverride?: 'phone' | 'tv',
+    skipHistoryPush = false
+  ) => {
+    const resolvedSource: 'store' | 'tv' =
+      sourceView || (currentView === 'tv' ? 'tv' : 'store');
+    const resolvedEdition: 'phone' | 'tv' =
+      editionOverride ||
+      (resolvedSource === 'tv' || (isTvApp(app) && !getPhoneRelease(app)) ? 'tv' : 'phone');
+
+    setSelectedApp(app);
+    setDetailSourceView(resolvedSource);
+    setDetailEditionOverride(resolvedEdition);
+    setCurrentView('detail');
+    updateDocumentAppMeta(app, appsRef.current.length ? appsRef.current : [app], resolvedEdition);
+
+    if (!skipHistoryPush && typeof window !== 'undefined') {
+      const targetPath = getAppPath(app, appsRef.current.length ? appsRef.current : [app], resolvedEdition);
+      const currentPath = `${window.location.pathname}${window.location.search}`;
+      if (currentPath !== targetPath) {
+        window.history.pushState(
+          { view: 'detail', appId: app.id, edition: resolvedEdition },
+          '',
+          targetPath
+        );
+      }
+    }
+
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const navigateToView = (
+    view: 'store' | 'upload' | 'detail' | 'tv' | 'developer_console',
+    skipHistoryPush = false
+  ) => {
+    setCurrentView(view);
+    if (view !== 'detail') {
+      updateDocumentAppMeta(null);
+    }
+
+    if (!skipHistoryPush && typeof window !== 'undefined' && (view === 'store' || view === 'tv')) {
+      const targetPath = view === 'tv' ? '/tv' : '/';
+      const currentPath = `${window.location.pathname}${window.location.search}`;
+      if (currentPath !== targetPath) {
+        window.history.pushState({ view }, '', targetPath);
+      }
+    }
+
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleShareApp = async (app: StoreApp, edition?: 'phone' | 'tv') => {
+    const resolvedEdition: 'phone' | 'tv' =
+      edition || (isTvApp(app) && !getPhoneRelease(app) ? 'tv' : 'phone');
+    const result = await shareOrCopyAppLink(app, appsRef.current.length ? appsRef.current : apps, resolvedEdition);
+    if (result.copied) {
+      showToast(`Link copied for ${app.name}! Ready to share.`);
+    } else {
+      showToast(`Share link ready: ${result.url}`);
+    }
+  };
+
+  // Load apps and resolve any active /app/:slug deep link
   const loadApps = async () => {
     try {
       const rawData = await fetchApps();
-      const data = Array.from(
+      let data = Array.from(
         rawData.reduce((map, app) => {
           if (app && app.id) map.set(app.id, app);
           return map;
         }, new Map<string, StoreApp>()).values()
       );
+
+      const route = parseAppRouteFromLocation();
+      let matchedDeepLinkApp: StoreApp | null = null;
+
+      if (route.appIdentifier) {
+        matchedDeepLinkApp = findAppByRouteIdentifier(route.appIdentifier, data, route.edition);
+        if (!matchedDeepLinkApp) {
+          try {
+            const remoteApp = await fetchApp(route.appIdentifier);
+            if (remoteApp && remoteApp.id) {
+              matchedDeepLinkApp = remoteApp;
+              data = [...data, remoteApp];
+            }
+          } catch (_) {
+            matchedDeepLinkApp = null;
+          }
+        }
+      }
+
       setApps(data);
-      if (data.length > 0) {
+
+      if (route.appIdentifier) {
+        if (matchedDeepLinkApp) {
+          const resolvedEdition: 'phone' | 'tv' =
+            route.edition ||
+            (isTvApp(matchedDeepLinkApp) && !getPhoneRelease(matchedDeepLinkApp) ? 'tv' : 'phone');
+          setSelectedApp(matchedDeepLinkApp);
+          setDetailEditionOverride(resolvedEdition);
+          setDetailSourceView(resolvedEdition === 'tv' ? 'tv' : 'store');
+          setCurrentView('detail');
+          updateDocumentAppMeta(matchedDeepLinkApp, data, resolvedEdition);
+        } else {
+          if (typeof window !== 'undefined') {
+            window.history.replaceState({ view: 'store' }, '', '/');
+          }
+          setCurrentView('store');
+          updateDocumentAppMeta(null);
+          showToast('Shared app link could not be found. Showing all apps.');
+        }
+      } else if (data.length > 0) {
         setSelectedApp((prev) => (prev ? data.find((a) => a.id === prev.id) || data[0] : data[0]));
       } else {
         setSelectedApp(null);
@@ -223,9 +347,9 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [admin]);
 
-  // URL pathname (/admin, /login, /publisher), hash (#admin), and query param (?admin) listener
+  // URL pathname (/app/:slug, /tv, /admin, /login, /publisher), hash (#admin), and query param (?admin) listener
   useEffect(() => {
-    const handleUrlTrigger = () => {
+    const handleUrlTrigger = async () => {
       const pathname = window.location.pathname.toLowerCase().replace(/\/+$/, '');
       const hash = window.location.hash.toLowerCase();
       const params = new URLSearchParams(window.location.search);
@@ -246,6 +370,30 @@ export default function App() {
 
       if (isPathAdmin || isHashOrQueryAdmin) {
         handleOpenSecretAdmin();
+        return;
+      }
+
+      const route = parseAppRouteFromLocation();
+      if (route.appIdentifier) {
+        const list = appsRef.current;
+        let target = findAppByRouteIdentifier(route.appIdentifier, list, route.edition);
+        if (!target) {
+          try {
+            target = await fetchApp(route.appIdentifier);
+          } catch (_) {
+            target = null;
+          }
+        }
+        if (target) {
+          const resolvedEdition: 'phone' | 'tv' =
+            route.edition || (isTvApp(target) && !getPhoneRelease(target) ? 'tv' : 'phone');
+          navigateToApp(target, resolvedEdition === 'tv' ? 'tv' : 'store', resolvedEdition, true);
+        }
+      } else if (route.isTvHub) {
+        navigateToView('tv', true);
+      } else if (pathname === '' || pathname === '/') {
+        setCurrentView((prev) => (prev === 'detail' || prev === 'tv' ? 'store' : prev));
+        updateDocumentAppMeta(null);
       }
     };
 
@@ -720,8 +868,7 @@ export default function App() {
             setPublisherTab('upload-new');
             setPublisherTabKey((k) => k + 1);
           }
-          setCurrentView(view);
-          window.scrollTo({ top: 0, behavior: 'smooth' });
+          navigateToView(view);
         }}
         isGodModeActive={currentView === 'upload' && publisherTab === 'god-mode'}
         onOpenGodMode={() => {
@@ -731,8 +878,7 @@ export default function App() {
           }
           setPublisherTab('god-mode');
           setPublisherTabKey((k) => k + 1);
-          setCurrentView('upload');
-          window.scrollTo({ top: 0, behavior: 'smooth' });
+          navigateToView('upload');
         }}
         onOpenInstallGuide={() => openGuideModal('Android')}
         onQuickDownload={
@@ -746,8 +892,7 @@ export default function App() {
         developer={developer}
         onOpenDeveloperPortal={() => {
           if (developer) {
-            setCurrentView('developer_console');
-            window.scrollTo({ top: 0, behavior: 'smooth' });
+            navigateToView('developer_console');
           } else {
             setIsDevAuthModalOpen(true);
           }
@@ -759,15 +904,12 @@ export default function App() {
         onSearchChange={(q) => {
           setSearchQuery(q);
           if (q && currentView !== 'store' && currentView !== 'tv') {
-            setCurrentView('store');
+            navigateToView('store');
           }
         }}
         apps={apps}
         onSelectApp={(app) => {
-          setSelectedApp(app);
-          setDetailSourceView(currentView === 'tv' ? 'tv' : 'store');
-          setCurrentView('detail');
-          window.scrollTo({ top: 0, behavior: 'smooth' });
+          navigateToApp(app, currentView === 'tv' ? 'tv' : 'store');
         }}
       />
 
@@ -843,19 +985,17 @@ export default function App() {
                 {featuredPhoneApp ? (
                   <HeroZuzu
                     app={featuredPhoneApp}
+                    allApps={apps}
                     onDownload={(appId, relId) => handleDownload(appId, relId || getPhoneRelease(featuredPhoneApp)?.id)}
                     onOpenQR={(app) => openQRModal(app, getPhoneRelease(app))}
+                    onShareApp={(app, ed) => handleShareApp(app, ed)}
                     onOpenGuide={(plat) => openGuideModal(plat)}
                     onViewDetails={(app) => {
-                      setSelectedApp(app);
-                      setDetailSourceView('store');
-                      setCurrentView('detail');
-                      window.scrollTo({ top: 0, behavior: 'smooth' });
+                      navigateToApp(app, 'store', 'phone');
                     }}
                     onPreviewScreenshot={(idx) => openScreenshotPreview(featuredPhoneApp, idx)}
                     onNavigateToTv={() => {
-                      setCurrentView('tv');
-                      window.scrollTo({ top: 0, behavior: 'smooth' });
+                      navigateToView('tv');
                     }}
                   />
                 ) : (
@@ -865,18 +1005,16 @@ export default function App() {
                     developer={developer}
                     onOpenDeveloperPortal={() => {
                       if (developer) {
-                        setCurrentView('developer_console');
-                        window.scrollTo({ top: 0, behavior: 'smooth' });
+                        navigateToView('developer_console');
                       } else {
                         setIsDevAuthModalOpen(true);
                       }
                     }}
                     onOpenLoginModal={() => setIsLoginModalOpen(true)}
-                    onNavigateToUpload={() => setCurrentView('upload')}
+                    onNavigateToUpload={() => navigateToView('upload')}
                     onOpenGuide={() => openGuideModal('Android')}
                     onNavigateToTv={() => {
-                      setCurrentView('tv');
-                      window.scrollTo({ top: 0, behavior: 'smooth' });
+                      navigateToView('tv');
                     }}
                     totalDownloads={totalDownloads}
                     totalApps={phoneApps.length}
@@ -886,26 +1024,24 @@ export default function App() {
                 {/* Android Phone App Catalog & Browse Grid */}
                 <AppCatalog
                   apps={phoneApps}
+                  allApps={apps}
                   admin={admin}
                   searchQuery={searchQuery}
                   onSearchChange={setSearchQuery}
                   onSelectApp={(app) => {
-                    setSelectedApp(app);
-                    setDetailSourceView('store');
-                    setCurrentView('detail');
-                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                    navigateToApp(app, 'store', 'phone');
                   }}
                   onQuickDownload={(app, relId) => {
                     const rel = relId ? { id: relId } : getPhoneRelease(app);
                     handleDownload(app.id, rel?.id);
                   }}
                   onOpenQR={(app) => openQRModal(app, getPhoneRelease(app))}
+                  onShareApp={(app) => handleShareApp(app, 'phone')}
                   onOpenUpload={() => {
                     if (!admin) {
                       handleOpenSecretAdmin();
                     } else {
-                      setCurrentView('upload');
-                      window.scrollTo({ top: 0, behavior: 'smooth' });
+                      navigateToView('upload');
                     }
                   }}
                 />
@@ -915,14 +1051,15 @@ export default function App() {
             {currentView === 'detail' && selectedApp && (
               <AppDetailView
                 app={selectedApp}
+                allApps={apps}
                 admin={admin}
-                initialPlatformPreference={detailSourceView === 'tv' ? 'tv' : 'phone'}
+                initialPlatformPreference={detailEditionOverride || (detailSourceView === 'tv' ? 'tv' : 'phone')}
                 onBack={() => {
-                  setCurrentView(detailSourceView);
-                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                  navigateToView(detailSourceView);
                 }}
                 onDownloadRelease={handleDownload}
                 onOpenQR={(app, rel) => openQRModal(app, rel)}
+                onShareApp={(app, ed) => handleShareApp(app, ed)}
                 onOpenGuide={(plat) => openGuideModal(plat)}
                 onAddReview={handleAddReview}
                 onPreviewScreenshot={(idx) => openScreenshotPreview(selectedApp, idx)}
@@ -935,29 +1072,26 @@ export default function App() {
             {currentView === 'tv' && (
               <TvPage
                 apps={tvApps}
+                allApps={apps}
                 admin={admin}
                 searchQuery={searchQuery}
                 onClearSearch={() => setSearchQuery('')}
                 onDownloadApp={handleDownload}
                 onSelectApp={(app) => {
-                  setSelectedApp(app);
-                  setDetailSourceView('tv');
-                  setCurrentView('detail');
-                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                  navigateToApp(app, 'tv', 'tv');
                 }}
                 onOpenQR={(app) => openQRModal(app, getTvRelease(app))}
+                onShareApp={(app) => handleShareApp(app, 'tv')}
                 onNavigateToUpload={() => {
                   if (!admin) {
                     handleOpenSecretAdmin();
                   } else {
-                    setCurrentView('upload');
-                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                    navigateToView('upload');
                   }
                 }}
                 onOpenGuide={(plat) => openGuideModal(plat || 'Android')}
                 onNavigateToPhoneStore={() => {
-                  setCurrentView('store');
-                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                  navigateToView('store');
                 }}
               />
             )}
@@ -977,9 +1111,7 @@ export default function App() {
                 onDeleteApp={handleDeleteApp}
                 onResetCatalog={handleResetCatalog}
                 onViewAppInStore={(app) => {
-                  setSelectedApp(app);
-                  setCurrentView('detail');
-                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                  navigateToApp(app, 'store');
                 }}
                 onDownloadTest={(appId, relId, appObj) => handleDownload(appId, relId, appObj, true)}
                 onAppApproved={(app) => {
@@ -995,12 +1127,11 @@ export default function App() {
                 developer={developer}
                 onLogout={() => {
                   setDeveloper(null);
-                  setCurrentView('store');
+                  navigateToView('store');
                   showToast('Signed out of Developer Console.');
                 }}
                 onBackToStore={() => {
-                  setCurrentView('store');
-                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                  navigateToView('store');
                 }}
                 onDeveloperUpdated={(updatedDev) => {
                   setDeveloper(updatedDev);
@@ -1020,8 +1151,7 @@ export default function App() {
             handleOpenSecretAdmin();
             return;
           }
-          setCurrentView(view);
-          window.scrollTo({ top: 0, behavior: 'smooth' });
+          navigateToView(view);
         }}
         onOpenGuide={() => openGuideModal('Android')}
         appsCount={apps.length}
