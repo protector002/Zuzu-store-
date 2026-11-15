@@ -14,7 +14,8 @@ import {
   EmailLogEntry,
   SmtpStatusInfo,
   DeveloperNotification,
-  BuyerReceipt
+  BuyerReceipt,
+  AnalyticsDashboardData
 } from '../types';
 import {
   getAppsFromFirestore,
@@ -2340,4 +2341,46 @@ export async function fetchBuyerReceipt(saleId: string, token: string): Promise<
   }
   return data.receipt;
 }
+
+// ==========================================
+// PUBLISHER ANALYTICS & TELEMETRY
+// ==========================================
+
+export async function trackVisitorSession(): Promise<void> {
+  if (typeof window === 'undefined') return;
+  try {
+    if (sessionStorage.getItem('zuzu_visit_logged')) return;
+    sessionStorage.setItem('zuzu_visit_logged', '1');
+    const isTvBrowser =
+      window.location.pathname.toLowerCase().startsWith('/tv') ||
+      /smart-tv|smarttv|aft|bravia|googletv|android tv|tizen|web0s/i.test(navigator.userAgent);
+    const deviceHint = isTvBrowser
+      ? 'tv'
+      : window.innerWidth >= 768 && window.innerWidth <= 1180 && /android/i.test(navigator.userAgent)
+      ? 'tablet'
+      : undefined;
+
+    await fetch('/api/analytics/visit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deviceHint })
+    });
+  } catch (_) {}
+}
+
+export async function fetchAdminAnalytics(days = 30, appId = 'all'): Promise<AnalyticsDashboardData> {
+  const params = new URLSearchParams({
+    days: String(days),
+    appId: appId || 'all'
+  });
+  const res = await fetch(`/api/admin/analytics?${params.toString()}`, {
+    headers: { ...getAuthHeaders() }
+  });
+  const data = await parseJsonSafely(res);
+  if (!res.ok || !data.analytics) {
+    throw new Error(data.error || 'Failed to load publisher analytics data.');
+  }
+  return data.analytics;
+}
+
 

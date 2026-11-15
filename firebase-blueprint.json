@@ -335,6 +335,16 @@
         "readAt": { "type": "string" }
       },
       "required": ["id", "developerId", "developerEmail", "eventType", "title", "message", "read", "createdAt"]
+    },
+    "AnalyticsRollup": {
+      "title": "AnalyticsRollup",
+      "description": "Daily aggregated download counts, visitor device distribution, and per-app/version telemetry rollups",
+      "type": "object",
+      "properties": {
+        "daily": { "type": "object" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["daily", "updatedAt"]
     }
   },
   "firestore": {
@@ -397,6 +407,12 @@
         "$ref": "#/entities/DeveloperNotification"
       },
       "description": "In-app developer inbox alerts for confirmed APK sales, approvals, and review updates"
+    },
+    "/stats/{statId}": {
+      "schema": {
+        "$ref": "#/entities/AnalyticsRollup"
+      },
+      "description": "Storewide telemetry rollups and catalog tombstones"
     }
   }
 }

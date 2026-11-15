@@ -49,6 +49,14 @@ import {
   acquireWebhookSaleLock,
   releaseWebhookSaleLock
 } from './server/perfMiddleware.ts';
+import {
+  type AnalyticsRollupStore,
+  buildAdminAnalyticsReport,
+  hydrateAnalyticsFromCloud,
+  recordDownloadTelemetry,
+  recordVisitTelemetry,
+  registerAnalyticsFirestoreSync
+} from './server/analyticsService.ts';
 
 // Ensure data and upload directories exist (use /tmp on Vercel serverless)
 const isVercel = process.env.VERCEL === '1';
@@ -628,6 +636,13 @@ registerDeveloperNotificationFirestoreSync(async (notif) => {
   } catch (_) {}
 });
 
+registerAnalyticsFirestoreSync(async (rollup) => {
+  if (!firestoreDb) return;
+  try {
+    await setDoc(doc(firestoreDb, 'stats', 'analytics_rollup'), cleanForFirestore(rollup), { merge: true });
+  } catch (_) {}
+});
+
 // In-memory cache for developers & broadcasts
 let memoryDevelopers: Record<string, DeveloperAccount> = {};
 let memoryBroadcast: AdminBroadcast | null = null;
@@ -987,6 +1002,14 @@ async function syncFromFirestore() {
       if (cloudNotifs.length > 0) {
         hydrateDeveloperNotificationsFromCloud(cloudNotifs);
         console.log(`[Firestore Server] Synchronized ${cloudNotifs.length} developer notifications.`);
+      }
+    } catch (_) {}
+
+    try {
+      const analyticsSnap = await getDoc(doc(firestoreDb, 'stats', 'analytics_rollup'));
+      if (analyticsSnap.exists()) {
+        hydrateAnalyticsFromCloud(analyticsSnap.data() as AnalyticsRollupStore);
+        console.log('[Firestore Server] Synchronized analytics telemetry rollup.');
       }
     } catch (_) {}
   } catch (err) {
@@ -2309,10 +2332,16 @@ app.get('/api/apps/:id/download', async (req, res) => {
     }
   }
 
-  // Increment download counter
+  // Increment download counter and record telemetry
   targetApp.downloadsTotal += 1;
   targetRelease.downloadCount += 1;
   saveApps(apps);
+  recordDownloadTelemetry({
+    appId: targetApp.id,
+    releaseId: targetRelease.id,
+    platform: targetRelease.platform || targetApp.supportedPlatforms?.[0] || 'Android',
+    userAgent: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : undefined
+  });
 
 
   const fileName = targetRelease.fileName || `${targetApp.slug}-v${targetRelease.version}.apk`;
@@ -2409,6 +2438,12 @@ HOW TO INSTALL ON ANDROID:
 
 // ZUZU TV EDITION APK DOWNLOAD ENDPOINT (FOR ANDROID TV, GOOGLE TV, FIRE TV & DOWNLOADER APP)
 app.get('/api/zuzu-tv-app/download', (req, res) => {
+  recordDownloadTelemetry({
+    appId: 'zuzu-tv-edition',
+    releaseId: 'zuzu-tv-1.0.0',
+    platform: 'Android TV',
+    userAgent: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : undefined
+  });
   const fileName = 'Zuzu-TV-Edition-v1.0.0.apk';
   const manifestContent = `==================================================================
            ZUZU TV EDITION - OFFICIAL 10-FOOT LEANBACK APK
@@ -2449,14 +2484,22 @@ app.post('/api/apps/:id/download-count', (req, res) => {
   }
 
   const targetApp = apps[appIndex];
+  let trackedPlatform = targetApp.supportedPlatforms?.[0] || 'Android';
   targetApp.downloadsTotal = (targetApp.downloadsTotal || 0) + 1;
   if (releaseId) {
     const rel = targetApp.releases.find((r) => r.id === releaseId);
     if (rel) {
       rel.downloadCount = (rel.downloadCount || 0) + 1;
+      trackedPlatform = rel.platform || trackedPlatform;
     }
   }
   saveApps(apps);
+  recordDownloadTelemetry({
+    appId: targetApp.id,
+    releaseId: releaseId ? String(releaseId) : targetApp.releases[0]?.id,
+    platform: trackedPlatform,
+    userAgent: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : undefined
+  });
 
   return res.json({
     success: true,
@@ -2524,6 +2567,17 @@ app.get('/api/stats', (req, res) => {
   };
   publicStatsCache.set('store_stats', payload);
   return res.json(payload);
+});
+
+// Lightweight visitor device telemetry endpoint (called once per browser session)
+app.post('/api/analytics/visit', (req, res) => {
+  const { deviceHint } = req.body || {};
+  const userAgent = typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : undefined;
+  const recorded = recordVisitTelemetry({
+    userAgent,
+    deviceHint: typeof deviceHint === 'string' ? deviceHint : undefined
+  });
+  return res.json({ success: true, ...recorded });
 });
 
 // ==========================================
@@ -4468,6 +4522,37 @@ app.post('/api/admin/email-logs/verify-smtp', requireAdmin, async (req, res) => 
   return res.json({
     success: result.verified,
     ...result
+  });
+});
+
+// ==========================================
+// PUBLISHER PORTAL ANALYTICS DASHBOARD
+// ==========================================
+app.get('/api/admin/analytics', requireAdmin, async (req, res) => {
+  if (firestoreDb) {
+    try {
+      const analyticsSnap = await getDoc(doc(firestoreDb, 'stats', 'analytics_rollup'));
+      if (analyticsSnap.exists()) {
+        hydrateAnalyticsFromCloud(analyticsSnap.data() as AnalyticsRollupStore);
+      }
+    } catch (_) {}
+  }
+
+  const days = req.query.days ? Number(req.query.days) : 30;
+  const appId = req.query.appId ? String(req.query.appId) : 'all';
+  const apps = getApps();
+  const sales = getSales();
+
+  const report = buildAdminAnalyticsReport({
+    apps,
+    sales,
+    days,
+    appId
+  });
+
+  return res.json({
+    success: true,
+    analytics: report
   });
 });
 

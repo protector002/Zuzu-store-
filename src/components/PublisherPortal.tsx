@@ -51,9 +51,14 @@ import {
   Percent,
   ArrowLeftRight,
   History,
-  Mail
+  Mail,
+  BarChart3
 } from 'lucide-react';
 import { EmailLogsTab } from './EmailLogsTab';
+
+const LazyAnalyticsDashboardTab = React.lazy(() =>
+  import('./AnalyticsDashboardTab').then((m) => ({ default: m.AnalyticsDashboardTab }))
+);
 import {
   StoreApp,
   Platform,
@@ -107,9 +112,9 @@ interface PublisherPortalProps {
   onDownloadTest: (appId: string, releaseId?: string, appObj?: StoreApp) => Promise<void>;
   onAppApproved?: (app: StoreApp) => void;
   onRefreshCatalog?: () => void;
-  requestedTab?: 'upload-new' | 'update-existing' | 'manage' | 'submissions' | 'god-mode' | 'email-logs';
+  requestedTab?: 'upload-new' | 'update-existing' | 'manage' | 'submissions' | 'god-mode' | 'analytics' | 'email-logs';
   requestedTabKey?: number;
-  onTabChange?: (tab: 'upload-new' | 'update-existing' | 'manage' | 'submissions' | 'god-mode' | 'email-logs') => void;
+  onTabChange?: (tab: 'upload-new' | 'update-existing' | 'manage' | 'submissions' | 'god-mode' | 'analytics' | 'email-logs') => void;
 }
 
 // Sample mobile screenshots for testing/previewing
@@ -249,7 +254,7 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
   requestedTabKey,
   onTabChange,
 }) => {
-  const [activeTab, setActiveTab] = useState<'upload-new' | 'update-existing' | 'manage' | 'submissions' | 'god-mode' | 'email-logs'>(
+  const [activeTab, setActiveTab] = useState<'upload-new' | 'update-existing' | 'manage' | 'submissions' | 'god-mode' | 'analytics' | 'email-logs'>(
     requestedTab || 'upload-new'
   );
 
@@ -1451,6 +1456,18 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
             >
               <Crown className={`w-3.5 h-3.5 shrink-0 fill-current ${activeTab === 'god-mode' ? 'text-neutral-950' : 'text-amber-400'}`} />
               <span>👑 God Mode &amp; Developers</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('analytics')}
+              className={`px-3 sm:px-3.5 py-2 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 ${
+                activeTab === 'analytics'
+                  ? 'bg-cyan-500 text-neutral-950 shadow-md shadow-cyan-950/40'
+                  : 'text-cyan-300 bg-cyan-950/30 hover:bg-cyan-900/50 border border-cyan-500/30'
+              }`}
+            >
+              <BarChart3 className="w-3.5 h-3.5 shrink-0" />
+              <span>Analytics Dashboard</span>
             </button>
             <button
               type="button"
@@ -5787,7 +5804,25 @@ export const PublisherPortal: React.FC<PublisherPortalProps> = ({
         </div>
       )}
 
-      {/* TAB 6: EMAIL DELIVERY LOGS & SMTP DIAGNOSTICS */}
+      {/* TAB 6: VISUAL ANALYTICS DASHBOARD */}
+      {activeTab === 'analytics' && (
+        <React.Suspense
+          fallback={
+            <div className="space-y-6 animate-pulse">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                {[0, 1, 2, 3].map((i) => (
+                  <div key={i} className="h-28 bg-neutral-900 border border-neutral-800 rounded-xl" />
+                ))}
+              </div>
+              <div className="h-80 bg-neutral-900 border border-neutral-800 rounded-xl" />
+            </div>
+          }
+        >
+          <LazyAnalyticsDashboardTab apps={apps} />
+        </React.Suspense>
+      )}
+
+      {/* TAB 7: EMAIL DELIVERY LOGS & SMTP DIAGNOSTICS */}
       {activeTab === 'email-logs' && (
         <EmailLogsTab adminEmail={admin?.email} />
       )}

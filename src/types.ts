@@ -438,3 +438,55 @@ export interface BuyerReceipt {
   createdAt: string;
   completedAt: string;
 }
+
+export interface AnalyticsDailyPoint {
+  date: string;
+  label: string;
+  downloads: number;
+  visits: number;
+  paidOrders: number;
+}
+
+export interface TopAppVersionStat {
+  key: string;
+  appId: string;
+  appName: string;
+  version: string;
+  label: string;
+  platform: string;
+  fileSize: string;
+  releaseDate: string;
+  downloads: number;
+  sharePercent: number;
+}
+
+export interface DeviceDistributionStat {
+  device: string;
+  count: number;
+  sharePercent: number;
+  color: string;
+}
+
+export interface AnalyticsDashboardData {
+  days: number;
+  appId: string;
+  generatedAt: string;
+  deviceDataSource: 'live_telemetry' | 'platform_catalog';
+  summary: {
+    totalAllTimeDownloads: number;
+    windowDownloads: number;
+    windowVisits: number;
+    trackedVersionsCount: number;
+    activeAppsCount: number;
+    paidOrdersWindow: number;
+    topDeviceLabel: string;
+    topDeviceShare: number;
+    topVersionLabel: string;
+    topVersionDownloads: number;
+  };
+  dailyTrends: AnalyticsDailyPoint[];
+  topVersions: TopAppVersionStat[];
+  deviceDistribution: DeviceDistributionStat[];
+  appOptions: Array<{ id: string; name: string }>;
+}
+

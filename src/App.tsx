@@ -30,7 +30,8 @@ import {
   getCachedPurchaseToken,
   verifyAppPurchase,
   clearCachedPurchaseToken,
-  acceptPlatformAgreements
+  acceptPlatformAgreements,
+  trackVisitorSession
 } from './services/api';
 import {
   LegalTab,
@@ -99,7 +100,7 @@ export default function App() {
   const [isMyPurchasesOpen, setIsMyPurchasesOpen] = useState<boolean>(() =>
     typeof window !== 'undefined' && window.location.pathname.toLowerCase().replace(/\/+$/, '') === '/my-purchases'
   );
-  const [publisherTab, setPublisherTab] = useState<'upload-new' | 'update-existing' | 'manage' | 'submissions' | 'god-mode' | 'email-logs'>('upload-new');
+  const [publisherTab, setPublisherTab] = useState<'upload-new' | 'update-existing' | 'manage' | 'submissions' | 'god-mode' | 'analytics' | 'email-logs'>('upload-new');
   const [publisherTabKey, setPublisherTabKey] = useState(0);
   const [detailSourceView, setDetailSourceView] = useState<'store' | 'tv'>(() =>
     initialRoute.edition === 'tv' ? 'tv' : 'store'
@@ -368,6 +369,9 @@ export default function App() {
     fetchBroadcast().then((b) => {
       if (b && b.active) setBroadcast(b);
     });
+
+    // Record visitor device telemetry once per browser session
+    trackVisitorSession();
   }, []);
 
   // Secret trigger to open administrator login modal
