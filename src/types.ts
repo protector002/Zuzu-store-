@@ -27,6 +27,7 @@ export interface AppRelease {
   isLatest: boolean;
   filePath?: string;
   directDownloadUrl?: string;
+  mirrorDownloadUrl?: string;
 }
 
 export interface AppReview {

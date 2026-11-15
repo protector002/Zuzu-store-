@@ -91,6 +91,73 @@ async function parseJsonSafely(res: Response): Promise<any> {
 // Public API Calls (No Account Required)
 // =====================================
 
+export function getCachedAppsLocal(): StoreApp[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem('zuzu_local_catalog');
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as StoreApp[];
+    if (!Array.isArray(parsed)) return [];
+    const deletedApps = new Set<string>(JSON.parse(localStorage.getItem('zuzu_deleted_apps') || '[]'));
+    const deletedReleases = new Set<string>(JSON.parse(localStorage.getItem('zuzu_deleted_releases') || '[]'));
+    const seen = new Map<string, StoreApp>();
+    for (const a of parsed) {
+      if (!a || !a.id || deletedApps.has(a.id)) continue;
+      if (a.isTakenDown || (a.approvalStatus && a.approvalStatus !== 'approved')) continue;
+      seen.set(a.id, {
+        ...a,
+        releases: Array.isArray(a.releases) ? a.releases.filter((r) => !deletedReleases.has(r.id)) : []
+      });
+    }
+    return Array.from(seen.values());
+  } catch (_) {
+    return [];
+  }
+}
+
+const appPrefetchCache = new Map<string, { app: StoreApp; expiresAt: number }>();
+const inFlightPrefetches = new Map<string, Promise<StoreApp | null>>();
+
+export function primeAppPrefetchCache(list: StoreApp[]): void {
+  const expiresAt = Date.now() + 60_000;
+  for (const a of list) {
+    if (!a || !a.id) continue;
+    appPrefetchCache.set(a.id, { app: a, expiresAt });
+    if (a.slug) appPrefetchCache.set(a.slug.toLowerCase(), { app: a, expiresAt });
+  }
+}
+
+export async function prefetchApp(idOrSlug: string): Promise<StoreApp | null> {
+  if (!idOrSlug) return null;
+  const key = idOrSlug.toLowerCase();
+  const cached = appPrefetchCache.get(key) || appPrefetchCache.get(idOrSlug);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.app;
+  }
+  const existing = inFlightPrefetches.get(key);
+  if (existing) return existing;
+
+  const task = (async () => {
+    try {
+      const res = await fetch(`/api/apps/${encodeURIComponent(idOrSlug)}`);
+      if (!res.ok) return null;
+      const appData: StoreApp = await res.json();
+      if (appData && appData.id) {
+        primeAppPrefetchCache([appData]);
+        return appData;
+      }
+      return null;
+    } catch (_) {
+      return null;
+    } finally {
+      inFlightPrefetches.delete(key);
+    }
+  })();
+
+  inFlightPrefetches.set(key, task);
+  return task;
+}
+
 export async function fetchApps(params?: { category?: string; search?: string; platform?: string }): Promise<StoreApp[]> {
   const { deletedAppIds, deletedReleaseIds } = await getTombstonesFromFirestore();
 
@@ -111,17 +178,11 @@ export async function fetchApps(params?: { category?: string; search?: string; p
     const cloudApps = await syncLocalCatalogToFirestore();
     const clean = dedupeAndClean(cloudApps);
 
-    // Cache to localStorage & sync to server in background when Firestore returned apps
+    // Cache locally & warm prefetch map without triggering redundant visitor catalog sync writes
     if (clean.length > 0) {
+      primeAppPrefetchCache(clean);
       try {
         localStorage.setItem('zuzu_local_catalog', JSON.stringify(clean));
-
-        // Sync cleanly to backend server in background so server download streaming has all app releases
-        fetch('/api/sync-catalog', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ apps: clean })
-        }).catch(() => {});
       } catch (_) {}
 
       let filtered = clean;
@@ -146,7 +207,7 @@ export async function fetchApps(params?: { category?: string; search?: string; p
     console.warn('Firestore fetch notice:', firestoreErr);
   }
 
-  // Step 2: Fallback to Backend API (filter out tombstones strictly!)
+  // Step 2: Fallback to edge-cached Backend API (filter out tombstones strictly!)
   const query = new URLSearchParams();
   if (params?.category && params.category !== 'All') query.append('category', params.category);
   if (params?.platform && params.platform !== 'All') query.append('platform', params.platform);
@@ -158,6 +219,7 @@ export async function fetchApps(params?: { category?: string; search?: string; p
       const data: StoreApp[] = await res.json();
       if (Array.isArray(data)) {
         const clean = dedupeAndClean(data);
+        primeAppPrefetchCache(clean);
         try {
           localStorage.setItem('zuzu_local_catalog', JSON.stringify(clean));
         } catch (_) {}
@@ -186,6 +248,11 @@ export async function fetchApp(idOrSlug: string): Promise<StoreApp> {
   const doubleDashIdx = idOrSlug.lastIndexOf('--');
   const candidateId = doubleDashIdx !== -1 ? idOrSlug.slice(doubleDashIdx + 2).trim() : idOrSlug;
 
+  const cached = appPrefetchCache.get(candidateId) || appPrefetchCache.get(idOrSlug.toLowerCase());
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.app;
+  }
+
   // 1. Try Firestore cloud catalog first for freshest real-time approved state
   try {
     const cloudApps = await getAppsFromFirestore(false);
@@ -196,6 +263,7 @@ export async function fetchApp(idOrSlug: string): Promise<StoreApp> {
         (a.slug && a.slug.toLowerCase() === idOrSlug.toLowerCase())
     );
     if (matched) {
+      primeAppPrefetchCache([matched]);
       return matched;
     }
   } catch (_) {}
@@ -205,7 +273,9 @@ export async function fetchApp(idOrSlug: string): Promise<StoreApp> {
   if (!res.ok) {
     throw new Error('App not found in store');
   }
-  return res.json();
+  const appData: StoreApp = await res.json();
+  if (appData?.id) primeAppPrefetchCache([appData]);
+  return appData;
 }
 
 export function getDownloadUrl(appId: string, releaseId?: string): string {

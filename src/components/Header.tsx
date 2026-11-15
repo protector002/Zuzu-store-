@@ -18,6 +18,9 @@ import {
 } from 'lucide-react';
 import { StoreApp, AdminUser, DeveloperUser } from '../types';
 import { getPhoneRelease, getTvRelease } from '../utils/editionHelper';
+import { PWAInstallButton } from './PWAInstallButton';
+import { useDebouncedValue } from '../hooks/usePWAInstall';
+import { prefetchApp } from '../services/api';
 
 interface HeaderProps {
   currentView: 'store' | 'upload' | 'detail' | 'tv' | 'developer_console' | 'receipt';
@@ -113,8 +116,9 @@ export const Header: React.FC<HeaderProps> = ({
     }
   };
 
-  // Real-time matching anime apps by name or package ID
-  const normalizedQuery = searchQuery.trim().toLowerCase();
+  // Real-time debounced matching anime apps by name or package ID
+  const debouncedSearch = useDebouncedValue(searchQuery, 180);
+  const normalizedQuery = debouncedSearch.trim().toLowerCase();
   const matchingApps = normalizedQuery
     ? apps
         .filter((app) => {
@@ -250,6 +254,7 @@ export const Header: React.FC<HeaderProps> = ({
                       <button
                         key={app.id}
                         type="button"
+                        onMouseEnter={() => prefetchApp(app.slug || app.id)}
                         onClick={() => handleSelectSearchResult(app)}
                         className="w-full p-3 hover:bg-neutral-800/70 transition-colors flex items-center justify-between gap-3 text-left group cursor-pointer"
                       >
@@ -367,6 +372,8 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Right Action Zone */}
         <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
+          <PWAInstallButton />
+
           {/* Admin God Mode Button (Tablet & Desktop sm+: mobile uses dedicated admin bar below to avoid clipping) */}
           {admin && (
             <button

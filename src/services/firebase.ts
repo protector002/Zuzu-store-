@@ -169,9 +169,11 @@ export async function recordReleaseTombstone(releaseId: string): Promise<void> {
  */
 export async function getAppsFromFirestore(includeUnapproved = false): Promise<StoreApp[]> {
   try {
-    const { deletedAppIds, deletedReleaseIds } = await getTombstonesFromFirestore();
     const appsRef = collection(db, APPS_COLLECTION);
-    const snap = await getDocs(appsRef);
+    const [{ deletedAppIds, deletedReleaseIds }, snap] = await Promise.all([
+      getTombstonesFromFirestore(),
+      getDocs(appsRef)
+    ]);
     const dedupeMap = new Map<string, StoreApp>();
 
     snap.forEach((d) => {
@@ -278,9 +280,11 @@ export async function incrementAppDownloadInFirestore(appId: string, releaseId?:
     const snap = await getDoc(docRef);
     if (snap.exists()) {
       const data = snap.data() as StoreApp;
-      const updatedReleases = data.releases
+      let releasesChanged = false;
+      const updatedReleases = Array.isArray(data.releases)
         ? data.releases.map((r) => {
             if (!releaseId || r.id === releaseId) {
+              releasesChanged = true;
               return { ...r, downloadCount: (r.downloadCount || 0) + 1 };
             }
             return r;
@@ -289,7 +293,7 @@ export async function incrementAppDownloadInFirestore(appId: string, releaseId?:
 
       await updateDoc(docRef, {
         downloadsTotal: increment(1),
-        releases: updatedReleases,
+        ...(releasesChanged ? { releases: updatedReleases } : {}),
         updatedAt: new Date().toISOString()
       });
       return;

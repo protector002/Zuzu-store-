@@ -1,24 +1,17 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, Suspense, lazy } from 'react';
 import { Header } from './components/Header';
 import { HeroZuzu } from './components/HeroZuzu';
 import { StoreWelcomeBanner } from './components/StoreWelcomeBanner';
 import { OpeningSplash } from './components/OpeningSplash';
 import { AppCatalog } from './components/AppCatalog';
-import { AppDetailView } from './components/AppDetailView';
-import { PublisherPortal } from './components/PublisherPortal';
-import { AdminLoginModal } from './components/AdminLoginModal';
-import { DeveloperAuthModal } from './components/DeveloperAuthModal';
-import { DeveloperConsole } from './components/DeveloperConsole';
-import { QRModal } from './components/QRModal';
-import { InstallGuideModal } from './components/InstallGuideModal';
-import { ScreenshotModal } from './components/ScreenshotModal';
-import { DownloadProgressModal } from './components/DownloadProgressModal';
-import { TvPage } from './components/TvPage';
 import { Footer } from './components/Footer';
+import { CatalogSkeleton } from './components/CatalogSkeleton';
+import { OfflineIndicator } from './components/OfflineIndicator';
+import { useDebouncedValue } from './hooks/usePWAInstall';
 import {
   fetchApps,
   fetchApp,
-  getDownloadUrl,
+  getCachedAppsLocal,
   recordDownload,
   checkAdminSession,
   checkDeveloperSession,
@@ -39,11 +32,7 @@ import {
   clearCachedPurchaseToken,
   acceptPlatformAgreements
 } from './services/api';
-import { PurchaseModal } from './components/PurchaseModal';
-import { ReceiptPage } from './components/ReceiptPage';
-import { MyPurchasesModal } from './components/MyPurchasesModal';
 import {
-  LegalAgreementsModal,
   LegalTab,
   AGREEMENTS_STORAGE_KEY,
   AGREEMENTS_VERSION
@@ -61,16 +50,46 @@ import {
 } from './utils/appLinks';
 import { CheckCircle2, ArrowRight, Megaphone } from 'lucide-react';
 
+// Route & modal code splitting: only downloaded when opened
+const AppDetailView = lazy(() => import('./components/AppDetailView').then((m) => ({ default: m.AppDetailView })));
+const PublisherPortal = lazy(() => import('./components/PublisherPortal').then((m) => ({ default: m.PublisherPortal })));
+const AdminLoginModal = lazy(() => import('./components/AdminLoginModal').then((m) => ({ default: m.AdminLoginModal })));
+const DeveloperAuthModal = lazy(() => import('./components/DeveloperAuthModal').then((m) => ({ default: m.DeveloperAuthModal })));
+const DeveloperConsole = lazy(() => import('./components/DeveloperConsole').then((m) => ({ default: m.DeveloperConsole })));
+const QRModal = lazy(() => import('./components/QRModal').then((m) => ({ default: m.QRModal })));
+const InstallGuideModal = lazy(() => import('./components/InstallGuideModal').then((m) => ({ default: m.InstallGuideModal })));
+const ScreenshotModal = lazy(() => import('./components/ScreenshotModal').then((m) => ({ default: m.ScreenshotModal })));
+const DownloadProgressModal = lazy(() => import('./components/DownloadProgressModal').then((m) => ({ default: m.DownloadProgressModal })));
+const TvPage = lazy(() => import('./components/TvPage').then((m) => ({ default: m.TvPage })));
+const PurchaseModal = lazy(() => import('./components/PurchaseModal').then((m) => ({ default: m.PurchaseModal })));
+const ReceiptPage = lazy(() => import('./components/ReceiptPage').then((m) => ({ default: m.ReceiptPage })));
+const MyPurchasesModal = lazy(() => import('./components/MyPurchasesModal').then((m) => ({ default: m.MyPurchasesModal })));
+const LegalAgreementsModal = lazy(() => import('./components/LegalAgreementsModal').then((m) => ({ default: m.LegalAgreementsModal })));
+
 
 
 export default function App() {
   const initialRoute = parseAppRouteFromLocation();
+  const initialCachedApps = getCachedAppsLocal();
+  const initialDeepLinkApp = initialRoute.appIdentifier
+    ? findAppByRouteIdentifier(initialRoute.appIdentifier, initialCachedApps, initialRoute.edition)
+    : null;
 
-  const [apps, setApps] = useState<StoreApp[]>([]);
+  const [apps, setApps] = useState<StoreApp[]>(initialCachedApps);
   const [purchasingApp, setPurchasingApp] = useState<StoreApp | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => {
+    if (initialRoute.receiptSaleId) return false;
+    if (initialRoute.appIdentifier) return !initialDeepLinkApp;
+    return initialCachedApps.length === 0;
+  });
   const [currentView, setCurrentView] = useState<'store' | 'upload' | 'detail' | 'tv' | 'developer_console' | 'receipt'>(() =>
-    initialRoute.receiptSaleId ? 'receipt' : initialRoute.isTvHub ? 'tv' : 'store'
+    initialRoute.receiptSaleId
+      ? 'receipt'
+      : initialDeepLinkApp
+      ? 'detail'
+      : initialRoute.isTvHub
+      ? 'tv'
+      : 'store'
   );
   const [activeReceiptRoute, setActiveReceiptRoute] = useState<{ saleId: string; token: string } | null>(() =>
     initialRoute.receiptSaleId
@@ -88,7 +107,7 @@ export default function App() {
   const [detailEditionOverride, setDetailEditionOverride] = useState<'phone' | 'tv' | undefined>(
     initialRoute.edition
   );
-  const [selectedApp, setSelectedApp] = useState<StoreApp | null>(null);
+  const [selectedApp, setSelectedApp] = useState<StoreApp | null>(() => initialDeepLinkApp);
   const [searchQuery, setSearchQuery] = useState('');
 
   // Opening Logo Splash Screen (bypass automatically when opening a direct shared /app/:slug or /receipt/:saleId link)
@@ -834,9 +853,10 @@ export default function App() {
     setIsScreenshotOpen(true);
   };
 
-  const normalizedSearch = searchQuery.toLowerCase().trim();
+  const debouncedSearchQuery = useDebouncedValue(searchQuery, 180);
+  const normalizedSearch = debouncedSearchQuery.toLowerCase().trim();
 
-  // Real-time filter across all apps by name or package ID
+  // Real-time debounced filter across all apps by name or package ID
   const filteredApps = apps.filter((app) => {
     if (!normalizedSearch) return true;
     return (
@@ -995,31 +1015,10 @@ export default function App() {
       {/* Main View Router */}
       <main className="flex-1">
         {loading ? (
-          <div className="py-24 text-center space-y-4">
-            <div className="relative inline-block">
-              {/* Outer glowing pulsing halo */}
-              <div className="absolute -inset-2 bg-gradient-to-r from-amber-500 via-red-500 to-amber-500 rounded-3xl blur-md opacity-75 animate-pulse" />
-              <img
-                src="/public/assets/aistudio/file_00000000212c8208b64f5bd04e8c4ee8_95799501.png"
-                alt="Loading ZuzuStore..."
-                className="relative w-16 h-16 sm:w-20 sm:h-20 object-contain rounded-2xl shadow-2xl border-2 border-amber-400/60 animate-bounce"
-                style={{ animationDuration: '1.4s' }}
-                onError={(e) => {
-                  e.currentTarget.onerror = null;
-                  e.currentTarget.src = '/zuzustore-logo.png';
-                }}
-              />
-            </div>
-            <div className="space-y-1">
-              <p className="text-sm font-bold text-white tracking-wide">Opening ZuzuStore...</p>
-              <p className="text-xs text-amber-400/80 font-medium">Preparing verified packages</p>
-            </div>
-            <div className="w-32 h-1 bg-neutral-900 rounded-full overflow-hidden mx-auto border border-neutral-800">
-              <div className="h-full bg-gradient-to-r from-amber-400 via-amber-500 to-red-600 rounded-full animate-pulse" />
-            </div>
-          </div>
+          <CatalogSkeleton />
         ) : (
-          <>
+          <Suspense fallback={<CatalogSkeleton />}>
+            <>
             {currentView === 'store' && (
               <>
                 {/* If real phone apps exist, show the featured phone app hero */}
@@ -1203,7 +1202,8 @@ export default function App() {
                 onOpenMyPurchases={() => setIsMyPurchasesOpen(true)}
               />
             )}
-          </>
+            </>
+          </Suspense>
         )}
       </main>
 
@@ -1233,109 +1233,125 @@ export default function App() {
         onOpenLegal={openLegalViewer}
       />
 
-      {/* Admin Login Modal (Blank inputs, no prefilled or displayed email) */}
-      <AdminLoginModal
-        isOpen={isLoginModalOpen}
-        onClose={() => setIsLoginModalOpen(false)}
-        onLoginSuccess={(newAdmin) => {
-          setAdmin(newAdmin);
-          setCurrentView('upload');
-          showToast(`Welcome back, ${newAdmin.name}!`);
-        }}
-      />
+      {/* Lazy Modal Zone wrapped cleanly in Suspense */}
+      <Suspense fallback={null}>
+        {/* Admin Login Modal (Blank inputs, no prefilled or displayed email) */}
+        {isLoginModalOpen && (
+          <AdminLoginModal
+            isOpen={isLoginModalOpen}
+            onClose={() => setIsLoginModalOpen(false)}
+            onLoginSuccess={(newAdmin) => {
+              setAdmin(newAdmin);
+              setCurrentView('upload');
+              showToast(`Welcome back, ${newAdmin.name}!`);
+            }}
+          />
+        )}
 
-      {/* Developer Authentication Modal */}
-      <DeveloperAuthModal
-        isOpen={isDevAuthModalOpen}
-        onClose={() => setIsDevAuthModalOpen(false)}
-        onSuccess={(dev) => {
-          setDeveloper(dev);
-          setCurrentView('developer_console');
-          window.scrollTo({ top: 0, behavior: 'smooth' });
-          showToast(`Welcome, ${dev.name}! Developer Console is ready.`);
-        }}
-        onOpenLegal={openLegalViewer}
-      />
+        {/* Developer Authentication Modal */}
+        {isDevAuthModalOpen && (
+          <DeveloperAuthModal
+            isOpen={isDevAuthModalOpen}
+            onClose={() => setIsDevAuthModalOpen(false)}
+            onSuccess={(dev) => {
+              setDeveloper(dev);
+              setCurrentView('developer_console');
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+              showToast(`Welcome, ${dev.name}! Developer Console is ready.`);
+            }}
+            onOpenLegal={openLegalViewer}
+          />
+        )}
 
-      {/* QR Code Modal for Phone Download */}
-      {qrApp && (
-        <QRModal
-          isOpen={isQrOpen}
-          onClose={() => setIsQrOpen(false)}
-          app={qrApp}
-          release={qrRelease}
-        />
-      )}
+        {/* QR Code Modal for Phone Download */}
+        {qrApp && isQrOpen && (
+          <QRModal
+            isOpen={isQrOpen}
+            onClose={() => setIsQrOpen(false)}
+            app={qrApp}
+            release={qrRelease}
+          />
+        )}
 
-      {/* Paid App Checkout & Purchase Modal */}
-      {purchasingApp && (
-        <PurchaseModal
-          app={purchasingApp}
-          onClose={() => setPurchasingApp(null)}
-          onSuccess={(tx, token) => {
-            if (!tx || tx.status !== 'completed' || !token) return;
-            const purchasedTarget = purchasingApp;
-            setPurchasingApp(null);
-            showToast(`Payment confirmed for ${purchasedTarget.name}! Starting download...`);
-            handleDownload(purchasedTarget.id, undefined, purchasedTarget, false, token);
-          }}
-          onOpenLegal={openLegalViewer}
-        />
-      )}
+        {/* Paid App Checkout & Purchase Modal */}
+        {purchasingApp && (
+          <PurchaseModal
+            app={purchasingApp}
+            onClose={() => setPurchasingApp(null)}
+            onSuccess={(tx, token) => {
+              if (!tx || tx.status !== 'completed' || !token) return;
+              const purchasedTarget = purchasingApp;
+              setPurchasingApp(null);
+              showToast(`Payment confirmed for ${purchasedTarget.name}! Starting download...`);
+              handleDownload(purchasedTarget.id, undefined, purchasedTarget, false, token);
+            }}
+            onOpenLegal={openLegalViewer}
+          />
+        )}
 
-      {/* Mandatory First-Use Agreements Gate (after opening splash) & On-Demand Legal Viewer */}
-      <LegalAgreementsModal
-        isOpen={(!hasAcceptedAgreements && !showSplash) || isLegalModalOpen}
-        requireAcceptance={!hasAcceptedAgreements && !isLegalModalOpen}
-        initialTab={legalInitialTab}
-        onAccept={handleAcceptSiteAgreements}
-        onClose={() => setIsLegalModalOpen(false)}
-      />
+        {/* Mandatory First-Use Agreements Gate (after opening splash) & On-Demand Legal Viewer */}
+        {((!hasAcceptedAgreements && !showSplash) || isLegalModalOpen) && (
+          <LegalAgreementsModal
+            isOpen={(!hasAcceptedAgreements && !showSplash) || isLegalModalOpen}
+            requireAcceptance={!hasAcceptedAgreements && !isLegalModalOpen}
+            initialTab={legalInitialTab}
+            onAccept={handleAcceptSiteAgreements}
+            onClose={() => setIsLegalModalOpen(false)}
+          />
+        )}
 
-      {/* Android Installation Help Modal */}
-      <InstallGuideModal
-        isOpen={isGuideOpen}
-        onClose={() => setIsGuideOpen(false)}
-        defaultPlatform={guidePlatform}
-      />
+        {/* Android Installation Help Modal */}
+        {isGuideOpen && (
+          <InstallGuideModal
+            isOpen={isGuideOpen}
+            onClose={() => setIsGuideOpen(false)}
+            defaultPlatform={guidePlatform}
+          />
+        )}
 
-      {/* In-App Live Download Streaming Progress Modal */}
-      <DownloadProgressModal
-        progress={downloadProgress}
-        onClose={() => setDownloadProgress((prev) => ({ ...prev, isOpen: false }))}
-        onCancel={handleCancelDownload}
-        onRetry={handleRetryDownload}
-        onSaveAgain={handleSaveAgain}
-      />
+        {/* In-App Live Download Streaming Progress Modal */}
+        {downloadProgress.isOpen && (
+          <DownloadProgressModal
+            progress={downloadProgress}
+            onClose={() => setDownloadProgress((prev) => ({ ...prev, isOpen: false }))}
+            onCancel={handleCancelDownload}
+            onRetry={handleRetryDownload}
+            onSaveAgain={handleSaveAgain}
+          />
+        )}
 
+        {/* Screenshot Lightbox Modal */}
+        {screenshotTargetApp && isScreenshotOpen && (
+          <ScreenshotModal
+            isOpen={isScreenshotOpen}
+            onClose={() => setIsScreenshotOpen(false)}
+            screenshots={screenshotTargetApp.screenshots}
+            activeIndex={activeScreenshotIndex}
+            onSelectIndex={(idx) => setActiveScreenshotIndex(idx)}
+            appName={screenshotTargetApp.name}
+          />
+        )}
 
-      {/* Screenshot Lightbox Modal */}
-      {screenshotTargetApp && (
-        <ScreenshotModal
-          isOpen={isScreenshotOpen}
-          onClose={() => setIsScreenshotOpen(false)}
-          screenshots={screenshotTargetApp.screenshots}
-          activeIndex={activeScreenshotIndex}
-          onSelectIndex={(idx) => setActiveScreenshotIndex(idx)}
-          appName={screenshotTargetApp.name}
-        />
-      )}
+        {/* My Purchases & Receipts Lookup Modal */}
+        {isMyPurchasesOpen && (
+          <MyPurchasesModal
+            isOpen={isMyPurchasesOpen}
+            onClose={() => setIsMyPurchasesOpen(false)}
+            onOpenReceipt={openReceiptPage}
+            onDownloadReceiptApk={(receipt) => {
+              setIsMyPurchasesOpen(false);
+              const matched = apps.find((a) => a.id === receipt.appId || a.slug === receipt.appId);
+              if (matched) {
+                handleDownload(matched.id, undefined, matched, false, receipt.downloadToken);
+              } else {
+                window.location.href = receipt.directDownloadUrl;
+              }
+            }}
+          />
+        )}
+      </Suspense>
 
-      {/* My Purchases & Receipts Lookup Modal */}
-      <MyPurchasesModal
-        isOpen={isMyPurchasesOpen}
-        onClose={() => setIsMyPurchasesOpen(false)}
-        onOpenReceipt={openReceiptPage}
-        onDownloadReceiptApk={(receipt) => {
-          setIsMyPurchasesOpen(false);
-          const matched = apps.find((a) => a.id === receipt.appId || a.slug === receipt.appId);
-          if (matched) {
-            handleDownload(matched.id, undefined, matched, false, receipt.downloadToken);
-          } else {
-            window.location.href = receipt.directDownloadUrl;
-          }
-        }}
-      />
+      <OfflineIndicator />
 
       {/* Toast Notification */}
       {toastMessage && (

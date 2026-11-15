@@ -1,4 +1,5 @@
 import express from 'express';
+import compression from 'compression';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
@@ -37,6 +38,17 @@ import {
   sendCompletedSaleEmails,
   verifyAndOptionallySendTestEmail
 } from './server/emailService.ts';
+import {
+  createRateLimiter,
+  publicAppsCache,
+  publicStatsCache,
+  invalidatePublicStoreCache,
+  buildCheckoutKey,
+  getRecentPendingCheckoutSaleId,
+  rememberPendingCheckoutSaleId,
+  acquireWebhookSaleLock,
+  releaseWebhookSaleLock
+} from './server/perfMiddleware.ts';
 
 // Ensure data and upload directories exist (use /tmp on Vercel serverless)
 const isVercel = process.env.VERCEL === '1';
@@ -85,6 +97,7 @@ export interface AppRelease {
   isLatest: boolean;
   filePath?: string;
   directDownloadUrl?: string;
+  mirrorDownloadUrl?: string;
 }
 
 export interface AppReview {
@@ -482,6 +495,7 @@ function getApps(): StoreApp[] {
 function saveApps(apps: StoreApp[]) {
   const clean = dedupeAppsList(apps);
   memoryApps = clean;
+  invalidatePublicStoreCache();
   try {
     fs.writeFileSync(APPS_FILE, JSON.stringify(clean, null, 2), 'utf-8');
   } catch (err) {
@@ -791,6 +805,7 @@ function getBroadcast(): AdminBroadcast | null {
 
 function saveBroadcast(bc: AdminBroadcast | null) {
   memoryBroadcast = bc;
+  invalidatePublicStoreCache();
   try {
     if (!bc) {
       if (fs.existsSync(BROADCAST_FILE)) fs.unlinkSync(BROADCAST_FILE);
@@ -1114,6 +1129,7 @@ function saveSystemSettings(settings: Partial<SystemSettings>): SystemSettings {
     updatedAt: new Date().toISOString()
   };
   memorySettings = updated;
+  invalidatePublicStoreCache();
   try {
     fs.writeFileSync(SETTINGS_FILE, JSON.stringify(updated, null, 2), 'utf-8');
   } catch (err) {
@@ -1200,11 +1216,53 @@ const upload = multer({
 
 // Create Express App
 const app = express();
+app.set('trust proxy', 1);
+app.use(
+  compression({
+    threshold: 1024,
+    filter: (req, res) => {
+      if (req.path.endsWith('/download')) return false;
+      return compression.filter(req, res);
+    }
+  })
+);
 app.use(express.json({ limit: '2048mb' }));
 app.use(express.urlencoded({ extended: true, limit: '2048mb' }));
 
-// Static uploads serving for uploaded icons and screenshots
-app.use('/uploads', express.static(UPLOAD_DIR));
+// Static uploads serving for uploaded icons and screenshots with long-lived immutable cache
+app.use(
+  '/uploads',
+  express.static(UPLOAD_DIR, {
+    maxAge: '7d',
+    etag: true
+  })
+);
+
+// Per-IP sliding-window rate limiters for auth, purchases, lookups, and reviews
+const authRateLimiter = createRateLimiter({
+  windowMs: 5 * 60 * 1000,
+  maxRequests: 25,
+  keyPrefix: 'auth',
+  message: 'Too many authentication attempts. Please wait a moment before trying again.'
+});
+const purchaseRateLimiter = createRateLimiter({
+  windowMs: 60 * 1000,
+  maxRequests: 12,
+  keyPrefix: 'purchase',
+  message: 'Too many checkout requests in a short period. Please wait a moment.'
+});
+const lookupRateLimiter = createRateLimiter({
+  windowMs: 60 * 1000,
+  maxRequests: 30,
+  keyPrefix: 'lookup',
+  message: 'Too many receipt lookups. Please wait a moment and try again.'
+});
+const reviewRateLimiter = createRateLimiter({
+  windowMs: 2 * 60 * 1000,
+  maxRequests: 10,
+  keyPrefix: 'review',
+  message: 'Please wait a moment before submitting another review.'
+});
 
 // Conditional Multer middleware: only processes multipart/form-data requests
 // This allows clean JSON submissions (e.g. cloud direct links) to bypass multer completely
@@ -1333,7 +1391,7 @@ const requireDeveloper = async (req: express.Request, res: express.Response, nex
 // ==========================================
 
 // Login endpoint for admin
-app.post('/api/auth/login', (req, res) => {
+app.post('/api/auth/login', authRateLimiter, (req, res) => {
   try {
     const body = (req.body && typeof req.body === 'object' ? req.body : {}) as Record<string, any>;
     const email = typeof body.email === 'string' ? body.email : '';
@@ -1384,7 +1442,7 @@ app.post('/api/auth/login', (req, res) => {
 });
 
 // Developer registration endpoint
-app.post('/api/developer/auth/register', async (req, res) => {
+app.post('/api/developer/auth/register', authRateLimiter, async (req, res) => {
   try {
     const body = (req.body && typeof req.body === 'object' ? req.body : {}) as Record<string, any>;
     const name = typeof body.name === 'string' ? body.name : '';
@@ -1485,7 +1543,7 @@ app.post('/api/developer/auth/register', async (req, res) => {
 });
 
 // Developer login endpoint
-app.post('/api/developer/auth/login', async (req, res) => {
+app.post('/api/developer/auth/login', authRateLimiter, async (req, res) => {
   try {
     const body = (req.body && typeof req.body === 'object' ? req.body : {}) as Record<string, any>;
     const email = typeof body.email === 'string' ? body.email : '';
@@ -1721,15 +1779,27 @@ app.post('/api/auth/logout', (req, res) => {
 // PUBLIC APP STORE ROUTES (NO ACCOUNT REQUIRED)
 // ==========================================
 
-// Get all apps (Public - Strictly approved apps only)
+// Get all apps (Public - Strictly approved apps only with TTL cache & CDN headers)
 app.get('/api/apps', (req, res) => {
-  const apps = getApps();
   const { category, search, platform } = req.query;
 
   const authHeader = req.headers.authorization;
   const token = authHeader?.startsWith('Bearer ') ? authHeader.split(' ')[1] : '';
   const isAdmin = token ? verifyAdminToken(token) : false;
   const isSuperAdminView = isAdmin && req.headers['x-admin-view'] === 'true';
+
+  if (!isSuperAdminView) {
+    res.setHeader('Cache-Control', 'public, max-age=15, s-maxage=30, stale-while-revalidate=120');
+    const cacheKey = `${String(category || '')}|${String(search || '')}|${String(platform || '')}`;
+    const cached = publicAppsCache.get(cacheKey);
+    if (cached) {
+      return res.json(cached);
+    }
+  } else {
+    res.setHeader('Cache-Control', 'private, no-store');
+  }
+
+  const apps = getApps();
 
   // Public visitors only see approved apps that have NOT been taken down by Super Admin
   let filtered = isSuperAdminView
@@ -1765,6 +1835,11 @@ app.get('/api/apps', (req, res) => {
     if (orderA !== orderB) return orderA - orderB;
     return (b.downloadsTotal || 0) - (a.downloadsTotal || 0);
   });
+
+  if (!isSuperAdminView) {
+    const cacheKey = `${String(category || '')}|${String(search || '')}|${String(platform || '')}`;
+    publicAppsCache.set(cacheKey, filtered);
+  }
 
   return res.json(filtered);
 });
@@ -1842,6 +1917,8 @@ app.get('/api/apps/:id', (req, res) => {
     if (!isAdmin && !isOwner) {
       return res.status(403).json({ error: 'This app is pending approval by Super Admin.' });
     }
+  } else if (!appItem.isTakenDown) {
+    res.setHeader('Cache-Control', 'public, max-age=15, s-maxage=30, stale-while-revalidate=120');
   }
 
   return res.json(appItem);
@@ -1852,9 +1929,15 @@ function pipeFetchResponse(fetchResp: Response, res: express.Response, fileName:
   if (res.headersSent) return false;
 
   const contentLength = fetchResp.headers.get('content-length');
+  const contentRange = fetchResp.headers.get('content-range');
+  if (fetchResp.status === 206 && contentRange) {
+    res.status(206);
+    res.setHeader('Content-Range', contentRange);
+  }
+  res.setHeader('Accept-Ranges', 'bytes');
   res.setHeader('Content-Type', 'application/vnd.android.package-archive');
   res.setHeader('Content-Disposition', `attachment; filename="${fileName}"; filename*=UTF-8''${encodeURIComponent(fileName)}`);
-  res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Disposition');
+  res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges, Content-Disposition');
   if (contentLength && !isNaN(Number(contentLength))) {
     res.setHeader('Content-Length', contentLength);
   }
@@ -1991,14 +2074,24 @@ async function streamGoogleDriveFile(gdId: string, res: express.Response, fileNa
   }
 }
 
-// Stream any direct external download URL without redirecting away from website
-async function streamGenericUrl(url: string, res: express.Response, fileName: string): Promise<boolean> {
+// Stream any direct external download URL without redirecting away from website (forwards Range if provided)
+async function streamGenericUrl(
+  url: string,
+  res: express.Response,
+  fileName: string,
+  rangeHeader?: string
+): Promise<boolean> {
   try {
+    const reqHeaders: Record<string, string> = {
+      'User-Agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+    };
+    if (rangeHeader) {
+      reqHeaders['Range'] = rangeHeader;
+    }
+
     const upstream = await fetch(url, {
-      headers: {
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
-      },
+      headers: reqHeaders,
       redirect: 'follow',
       signal: AbortSignal.timeout(25000)
     });
@@ -2223,29 +2316,57 @@ app.get('/api/apps/:id/download', async (req, res) => {
 
 
   const fileName = targetRelease.fileName || `${targetApp.slug}-v${targetRelease.version}.apk`;
+  const rangeHeader = typeof req.headers.range === 'string' ? req.headers.range : undefined;
 
-  // 1. If a physical file was uploaded to our server, ALWAYS stream it directly!
-  // This guarantees 100% successful downloads for all visitors without any 403 errors or Google dependencies!
+  // 1. If a physical file was uploaded to our server, ALWAYS stream it directly with full HTTP Range (206) resume support!
   if (targetRelease.filePath && fs.existsSync(targetRelease.filePath)) {
     const stat = fs.statSync(targetRelease.filePath);
-    res.setHeader('Content-Length', stat.size);
+    const totalSize = stat.size;
+    res.setHeader('Accept-Ranges', 'bytes');
     res.setHeader('Content-Disposition', `attachment; filename="${fileName}"; filename*=UTF-8''${encodeURIComponent(fileName)}`);
     res.setHeader('Content-Type', 'application/vnd.android.package-archive');
-    res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Disposition');
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges, Content-Disposition');
+
+    if (rangeHeader && totalSize > 0) {
+      const rangeMatch = rangeHeader.match(/bytes=(\d*)-(\d*)/);
+      if (rangeMatch) {
+        const start = rangeMatch[1] ? parseInt(rangeMatch[1], 10) : 0;
+        const end = rangeMatch[2] ? Math.min(parseInt(rangeMatch[2], 10), totalSize - 1) : totalSize - 1;
+        if (!isNaN(start) && !isNaN(end) && start <= end && start < totalSize) {
+          res.status(206);
+          res.setHeader('Content-Range', `bytes ${start}-${end}/${totalSize}`);
+          res.setHeader('Content-Length', end - start + 1);
+          const partialStream = fs.createReadStream(targetRelease.filePath, { start, end });
+          return partialStream.pipe(res);
+        }
+        res.status(416);
+        res.setHeader('Content-Range', `bytes */${totalSize}`);
+        return res.end();
+      }
+    }
+
+    res.setHeader('Content-Length', totalSize);
     const fileStream = fs.createReadStream(targetRelease.filePath);
     return fileStream.pipe(res);
   }
 
   // 2. If a direct external download URL was configured (Google Drive, Dropbox, GitHub Releases, Cloud Storage)
-  // Instead of redirecting away to an external warning page, stream the raw APK binary through our website!
-  if (targetRelease.directDownloadUrl) {
-    const gdId = extractGoogleDriveId(targetRelease.directDownloadUrl);
+  // Stream through our server, automatically failing over to backup mirrorDownloadUrl if primary source errors.
+  const candidateUrls: string[] = [];
+  if (targetRelease.directDownloadUrl) candidateUrls.push(targetRelease.directDownloadUrl);
+  if (targetRelease.mirrorDownloadUrl) candidateUrls.push(targetRelease.mirrorDownloadUrl);
+  if (!isPaidApp && typeof req.query.mirrorUrl === 'string' && req.query.mirrorUrl.trim()) {
+    candidateUrls.push(req.query.mirrorUrl.trim());
+  }
+
+  for (const rawUrl of candidateUrls) {
+    const gdId = extractGoogleDriveId(rawUrl);
     if (gdId) {
       const streamed = await streamGoogleDriveFile(gdId, res, fileName);
       if (streamed) return;
     } else {
-      const directUrl = normalizeDownloadUrl(targetRelease.directDownloadUrl) || targetRelease.directDownloadUrl;
-      const streamed = await streamGenericUrl(directUrl, res, fileName);
+      const directUrl = normalizeDownloadUrl(rawUrl) || rawUrl;
+      const streamed = await streamGenericUrl(directUrl, res, fileName, rangeHeader);
       if (streamed) return;
     }
   }
@@ -2343,8 +2464,8 @@ app.post('/api/apps/:id/download-count', (req, res) => {
   });
 });
 
-// Leave review (Public - anyone can rate)
-app.post('/api/apps/:id/reviews', (req, res) => {
+// Leave review (Public - anyone can rate, protected by rate limiter)
+app.post('/api/apps/:id/reviews', reviewRateLimiter, (req, res) => {
   const { id } = req.params;
   const { author, rating, title, comment, platform } = req.body;
 
@@ -2382,19 +2503,27 @@ app.post('/api/apps/:id/reviews', (req, res) => {
   return res.json({ success: true, app: targetApp });
 });
 
-// Store overall statistics
+// Store overall statistics (cached with CDN headers)
 app.get('/api/stats', (req, res) => {
+  res.setHeader('Cache-Control', 'public, max-age=15, s-maxage=30, stale-while-revalidate=60');
+  const cached = publicStatsCache.get('store_stats');
+  if (cached) {
+    return res.json(cached);
+  }
+
   const apps = getApps();
   const totalDownloads = apps.reduce((acc, a) => acc + a.downloadsTotal, 0);
   const totalReleases = apps.reduce((acc, a) => acc + a.releases.length, 0);
 
-  return res.json({
+  const payload = {
     totalApps: apps.length,
     totalDownloads,
     totalReleases,
     adminEmail: ADMIN_EMAIL,
     serverUptime: process.uptime()
-  });
+  };
+  publicStatsCache.set('store_stats', payload);
+  return res.json(payload);
 });
 
 // ==========================================
@@ -4348,6 +4477,7 @@ app.post('/api/admin/email-logs/verify-smtp', requireAdmin, async (req, res) => 
 
 // Get active broadcast banner (Public)
 app.get('/api/broadcast', (req, res) => {
+  res.setHeader('Cache-Control', 'public, max-age=15, s-maxage=30, stale-while-revalidate=60');
   const broadcast = getBroadcast();
   return res.json({ success: true, broadcast });
 });
@@ -5071,7 +5201,7 @@ async function callLivePayPayout({
 // APP PURCHASE & CHECKOUT (6% ADMIN FEE)
 // ==========================================
 
-app.post('/api/apps/:id/purchase', async (req, res) => {
+app.post('/api/apps/:id/purchase', purchaseRateLimiter, async (req, res) => {
   const { id } = req.params;
   const { customerName, customerEmail, paymentMethod, phoneNumber, currency = 'UGX' } = req.body;
   const apps = getApps();
@@ -5107,6 +5237,36 @@ app.post('/api/apps/:id/purchase', async (req, res) => {
   const developerEmail = appItem.submittedBy?.email || appItem.developer?.email || ADMIN_EMAIL;
 
   const cleanPhone = normalizeUgandaPhone(phoneNumber || '');
+  const checkoutKey = buildCheckoutKey(appItem.id, customerEmail, cleanPhone);
+
+  // Prevent accidental double Mobile Money collection prompts on rapid double-taps (15s idempotency window)
+  if (grossAmount > 0) {
+    const existingPendingId = getRecentPendingCheckoutSaleId(checkoutKey);
+    if (existingPendingId) {
+      const existingSale = getSales().find((s) => s.id === existingPendingId);
+      if (existingSale && existingSale.status === 'pending') {
+        const safeTx = sanitizePendingSale(existingSale);
+        return res.json({
+          success: true,
+          paymentConfirmed: false,
+          status: 'pending',
+          saleId: existingSale.id,
+          deduplicated: true,
+          message: `Payment prompt already sent to ${cleanPhone}. Enter your Mobile Money PIN to confirm payment.`,
+          transaction: safeTx,
+          sale: safeTx,
+          livepay: {
+            initiated: true,
+            reference: existingSale.livepayReference,
+            internalReference: existingSale.livepayInternalRef,
+            network: existingSale.livepayNetwork,
+            message: 'Waiting for Mobile Money PIN confirmation.'
+          }
+        });
+      }
+    }
+  }
+
   let livepayResult: any = null;
   const livepayRef = `ZUZU${Date.now().toString().slice(-8)}`;
 
@@ -5225,7 +5385,10 @@ app.post('/api/apps/:id/purchase', async (req, res) => {
     });
   }
 
-  // Payment is PENDING PIN confirmation: DO NOT return downloadToken or directDownloadUrl yet!
+  // Payment is PENDING PIN confirmation: remember checkout key for 15s deduplication and DO NOT return token yet!
+  if (grossAmount > 0) {
+    rememberPendingCheckoutSaleId(checkoutKey, transaction.id);
+  }
   const safeTx = sanitizePendingSale(transaction);
   return res.json({
     success: true,
@@ -5372,7 +5535,7 @@ function buildBuyerReceiptFromSale(sale: AppSaleTransaction, appsList: StoreApp[
 }
 
 // Public Confirmed Receipt Lookup ("My Purchases" by exact buyer email OR exact transaction/LivePay reference)
-app.get('/api/purchases/lookup', async (req, res) => {
+app.get('/api/purchases/lookup', lookupRateLimiter, async (req, res) => {
   const rawQuery = String(req.query.q || req.query.email || req.query.ref || '').trim().toLowerCase();
   if (!rawQuery || rawQuery.length < 4) {
     return res.status(400).json({
@@ -5549,6 +5712,7 @@ app.get('/api/admin/financials', requireAdmin, (req, res) => {
 
 // Store / Developer: Public endpoint to get current store commission % and sending fee rate
 app.get('/api/store/commission', (req, res) => {
+  res.setHeader('Cache-Control', 'public, max-age=15, s-maxage=30, stale-while-revalidate=60');
   const settings = getSystemSettings();
   return res.json({
     success: true,
@@ -5857,19 +6021,26 @@ app.post('/api/webhooks/livepay', async (req, res) => {
       }
 
       if (matchedSale) {
-        const normalized = normalizeLivePayStatus(event.status);
-        if (normalized === 'completed') {
-          finalizeCompletedSale(matchedSale.id, {
-            livepayInternalRef: internalRef || matchedSale.livepayInternalRef,
-            livepayNetwork: event.provider || event.network || matchedSale.livepayNetwork,
-            livepayStatus: String(event.status || 'completed')
-          });
-        } else if (normalized === 'failed') {
-          markSaleFailed(
-            matchedSale.id,
-            event.message || `LivePay payment ${String(event.status || 'failed').toLowerCase()}.`,
-            String(event.status || 'failed')
-          );
+        if (!acquireWebhookSaleLock(matchedSale.id)) {
+          return res.status(200).json({ status: 'ok', deduplicated: true });
+        }
+        try {
+          const normalized = normalizeLivePayStatus(event.status);
+          if (normalized === 'completed') {
+            finalizeCompletedSale(matchedSale.id, {
+              livepayInternalRef: internalRef || matchedSale.livepayInternalRef,
+              livepayNetwork: event.provider || event.network || matchedSale.livepayNetwork,
+              livepayStatus: String(event.status || 'completed')
+            });
+          } else if (normalized === 'failed') {
+            markSaleFailed(
+              matchedSale.id,
+              event.message || `LivePay payment ${String(event.status || 'failed').toLowerCase()}.`,
+              String(event.status || 'failed')
+            );
+          }
+        } finally {
+          releaseWebhookSaleLock(matchedSale.id);
         }
       }
     }

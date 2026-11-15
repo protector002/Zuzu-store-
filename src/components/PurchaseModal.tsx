@@ -87,11 +87,13 @@ export const PurchaseModal: React.FC<PurchaseModalProps> = ({ app, onClose, onSu
     onSuccess(tx, token);
   };
 
-  // Poll payment confirmation status while awaiting Mobile Money PIN entry
+  // Poll payment confirmation status with progressive backoff while awaiting Mobile Money PIN entry
   useEffect(() => {
     if (!pendingSale || completedTransaction) return;
 
     let cancelled = false;
+    let pollTimeout: ReturnType<typeof setTimeout> | null = null;
+    let attempt = 0;
 
     const timerInterval = setInterval(() => {
       if (!cancelled) {
@@ -99,30 +101,44 @@ export const PurchaseModal: React.FC<PurchaseModalProps> = ({ app, onClose, onSu
       }
     }, 1000);
 
+    const getNextDelayMs = (n: number): number => {
+      if (n < 3) return 2500;
+      if (n < 7) return 4000;
+      if (n < 12) return 6000;
+      return 8000;
+    };
+
     const checkStatus = async () => {
+      if (cancelled) return;
       try {
         const res = await checkAppPurchaseStatus(app.id, pendingSale.id);
         if (cancelled) return;
 
         if (res.paymentConfirmed && res.status === 'completed' && res.transaction && res.downloadToken) {
           handleConfirmedSuccess(res.transaction, res.downloadToken);
+          return;
         } else if (res.status === 'failed') {
           setPendingSale(null);
           setErrorMessage(
             res.message || 'Mobile Money payment failed or was cancelled. Download has not started.'
           );
+          return;
         }
       } catch (_) {
         // Keep waiting on transient network error
       }
+      if (!cancelled) {
+        attempt += 1;
+        pollTimeout = setTimeout(checkStatus, getNextDelayMs(attempt));
+      }
     };
 
-    const pollInterval = setInterval(checkStatus, 3000);
+    pollTimeout = setTimeout(checkStatus, 2500);
 
     return () => {
       cancelled = true;
       clearInterval(timerInterval);
-      clearInterval(pollInterval);
+      if (pollTimeout) clearTimeout(pollTimeout);
     };
   }, [pendingSale?.id, app.id, completedTransaction]);
 
@@ -159,6 +175,7 @@ export const PurchaseModal: React.FC<PurchaseModalProps> = ({ app, onClose, onSu
 
   const handlePay = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isProcessing || pendingSale) return;
     if (!customerName.trim() || !customerEmail.trim()) {
       setErrorMessage('Please provide your name and email address for receipt and download access.');
       return;

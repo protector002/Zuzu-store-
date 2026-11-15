@@ -15,6 +15,7 @@ import {
 import { StoreApp, AdminUser, Platform } from '../types';
 import { filterTvApps, getTvRelease } from '../utils/editionHelper';
 import { shareOrCopyAppLink } from '../utils/appLinks';
+import { prefetchApp } from '../services/api';
 
 interface TvPageProps {
   apps: StoreApp[];
@@ -46,6 +47,7 @@ export const TvPage: React.FC<TvPageProps> = ({
 }) => {
   const [downloadingTvId, setDownloadingTvId] = useState<string | null>(null);
   const [copiedTvId, setCopiedTvId] = useState<string | null>(null);
+  const [visibleMoreTvCount, setVisibleMoreTvCount] = useState(12);
 
   const handleShareTvClick = async (e: React.MouseEvent, app: StoreApp) => {
     e.stopPropagation();
@@ -268,6 +270,8 @@ export const TvPage: React.FC<TvPageProps> = ({
                       <img
                         src={shot}
                         alt={`Screenshot ${idx + 1}`}
+                        loading="lazy"
+                        decoding="async"
                         className="w-full h-full object-cover"
                       />
                     </div>
@@ -286,18 +290,22 @@ export const TvPage: React.FC<TvPageProps> = ({
               </h3>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {tvApps.slice(1).map((app) => {
+                {tvApps.slice(1, 1 + visibleMoreTvCount).map((app) => {
                   const tvRel = getTvRelease(app);
                   return (
                     <div
                       key={app.id}
                       onClick={() => onSelectApp(app)}
+                      onMouseEnter={() => prefetchApp(app.slug || app.id)}
+                      onFocus={() => prefetchApp(app.slug || app.id)}
                       className="p-5 rounded-2xl bg-neutral-900/60 hover:bg-neutral-900 border border-neutral-800 hover:border-amber-500/40 transition-all cursor-pointer flex flex-col justify-between space-y-4 shadow-md"
                     >
                       <div className="flex items-start gap-3.5">
                         <img
                           src={app.iconUrl || '/zuzustore-logo.png'}
                           alt={app.name}
+                          loading="lazy"
+                          decoding="async"
                           className="w-12 h-12 rounded-xl object-contain bg-neutral-950 border border-neutral-800 p-1 shrink-0"
                         />
                         <div className="min-w-0 flex-1">
@@ -356,6 +364,17 @@ export const TvPage: React.FC<TvPageProps> = ({
                   );
                 })}
               </div>
+              {tvApps.length - 1 > visibleMoreTvCount && (
+                <div className="flex justify-center pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setVisibleMoreTvCount((c) => c + 12)}
+                    className="px-5 py-2.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 border border-neutral-700 text-xs font-bold text-amber-300 transition-colors cursor-pointer"
+                  >
+                    Load More Smart TV Apps ({tvApps.length - 1 - visibleMoreTvCount} remaining)
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>

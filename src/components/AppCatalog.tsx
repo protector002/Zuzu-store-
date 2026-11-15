@@ -22,6 +22,8 @@ import {
 import { StoreApp, AppCategory, Platform, AdminUser } from '../types';
 import { filterPhoneApps, getPhoneRelease } from '../utils/editionHelper';
 import { shareOrCopyAppLink } from '../utils/appLinks';
+import { useDebouncedValue } from '../hooks/usePWAInstall';
+import { prefetchApp } from '../services/api';
 
 interface AppCatalogProps {
   apps: StoreApp[];
@@ -65,8 +67,12 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
   const [chartType, setChartType] = useState<'top-free' | 'trending' | 'top-rated'>('top-free');
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [visibleSearchCount, setVisibleSearchCount] = useState(15);
+  const [visibleChartsCount, setVisibleChartsCount] = useState(15);
+  const [visibleCategoryCount, setVisibleCategoryCount] = useState(15);
 
   const activeSearch = searchQuery !== undefined ? searchQuery : internalSearch;
+  const debouncedSearch = useDebouncedValue(activeSearch, 180);
 
   const handleSearchChange = (val: string) => {
     if (onSearchChange) {
@@ -90,9 +96,9 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
     return (b.downloadsTotal || 0) - (a.downloadsTotal || 0);
   });
 
-  // Active search filtering
+  // Active debounced search filtering
   const searchResults = phoneApps.filter((app) => {
-    const q = activeSearch.toLowerCase().trim();
+    const q = debouncedSearch.toLowerCase().trim();
     if (!q) return true;
     return (
       app.name.toLowerCase().includes(q) ||
@@ -262,6 +268,8 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
               <div
                 key={app.id}
                 onClick={() => onSelectApp(app)}
+                onMouseEnter={() => prefetchApp(app.slug || app.id)}
+                onFocus={() => prefetchApp(app.slug || app.id)}
                 style={{ scrollSnapAlign: 'start' }}
                 className="group relative w-32 sm:w-36 md:w-40 shrink-0 bg-neutral-900/60 hover:bg-neutral-900 border border-neutral-800/80 hover:border-amber-500/40 rounded-2xl p-2.5 sm:p-3 transition-all cursor-pointer flex flex-col justify-between shadow-sm hover:shadow-lg hover:-translate-y-0.5 duration-150"
               >
@@ -271,6 +279,8 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
                     <img
                       src={app.iconUrl || '/zuzustore-logo.png'}
                       alt={app.name}
+                      loading="lazy"
+                      decoding="async"
                       className="w-full h-full object-contain rounded-xl"
                       onError={(e) => {
                         e.currentTarget.onerror = null;
@@ -465,8 +475,9 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
               </button>
             </div>
           ) : (
+            <>
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 sm:gap-4">
-              {searchResults.map((app) => {
+              {searchResults.slice(0, visibleSearchCount).map((app) => {
                 const phoneRel = getPhoneRelease(app);
                 const fileSize = phoneRel?.fileSize || '32 MB';
                 const isCurrentlyDownloading = downloadingId === app.id;
@@ -478,6 +489,8 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
                   <div
                     key={app.id}
                     onClick={() => onSelectApp(app)}
+                    onMouseEnter={() => prefetchApp(app.slug || app.id)}
+                    onFocus={() => prefetchApp(app.slug || app.id)}
                     className="group bg-neutral-900/70 hover:bg-neutral-900 border border-neutral-800 hover:border-amber-500/40 rounded-2xl p-3 transition-all cursor-pointer flex flex-col justify-between shadow-sm hover:shadow-lg hover:-translate-y-0.5"
                   >
                     <div>
@@ -485,6 +498,8 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
                         <img
                           src={app.iconUrl || '/zuzustore-logo.png'}
                           alt={app.name}
+                          loading="lazy"
+                          decoding="async"
                           className="w-full h-full object-contain rounded-xl"
                           onError={(e) => {
                             e.currentTarget.onerror = null;
@@ -547,6 +562,18 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
                 );
               })}
             </div>
+            {searchResults.length > visibleSearchCount && (
+              <div className="flex justify-center pt-2">
+                <button
+                  type="button"
+                  onClick={() => setVisibleSearchCount((c) => c + 15)}
+                  className="px-5 py-2.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 border border-neutral-700 text-xs font-bold text-amber-300 transition-colors cursor-pointer"
+                >
+                  Load More Results ({searchResults.length - visibleSearchCount} remaining)
+                </button>
+              </div>
+            )}
+            </>
           )}
         </div>
       ) : (
@@ -593,6 +620,8 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
                         <div
                           key={app.id}
                           onClick={() => onSelectApp(app)}
+                          onMouseEnter={() => prefetchApp(app.slug || app.id)}
+                          onFocus={() => prefetchApp(app.slug || app.id)}
                           className="group relative bg-neutral-900/60 hover:bg-neutral-900 border border-neutral-800/80 hover:border-amber-500/40 rounded-2xl p-3 transition-all cursor-pointer flex flex-col justify-between shadow-sm hover:shadow-lg hover:-translate-y-0.5 duration-150"
                         >
                           <div>
@@ -600,6 +629,8 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
                               <img
                                 src={app.iconUrl || '/zuzustore-logo.png'}
                                 alt={app.name}
+                                loading="lazy"
+                                decoding="async"
                                 className="w-full h-full object-contain rounded-xl"
                                 onError={(e) => {
                                   e.currentTarget.onerror = null;
@@ -798,7 +829,7 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
 
               {/* Top Charts Ranked List */}
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
-                {chartApps.map((app, index) => {
+                {chartApps.slice(0, visibleChartsCount).map((app, index) => {
                   const phoneRel = getPhoneRelease(app);
                   const fileSize = phoneRel?.fileSize || '32 MB';
                   const isCurrentlyDownloading = downloadingId === app.id;
@@ -811,6 +842,8 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
                     <div
                       key={app.id}
                       onClick={() => onSelectApp(app)}
+                      onMouseEnter={() => prefetchApp(app.slug || app.id)}
+                      onFocus={() => prefetchApp(app.slug || app.id)}
                       className="group bg-neutral-900/60 hover:bg-neutral-900 border border-neutral-800/80 hover:border-amber-500/40 rounded-2xl p-3.5 transition-all cursor-pointer flex items-center justify-between gap-3 shadow-xs hover:shadow-md"
                     >
                       {/* Left: Rank + Icon + Info */}
@@ -833,6 +866,8 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
                           <img
                             src={app.iconUrl || '/zuzustore-logo.png'}
                             alt={app.name}
+                            loading="lazy"
+                            decoding="async"
                             className="w-full h-full object-contain rounded-xl"
                             onError={(e) => {
                               e.currentTarget.onerror = null;
@@ -907,6 +942,17 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
                   );
                 })}
               </div>
+              {chartApps.length > visibleChartsCount && (
+                <div className="flex justify-center pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setVisibleChartsCount((c) => c + 15)}
+                    className="px-5 py-2.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 border border-neutral-700 text-xs font-bold text-amber-300 transition-colors cursor-pointer"
+                  >
+                    Load More Ranked Apps ({chartApps.length - visibleChartsCount} remaining)
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
@@ -919,7 +965,10 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
                   <button
                     key={cat}
                     type="button"
-                    onClick={() => setSelectedCategory(cat)}
+                    onClick={() => {
+                      setSelectedCategory(cat);
+                      setVisibleCategoryCount(15);
+                    }}
                     className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 ${
                       selectedCategory.toLowerCase() === cat.toLowerCase()
                         ? 'bg-amber-500/20 text-amber-300 border border-amber-500/50'
@@ -933,7 +982,7 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
 
               {/* Category Grid */}
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 sm:gap-4">
-                {categoryBrowseApps.map((app) => {
+                {categoryBrowseApps.slice(0, visibleCategoryCount).map((app) => {
                   const phoneRel = getPhoneRelease(app);
                   const fileSize = phoneRel?.fileSize || '32 MB';
                   const isCurrentlyDownloading = downloadingId === app.id;
@@ -947,6 +996,8 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
                     <div
                       key={app.id}
                       onClick={() => onSelectApp(app)}
+                      onMouseEnter={() => prefetchApp(app.slug || app.id)}
+                      onFocus={() => prefetchApp(app.slug || app.id)}
                       className="group bg-neutral-900/60 hover:bg-neutral-900 border border-neutral-800/80 hover:border-amber-500/40 rounded-2xl p-3 transition-all cursor-pointer flex flex-col justify-between shadow-sm hover:shadow-lg hover:-translate-y-0.5"
                     >
                       <div>
@@ -954,6 +1005,8 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
                           <img
                             src={app.iconUrl || '/zuzustore-logo.png'}
                             alt={app.name}
+                            loading="lazy"
+                            decoding="async"
                             className="w-full h-full object-contain rounded-xl"
                             onError={(e) => {
                               e.currentTarget.onerror = null;
@@ -1018,6 +1071,17 @@ export const AppCatalog: React.FC<AppCatalogProps> = ({
                   );
                 })}
               </div>
+              {categoryBrowseApps.length > visibleCategoryCount && (
+                <div className="flex justify-center pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setVisibleCategoryCount((c) => c + 15)}
+                    className="px-5 py-2.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 border border-neutral-700 text-xs font-bold text-amber-300 transition-colors cursor-pointer"
+                  >
+                    Load More in {selectedCategory} ({categoryBrowseApps.length - visibleCategoryCount} remaining)
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </>
